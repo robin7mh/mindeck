@@ -291,6 +291,12 @@ export class ElectronBrowserHost implements BrowserHost {
         if (image.getSize().width > 1600) image = image.resize({ width: 1600 })
         const { width, height } = image.getSize()
         return { png: image.toPNG().toString('base64'), width, height }
+      },
+      preview: async (width, quality) => {
+        let image = await c.capturePage(undefined, { stayHidden: true })
+        if (image.getSize().width > width) image = image.resize({ width, quality: 'good' })
+        const size = image.getSize()
+        return { jpeg: image.toJPEG(quality).toString('base64'), width: size.width, height: size.height }
       }
     }
   }

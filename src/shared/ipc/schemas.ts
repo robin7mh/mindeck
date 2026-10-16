@@ -6,7 +6,8 @@
 import { z } from 'zod'
 import { GRAPH_COLORS } from '@shared/types/memory'
 import { EFFORTS } from '@shared/types/ai'
-import { SEARCH_ENGINES, TAB_GROUP_COLORS, VERTICAL_TABS_WIDTH } from '@shared/types/browser'
+import { BROWSER_KEYS, SEARCH_ENGINES, TAB_GROUP_COLORS, VERTICAL_TABS_WIDTH } from '@shared/types/browser'
+import { FINDER_CHUNK } from '@shared/types/finder'
 import { DEVICE_ROLES } from '@shared/types/server'
 import { CLOSE_BEHAVIORS } from '@shared/types/desktop'
 import { IMAGE_TYPES, MAX_IMAGE_BYTES, MAX_IMAGES, MAX_REFS } from '@shared/types/composer'
@@ -34,6 +35,8 @@ const breakpoint = z.object({ path, line: z.number().int().min(1) })
 /** CSS pixels of the Mindeck window (the web view's place). */
 const px = z.number().finite().min(-100_000).max(100_000)
 const viewBounds = z.object({ x: px, y: px, width: px.min(0), height: px.min(0) })
+/** A point on a page (CSS pixels) — pages can be long. */
+const coordinate = z.number().finite().min(0).max(1_000_000)
 /** One file or folder name — no separators, not `.` or `..` (the service checks again). */
 const fileName = z.string().trim().min(1).max(255)
 const paths = z.array(path).min(1).max(1000)
@@ -347,6 +350,7 @@ export const REQUEST_SCHEMAS: Schemas = {
     tls: z.boolean().optional(),
     port: z.number().int().min(1024).max(65535).optional(),
     remoteTerminal: z.boolean().optional(),
+    remoteBrowser: z.boolean().optional(),
     remoteRoots: z.array(path).max(50).optional()
   }),
   'server:createPairingCode': z
@@ -564,6 +568,13 @@ export const REQUEST_SCHEMAS: Schemas = {
   'browser:split': z.object({ id, with: id.optional(), vertical: z.boolean().optional() }),
   'browser:splitUpdate': z.object({ id, ratio: z.number().min(0).max(1).optional(), vertical: z.boolean().optional(), swap: z.boolean().optional() }),
   'browser:unsplit': z.object({ id }),
+  'browser:capture': z.object({ id, width: z.number().int().min(160).max(1920).optional() }),
+  'browser:input': z.discriminatedUnion('action', [
+    z.object({ id, action: z.literal('click'), x: coordinate, y: coordinate }),
+    z.object({ id, action: z.literal('scroll'), x: coordinate, y: coordinate, dx: z.number().min(-20_000).max(20_000), dy: z.number().min(-20_000).max(20_000) }),
+    z.object({ id, action: z.literal('type'), text: text(10_000).min(1) }),
+    z.object({ id, action: z.literal('key'), key: z.enum(BROWSER_KEYS) })
+  ]),
 
   'finder:places': none,
   'finder:list': z
@@ -595,6 +606,14 @@ export const REQUEST_SCHEMAS: Schemas = {
   'finder:extract': z.object({ path, id }),
   'finder:clipboardWrite': z.object({ paths: paths, cut: z.boolean() }),
   'finder:clipboardRead': none,
+  'finder:read': z.object({ path, offset: z.number().int().min(0).optional(), length: z.number().int().min(1).max(FINDER_CHUNK).optional() }),
+  'finder:write': z.object({
+    path,
+    // Base64 of at most FINDER_CHUNK bytes.
+    data: z.string().max(Math.ceil(FINDER_CHUNK / 3) * 4).regex(/^[A-Za-z0-9+/]*={0,2}$/, 'Base64'),
+    offset: z.number().int().min(0).optional(),
+    replace: z.boolean().optional()
+  }),
   'finder:open': z.object({ path }),
   'finder:reveal': z.object({ path }),
 

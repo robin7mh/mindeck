@@ -14,7 +14,7 @@ const recorder = () =>
 describe('browser and files channels', () => {
   const ipc = { transport: 'ipc' as const }
 
-  it('reach the browser service with validated payloads — and only from the desktop window', async () => {
+  it('reach the browser service with validated payloads — from paired devices only when the desktop shares the browser', async () => {
     const router = new Router()
     const browser = recorder()
     registerBrowserIpc(router, browser as unknown as BrowserService)
@@ -82,7 +82,13 @@ describe('browser and files channels', () => {
       ['browser:split', { id: 't', with: 'u', vertical: true }, 'split', ['t', 'u', true]],
       ['browser:split', { id: 't' }, 'split', ['t', undefined, undefined]],
       ['browser:splitUpdate', { id: 's', ratio: 0.3, swap: true }, 'updateSplit', ['s', { ratio: 0.3, swap: true }]],
-      ['browser:unsplit', { id: 's' }, 'unsplit', ['s']]
+      ['browser:unsplit', { id: 's' }, 'unsplit', ['s']],
+      ['browser:capture', { id: 't' }, 'capture', ['t', undefined]],
+      ['browser:capture', { id: 't', width: 600 }, 'capture', ['t', 600]],
+      ['browser:input', { id: 't', action: 'click', x: 10, y: 20 }, 'input', ['t', { action: 'click', x: 10, y: 20 }]],
+      ['browser:input', { id: 't', action: 'scroll', x: 1, y: 2, dx: 0, dy: 300 }, 'input', ['t', { action: 'scroll', x: 1, y: 2, dx: 0, dy: 300 }]],
+      ['browser:input', { id: 't', action: 'type', text: 'hello' }, 'input', ['t', { action: 'type', text: 'hello' }]],
+      ['browser:input', { id: 't', action: 'key', key: 'Enter' }, 'input', ['t', { action: 'key', key: 'Enter' }]]
     ]
     for (const [channel, payload, method, args] of calls) {
       const res = await router.dispatch(channel, payload, ipc)
@@ -100,8 +106,20 @@ describe('browser and files channels', () => {
     expect(await router.dispatch('browser:group', { ids: [] }, ipc)).toMatchObject({ ok: false, error: { code: 'bad-request' } })
     expect(await router.dispatch('browser:configure', { verticalTabsWidth: 20 }, ipc)).toMatchObject({ ok: false, error: { code: 'bad-request' } })
     expect(await router.dispatch('browser:splitUpdate', { id: 's', ratio: 2 }, ipc)).toMatchObject({ ok: false, error: { code: 'bad-request' } })
-    // a paired phone or browser never reaches the user's tabs
-    expect(await router.dispatch('browser:state', undefined, { transport: 'remote' })).toMatchObject({ ok: false, error: { code: 'desktop-only' } })
+    expect(await router.dispatch('browser:capture', { id: 't', width: 50 }, ipc)).toMatchObject({ ok: false, error: { code: 'bad-request' } })
+    expect(await router.dispatch('browser:input', { id: 't', action: 'key', key: 'F13' }, ipc)).toMatchObject({ ok: false, error: { code: 'bad-request' } })
+    expect(await router.dispatch('browser:input', { id: 't', action: 'type', text: '' }, ipc)).toMatchObject({ ok: false, error: { code: 'bad-request' } })
+    expect(await router.dispatch('browser:input', { id: 't', action: 'click', x: -1, y: 0 }, ipc)).toMatchObject({ ok: false, error: { code: 'bad-request' } })
+    // A paired phone reaches the tabs only when the desktop shares the browser — and never its own UI's channels.
+    const remote = { transport: 'remote' as const }
+    expect(await router.dispatch('browser:state', undefined, remote)).toMatchObject({ ok: false, error: { code: 'remote-browser-disabled' } })
+    let shared = false
+    const sharing = new Router({ remoteTerminal: () => false, remoteBrowser: () => shared })
+    registerBrowserIpc(sharing, browser as unknown as BrowserService)
+    expect(await sharing.dispatch('browser:capture', { id: 't' }, remote)).toMatchObject({ ok: false, error: { code: 'remote-browser-disabled' } })
+    shared = true
+    expect(await sharing.dispatch('browser:capture', { id: 't' }, remote)).toEqual({ ok: true, data: { called: 'capture', args: ['t', undefined] } })
+    expect(await sharing.dispatch('browser:freeze', undefined, remote)).toMatchObject({ ok: false, error: { code: 'desktop-only' } })
   })
 
   it('reach the files service — and refuse names and paths that are no names or paths', async () => {
@@ -138,7 +156,11 @@ describe('browser and files channels', () => {
       ['finder:compress', { paths: ['/a'], id: 'z' }, 'compress', [['/a'], 'z']],
       ['finder:extract', { path: '/a.zip', id: 'u' }, 'extract', ['/a.zip', 'u']],
       ['finder:clipboardWrite', { paths: ['/a'], cut: true }, 'clipboardWrite', [['/a'], true]],
-      ['finder:clipboardRead', undefined, 'clipboardRead', []]
+      ['finder:clipboardRead', undefined, 'clipboardRead', []],
+      ['finder:read', { path: '/a.png' }, 'read', ['/a.png', undefined, undefined]],
+      ['finder:read', { path: '/a.png', offset: 4, length: 8 }, 'read', ['/a.png', 4, 8]],
+      ['finder:write', { path: '/a.txt', data: 'aGk=' }, 'write', ['/a.txt', 'aGk=', undefined, undefined]],
+      ['finder:write', { path: '/a.txt', data: 'aGk=', offset: 2, replace: true }, 'write', ['/a.txt', 'aGk=', 2, true]]
     ]
     for (const [channel, payload, method, args] of calls) {
       expect(await router.dispatch(channel, payload, ipc), channel).toEqual({ ok: true, data: { called: method, args } })
@@ -147,6 +169,15 @@ describe('browser and files channels', () => {
     expect(await router.dispatch('finder:transfer', { id: 't', paths: ['/a'], dest: '/b', mode: 'delete' }, ipc)).toMatchObject({ ok: false, error: { code: 'bad-request' } })
     expect(await router.dispatch('finder:transfer', { id: 't', paths: ['/a'], dest: '/b', mode: 'copy', choices: { a: 'overwrite' } }, ipc)).toMatchObject({ ok: false, error: { code: 'bad-request' } })
     expect(await router.dispatch('finder:mkdir', { parent: '/x', name: '   ' }, ipc)).toMatchObject({ ok: false, error: { code: 'bad-request' } })
-    expect(await router.dispatch('finder:list', undefined, { transport: 'remote' })).toMatchObject({ ok: false, error: { code: 'desktop-only' } })
+    expect(await router.dispatch('finder:write', { path: '/a.txt', data: 'not base64!' }, ipc)).toMatchObject({ ok: false, error: { code: 'bad-request' } })
+    expect(await router.dispatch('finder:read', { path: '/a', length: 0 }, ipc)).toMatchObject({ ok: false, error: { code: 'bad-request' } })
+    // A paired device reaches the files with remote shells only — and never the host's own apps or clipboard.
+    const remote = { transport: 'remote' as const }
+    expect(await router.dispatch('finder:list', undefined, remote)).toMatchObject({ ok: false, error: { code: 'remote-terminal-disabled' } })
+    const shells = new Router({ remoteTerminal: () => true })
+    registerFinderIpc(shells, finder as unknown as FinderService)
+    expect(await shells.dispatch('finder:list', undefined, remote)).toEqual({ ok: true, data: { called: 'list', args: [undefined, undefined, undefined] } })
+    expect(await shells.dispatch('finder:open', { path: '/a.txt' }, remote)).toMatchObject({ ok: false, error: { code: 'desktop-only' } })
+    expect(await shells.dispatch('finder:clipboardRead', undefined, remote)).toMatchObject({ ok: false, error: { code: 'desktop-only' } })
   })
 })

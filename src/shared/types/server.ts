@@ -31,6 +31,12 @@ export interface ServerConfig {
   /** Remote clients may open real shells. Off by default. */
   remoteTerminal: boolean
   /**
+   * Paired devices may see the browser's tabs (never private ones) as
+   * pictures and use them — open, navigate, tap and type. Off by default:
+   * the tabs carry the user's logins.
+   */
+  remoteBrowser: boolean
+  /**
    * Folders paired devices may browse and add as projects or vault (absolute
    * paths), besides the projects added at the desktop. Without remote shells
    * they are all a device can reach.
@@ -44,6 +50,7 @@ export const DEFAULT_SERVER_CONFIG: ServerConfig = {
   tls: true,
   port: 7420,
   remoteTerminal: false,
+  remoteBrowser: false,
   remoteRoots: []
 }
 

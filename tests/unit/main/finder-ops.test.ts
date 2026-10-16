@@ -648,3 +648,53 @@ describe('system clipboard', () => {
     expect(await plain.clipboardRead()).toEqual([])
   })
 })
+
+describe('files for another device: read and write in pieces', () => {
+  it('reads a file piece by piece, as base64 with its size and type', async () => {
+    const { finder, home } = await world()
+    const file = join(home, 'A', 'big.bin')
+    await writeFile(file, Buffer.from('0123456789'))
+    const first = await finder.read(file, 0, 4)
+    expect(first).toEqual({ data: Buffer.from('0123').toString('base64'), offset: 0, size: 10, mime: 'application/octet-stream', eof: false })
+    const last = await finder.read(file, 8, 4)
+    expect(Buffer.from(last.data, 'base64').toString()).toBe('89')
+    expect(last.eof).toBe(true)
+    // Past the end: nothing, at the end.
+    expect(await finder.read(file, 20)).toMatchObject({ data: '', size: 10, eof: true })
+    // The whole file when no length is given; text and pictures by name.
+    expect(await finder.read(join(home, 'A', 'one.txt'))).toMatchObject({ data: Buffer.from('one').toString('base64'), mime: 'text/plain', eof: true })
+    await writeFile(join(home, 'A', 'shot.PNG'), 'png')
+    expect((await finder.read(join(home, 'A', 'shot.PNG'))).mime).toBe('image/png')
+    await expect(finder.read(join(home, 'A'))).rejects.toMatchObject({ code: 'not-found' })
+    await expect(finder.read(join(home, 'gone.txt'))).rejects.toMatchObject({ code: 'not-found' })
+    await expect(finder.read('relative.txt')).rejects.toMatchObject({ code: 'bad-path' })
+  })
+
+  it('writes a new file in pieces — each at the end, never over another file unless asked (that one to the trash)', async () => {
+    const { finder, home, trash } = await world()
+    const file = join(home, 'B', 'upload.jpg')
+    expect(await finder.write(file, Buffer.from('abc').toString('base64'))).toEqual({ size: 3 })
+    expect(await finder.write(file, Buffer.from('def').toString('base64'), 3)).toEqual({ size: 6 })
+    expect(await readFile(file, 'utf8')).toBe('abcdef')
+    // A retried piece (wrong offset) is refused rather than doubled.
+    await expect(finder.write(file, Buffer.from('def').toString('base64'), 3)).rejects.toMatchObject({ code: 'bad-offset' })
+    await expect(finder.write(join(home, 'B', 'missing.jpg'), 'YQ==', 5)).rejects.toMatchObject({ code: 'not-found' })
+    // The name is taken: refused, or the old one goes to the trash.
+    await expect(finder.write(file, 'eA==')).rejects.toMatchObject({ code: 'exists' })
+    expect(await finder.write(file, 'eA==', 0, true)).toEqual({ size: 1 })
+    expect(trash).toHaveBeenCalledWith(file)
+    expect(await readFile(file, 'utf8')).toBe('x')
+    // Only inside the writable roots, only real names.
+    await expect(finder.write('/etc/mindeck-upload.txt', 'eA==')).rejects.toMatchObject({ code: 'read-only' })
+    await expect(finder.write('/', 'eA==')).rejects.toMatchObject({ code: 'bad-name' })
+    await expect(finder.write(join(home, 'B', '..'), 'eA==')).rejects.toMatchObject({ code: 'read-only' })
+  })
+
+  it('names media types by extension', async () => {
+    const { mimeOf } = await import('../../../electron/main/services/finder/FinderService')
+    expect(mimeOf('a.mov')).toBe('video/quicktime')
+    expect(mimeOf('a.md')).toBe('text/markdown')
+    expect(mimeOf('a.ts')).toBe('text/plain')
+    expect(mimeOf('archive')).toBe('application/octet-stream')
+  })
+})

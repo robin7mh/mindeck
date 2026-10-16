@@ -412,6 +412,10 @@ describe('the browser host · views', () => {
     expect(c.capturePage).toHaveBeenCalledWith(undefined, { stayHidden: true })
     c.image = new FakeImage(3200, 2000)
     expect(await target.capture()).toMatchObject({ width: 1600, height: 1000 })
+    // A picture for a phone: JPEG, narrowed to what it asks for (never widened).
+    expect(await target.preview(900, 70)).toEqual({ jpeg: Buffer.from('jpeg70').toString('base64'), width: 900, height: 563 })
+    c.image = new FakeImage(640, 400)
+    expect(await target.preview(900, 60)).toEqual({ jpeg: Buffer.from('jpeg60').toString('base64'), width: 640, height: 400 })
   })
 
   it('closes views with their tabs — also after the window is gone — and lets go of everything on dispose', () => {

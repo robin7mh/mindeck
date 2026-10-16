@@ -80,10 +80,14 @@ the warning (that a person may pass after comparing the fingerprint) into a dead
 token in headers (`Authorization`, the WebSocket subprotocol); the only cookie is the web UI's own
 (*The web UI's browser session* in §1), `Secure` over HTTPS.
 
-**The mobile app** trusts only the system's certificate authorities (React Native's `fetch` and
-`WebSocket`); pinning a self-signed certificate needs a native module. Until the app pins
-`fingerprint`, pair it with a core that has an own trusted certificate or runs behind Tailscale /
-a reverse proxy, or switch *Encrypted (HTTPS)* off on a network you trust.
+**The mobile app** pins the core's certificate with a native module of its own (`mindeck-net`:
+`URLSession` on iOS, OkHttp on Android) — React Native's `fetch` and `WebSocket` trust only the
+system's authorities. Scanning the QR code, the app compares the certificate of its first
+connection with `fp` and refuses a mismatch; typed by hand, it shows the fingerprint to compare
+with Settings → Remote access. It then pins the certificate's SHA-256 and its public key's (the
+core renews the certificate on the same key), and every call and the events socket go through the
+pinned connection. A certificate the system trusts (an own one, Tailscale's) needs no pin. Expo Go
+has no native modules: there only `http://` cores and trusted certificates work.
 
 ## 1. Pairing (once per device)
 
@@ -230,6 +234,7 @@ Error codes worth handling in the UI:
 |---|---|
 | `bad-request` | payload failed the channel's schema (message names the field) |
 | `desktop-only` | native dialogs / opening apps on the host — not available remotely |
+| `remote-browser-disabled` | the desktop does not share the browser with paired devices (Settings → Remote access → *Share the browser with paired devices*) |
 | `remote-terminal-disabled` | the core does not allow remote shells (also: approving changes or commands; databases for non-admin devices) |
 | `admin-only` | the channel needs an admin device (or the desktop app) |
 | `remote-forbidden` | outside the shared folders, or a key / credential / system path |
@@ -289,6 +294,9 @@ needed.
 | `permission:resolved` | `{ id, decision }` | answered (by any device) or timed out |
 | `events:event` | `MindeckEvent` | activity timeline |
 | `terminal:data` / `terminal:exit` | … | only when remote shells are allowed |
+| `finder:progress` | `FinderProgress` | a copy, archive or size count of Files moving on (remote shells only) |
+| `browser:state` | `BrowserState` (private tabs left out) | the tabs changed (only while the desktop shares the browser) |
+| `browser:bookmarks` | `BookmarkFolder[]` | bookmarks changed (only while the desktop shares the browser) |
 
 Apply `ai:delta` exactly like the core does: append to the message's last part if it is a text
 part, otherwise start a new text part (`applyDelta` in `src/features/agents/store.ts`).
@@ -296,7 +304,7 @@ part, otherwise start a new text part (`applyDelta` in `src/features/agents/stor
 ## 4. Channels by feature
 
 Remote clients may call every channel except those marked *desktop*; channels marked *admin* need
-an admin device. Types: see `contract.ts`.
+an admin device, *terminal* ones remote shells, *browser* ones the browser shared by the desktop. Types: see `contract.ts`.
 
 - **App / server:** `app:info` · `server:status` · `server:devices` → `Device[]` (with `role`) · `server:revokeDevice { id }` (any device may remove itself; others: *admin*) · *(admin:)* `server:createPairingCode { role? }` → `{ code, role, expiresAt, urls }` · `server:setDeviceRole { id, role }` → `Device[]` · `server:configure` (*desktop*; `remoteRoots` = the shared folders)
 - **Projects:** `projects:list` (the ones the device may use) · `projects:add { path }` (inside the shared folders) · `projects:remove` · `projects:refresh` · *(only with remote shells:)* `projects:pull` (`git pull --ff-only`) · `context:get` · `context:reindex` · `fs:dirs { path? }` (folder browser on the core's machine; for devices: the shared folders, listed in `roots`, no `path` = the first) · `projects:pickFolder` / `projects:openInEditor` / `projects:githubDesktop` / `projects:openInGitHubDesktop` / `projects:openFile` (*desktop*)
@@ -311,6 +319,8 @@ an admin device. Types: see `contract.ts`.
 - **Push and settings sync:** `agents:pushSettings` · `cloud:syncStatus` · *(admin:)* `agents:setPushSettings { enabled }` · `cloud:syncPush` · `cloud:syncPull`
 - **Databases** (admin devices, or with remote shells): `mongo:connections` · `mongo:databases` · `mongo:collections` · `mongo:find` · `mongo:indexes` · *(only with remote shells:)* `mongo:add` · `mongo:remove` · `mongo:insert` · `mongo:replace` · `mongo:delete` · `mongo:aggregate` · `mongo:createCollection` · `mongo:dropCollection`
 - **Terminal** (only with remote shells): `terminal:create` · `terminal:list` · `terminal:attach` · `terminal:write` · `terminal:resize` · `terminal:kill`
+- **Files** (the machine's files like Finder — only with remote shells): `finder:places` · `finder:list { path?, offset? }` (never `hidden: true`) · `finder:search` · `finder:preview` · `finder:info` · `finder:folderSize` · `finder:mkdir` · `finder:rename` · `finder:trash` / `finder:untrash` (only from the trash) · `finder:move` · `finder:copy` · `finder:conflicts` · `finder:transfer` · `finder:cancel` · `finder:restore` · `finder:compress` · `finder:extract` · `finder:read { path, offset?, length? }` → `FinderChunk` (base64, ≤ 4 MB a piece) · `finder:write { path, data, offset?, replace? }` (offset 0 makes the file; later pieces append at the file's end). Every path must lie in the home folder or on a drive — never hidden folders, keys and credentials by name, system folders or Mindeck's data, also not through a link; listings leave hidden files and denied names out. *(desktop only:)* `finder:open` · `finder:reveal` · `finder:clipboardRead` / `finder:clipboardWrite` · `finder:privacySettings`
+- **Browser** (only while the desktop shares it — Settings → Remote access, off by default): `browser:state` · `browser:open { url?, background? }` · `browser:close` · `browser:activate` · `browser:navigate` · `browser:go` · `browser:reopen` · `browser:duplicate` · `browser:zoom` · `browser:suggest` · `browser:searchSuggest` · `browser:history` · `browser:historyList` · `browser:bookmarks` · `browser:bookmarkAdd` · `browser:capture { id, width? }` → `BrowserCapture` (a JPEG of the tab and its page size in CSS pixels) · `browser:input { id, action: click | scroll | type | key, … }` (coordinates in the page's CSS pixels, through the tab's DevTools protocol). Private tabs never: they are left out of every answer and push, and a call naming one — or `browser:open { private: true }` — answers `remote-forbidden`.
 
 ## 5. React Native sketch
 

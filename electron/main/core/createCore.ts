@@ -258,11 +258,13 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
     access: remoteAccess,
     sessionProject: (id) => agents.projectOf(id),
     conversationProject: (id) => conversations.projectOf(id),
-    pending: () => permissions.list()
+    pending: () => permissions.list(),
+    browserTab: (id) => browser.state().tabs.find((t) => t.id === id)
   })
 
   const router = new Router({
     remoteTerminal: () => controller.remoteTerminal(),
+    remoteBrowser: () => controller.remoteBrowser(),
     licensed: (channel) => isLicenseFree(channel) || cloud.allowed(),
     guard: (channel, payload) => remoteScope.guard(channel, payload),
     shape: (channel, data) => remoteScope.result(channel, data)

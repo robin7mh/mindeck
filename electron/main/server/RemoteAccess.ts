@@ -46,6 +46,20 @@ function systemDirs(platform: NodeJS.Platform): string[] {
   return platform === 'darwin' ? [...unix, '/System', '/Library', '/Applications', '/cores', '/private/etc', '/private/var/db', '/private/var/root', '/private/var/log'] : unix
 }
 
+/** Where external drives are mounted (the Files module reaches them like Home). */
+function driveDirs(platform: NodeJS.Platform, home: string, path: PlatformPath): string[] {
+  if (platform === 'darwin') return ['/Volumes']
+  if (platform === 'linux') return [path.join('/media', path.basename(home)), path.join('/run/media', path.basename(home)), '/mnt']
+  return []
+}
+
+/** Where the system trash keeps what Mindeck trashed (an undo takes it back from there). */
+function trashDirs(platform: NodeJS.Platform, home: string, path: PlatformPath): string[] {
+  if (platform === 'darwin') return [path.join(home, '.Trash')]
+  if (platform === 'linux') return [path.join(home, '.local', 'share', 'Trash')]
+  return []
+}
+
 /** Payload fields that name a file inside the call's project. */
 const FILE_FIELDS = ['path', 'dir', 'from', 'to'] as const
 
@@ -81,6 +95,10 @@ export interface RemoteAccessDeps {
   home?: string
   /** The platform's system folders (tests pass their own). */
   systemDirs?: string[]
+  /** Where the Files module reaches with remote shells: Home and the drives (tests pass their own). */
+  fileRoots?: string[]
+  /** Where trashed things lie, for an undo from a device (tests pass their own). */
+  trashDirs?: string[]
   platform?: NodeJS.Platform
 }
 
@@ -95,6 +113,8 @@ export interface RemoteAccessDeps {
 export class RemoteAccess {
   private readonly home: string
   private readonly system: string[]
+  private readonly fileRoots: string[]
+  private readonly trash: string[]
   private readonly fold: (path: string) => string
   /** The platform's path rules (a Windows core reads its paths the Windows way). */
   private readonly path: PlatformPath
@@ -106,6 +126,8 @@ export class RemoteAccess {
     this.path = platform === 'win32' ? win32 : posix
     this.home = this.path.resolve(deps.home ?? homedir())
     this.system = deps.systemDirs ?? systemDirs(platform)
+    this.fileRoots = (deps.fileRoots ?? [this.home, ...driveDirs(platform, this.home, this.path)]).map((r) => this.path.resolve(r))
+    this.trash = (deps.trashDirs ?? trashDirs(platform, this.home, this.path)).map((r) => this.path.resolve(r))
     this.fold = platform === 'win32' || platform === 'darwin' ? (p) => p.toLowerCase() : (p) => p
   }
 
@@ -121,6 +143,59 @@ export class RemoteAccess {
       await this.files(filePaths(p), p.projectId)
     }
     if (channel === 'agents:diff') this.file(String(p.path))
+    if (channel.startsWith('finder:')) await this.finder(channel, p)
+  }
+
+  /**
+   * A Files call (remote shells on): every path it names inside Home or on a
+   * drive — never hidden folders, keys and credentials, system folders or
+   * Mindeck's own data; hidden files are not listed. An undo of the trash
+   * takes things back only from the trash.
+   */
+  private async finder(channel: IpcChannel, p: Record<string, unknown>): Promise<void> {
+    if (channel === 'finder:list' && p.hidden) throw refused('Hidden files stay on the desktop')
+    const str = (v: unknown): v is string => typeof v === 'string'
+    const items = Array.isArray(p.items) ? (p.items as { path?: unknown; restore?: unknown }[]) : []
+    const moves = Array.isArray(p.moves) ? (p.moves as { from?: unknown; to?: unknown }[]) : []
+    const named = [...filePaths(p), p.parent, p.dest, ...items.map((i) => i.path), ...moves.flatMap((m) => [m.from, m.to])].filter(str)
+    for (const path of named) await this.reachable(path)
+    for (const restore of items.map((i) => i.restore).filter(str)) await this.inTrash(restore)
+  }
+
+  /** A path a device's Files may touch: as written and as it really is (links followed). */
+  async reachable(path: string): Promise<string> {
+    if (!this.path.isAbsolute(path)) throw Object.assign(new Error('Path must be absolute'), { code: 'bad-path' })
+    if (this.path === win32 && NETWORK_PATH.test(path)) throw refused('Network and device paths are off-limits for paired devices')
+    const abs = this.path.resolve(path)
+    // A name that does not exist yet (a new folder, an upload) is judged by its folder.
+    const real = await canonical(abs).catch(async () => this.path.join(await canonical(this.path.dirname(abs)).catch(() => this.path.dirname(abs)), this.path.basename(abs)))
+    for (const candidate of new Set([abs, real])) {
+      const why = await this.fileOffLimits(candidate)
+      if (why) throw refused(`${candidate} is off-limits for paired devices (${why})`)
+    }
+    return real
+  }
+
+  /** Why a device's Files may not touch `abs`, or null. */
+  private async fileOffLimits(abs: string): Promise<string | null> {
+    const root = this.fileRoots.find((r) => this.inside(abs, r))
+    if (!root) return 'outside the home folder and drives'
+    if (this.system.some((s) => this.inside(abs, s)) || [this.path.join(this.home, 'Library'), this.path.join(this.home, 'AppData')].some((s) => this.inside(abs, s))) return 'a system folder'
+    if ((await this.protectedDirs()).some((d) => this.inside(abs, d))) return "Mindeck's own data"
+    const segments = this.path.relative(root, abs).split(/[\\/]+/).filter(Boolean)
+    if (segments.some((s) => s.startsWith('.'))) return 'a hidden folder'
+    if (this.denied(abs)) return 'keys or credentials'
+    return null
+  }
+
+  /** Something to take back from the trash: inside it, and not a key or credential. */
+  private async inTrash(path: string): Promise<void> {
+    if (!this.path.isAbsolute(path)) throw Object.assign(new Error('Path must be absolute'), { code: 'bad-path' })
+    const real = await canonical(this.path.resolve(path)).catch(() => this.path.resolve(path))
+    const bin = this.trash.find((t) => this.inside(real, t) && real !== t)
+    if (!bin) throw refused('Only things in the trash can be brought back from a paired device')
+    const hit = this.denied(this.path.relative(bin, real))
+    if (hit) throw refused(`${hit} is off-limits for paired devices`)
   }
 
   /** An assistant tool call that a device started: the same rules for the tool's project and files. */
@@ -234,10 +309,15 @@ export class RemoteAccess {
     return all.filter((_, i) => allowed[i])
   }
 
+  /** Mindeck's own data folders, as given and resolved (a data folder behind a symlink is still found). */
+  private protectedDirs(): Promise<string[]> {
+    this.guarded ??= Promise.all(this.deps.protectedDirs.map(async (d) => [this.path.resolve(d), await realpath(d).catch(() => this.path.resolve(d))])).then((l) => l.flat())
+    return this.guarded
+  }
+
   /** Why a folder is never a device's, or null. */
   private async offLimits(abs: string): Promise<string | null> {
-    this.guarded ??= Promise.all(this.deps.protectedDirs.map(async (d) => [this.path.resolve(d), await realpath(d).catch(() => this.path.resolve(d))])).then((l) => l.flat())
-    const guarded = await this.guarded
+    const guarded = await this.protectedDirs()
     if (this.path.dirname(abs) === abs) return 'the disk itself'
     if (this.inside(this.home, abs)) return 'the home folder'
     if (this.system.some((s) => this.inside(abs, s) || this.inside(s, abs)) || [this.path.join(this.home, 'Library'), this.path.join(this.home, 'AppData')].some((s) => this.inside(abs, s))) {

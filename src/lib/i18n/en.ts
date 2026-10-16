@@ -1928,6 +1928,8 @@ agents: {
     certificateOwn: (until: string) => `Own certificate · valid until ${until}`,
     shells: 'Allow remote shells',
     shellsHint: 'Paired devices may open terminals, let agents run commands and change files, and approve changes. Off by default.',
+    shareBrowser: 'Share the browser with paired devices',
+    shareBrowserHint: 'Paired devices see your tabs as pictures and can use them — open pages, tap, type. They act with your logins, so leave this off unless you use it. Private tabs never leave this computer.',
     port: 'Port',
     desktopOnly: 'Server settings can only be changed in the desktop app.',
     envOnly: 'This core is configured through its environment (MINDECK_PORT, MINDECK_LAN, MINDECK_TLS, MINDECK_REMOTE_TERMINAL, MINDECK_REMOTE_ROOTS).',

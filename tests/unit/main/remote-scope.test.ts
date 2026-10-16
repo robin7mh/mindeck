@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
 import { RemoteScope } from '../../../electron/main/server/RemoteScope'
 import type { PermissionRequest } from '@shared/types/ai'
+import type { BrowserState, BrowserTab } from '@shared/types/browser'
+import type { FinderEntry, FinderListing } from '@shared/types/finder'
 
 /** Projects `shared` and `private` (off-limits); session s1 works in `private`, s2 in `shared`; conversation c1 belongs to `private`. */
 function scope() {
@@ -11,15 +13,18 @@ function scope() {
   const check = vi.fn(async () => {})
   const sessions: Record<string, string> = { s1: 'private', s2: 'shared' }
   const conversations: Record<string, string> = { c1: 'private', c2: 'shared' }
+  // Browser tabs: t1 an everyday tab, p1 a private one.
+  const tabs: Record<string, BrowserTab> = { t1: { id: 't1' } as BrowserTab, p1: { id: 'p1', profile: 'private' } as BrowserTab }
   const pending: PermissionRequest[] = [
     { id: 'r1', conversationId: 's1', projectId: undefined } as unknown as PermissionRequest,
     { id: 'r2', conversationId: 'c9', projectId: 'shared' } as unknown as PermissionRequest
   ]
   const s = new RemoteScope({
-    access: { project, check },
+    access: { project, check, denied: (path: string) => (/(^|\/)id_rsa$/.test(path) ? 'id_rsa' : undefined) },
     sessionProject: (id) => sessions[id],
     conversationProject: async (id) => conversations[id],
     pending: () => pending,
+    browserTab: (id) => tabs[id],
     now: () => now
   })
   return { s, project, check, tick: (ms: number) => (now += ms) }
@@ -138,7 +143,77 @@ describe('RemoteScope · events', () => {
   })
 
   it('the clock defaults to Date.now', async () => {
-    const s = new RemoteScope({ access: { project: async () => {}, check: async () => {} }, sessionProject: () => undefined, conversationProject: async () => undefined, pending: () => [] })
+    const s = new RemoteScope({ access: { project: async () => {}, check: async () => {}, denied: () => undefined }, sessionProject: () => undefined, conversationProject: async () => undefined, pending: () => [], browserTab: () => undefined })
     expect(await s.allows('p')).toBe(true)
+  })
+})
+
+describe('RemoteScope · the shared browser and Files', () => {
+  const tab = (id: string, priv = false) => ({ id, url: `https://${id}.dev/`, title: id, ...(priv ? { profile: 'private' } : {}) }) as BrowserTab
+  const state = (over: Partial<BrowserState> = {}): BrowserState => ({
+    available: true,
+    tabs: [tab('t1'), tab('p1', true), tab('t2')],
+    activeId: 'p1',
+    closed: 0,
+    downloads: [{ id: 'd1', filename: 'a.zip' } as BrowserState['downloads'][number], { id: 'd2', filename: 'secret.pdf', private: true } as BrowserState['downloads'][number]],
+    permissions: [{ id: 'q1', tabId: 't1', origin: 'https://t1.dev', kind: 'camera' }, { id: 'q2', tabId: 'p1', origin: 'https://p1.dev', kind: 'camera' }, { id: 'q3', origin: 'x', kind: 'external' }],
+    auth: [{ id: 'a1', tabId: 'p1', host: 'p1.dev', realm: 'r', isProxy: false }],
+    devServers: [],
+    groups: [{ id: 'g1', title: 'Work', color: 'cyan', collapsed: false }, { id: 'g2', title: '', color: 'purple', collapsed: false, private: true }],
+    splits: [{ id: 's1', tabs: ['t1', 't2'], ratio: 0.5 }, { id: 's2', tabs: ['t1', 'p1'], ratio: 0.5 }],
+    ...over
+  })
+
+  it('never shows a private tab — nor its downloads, questions, groups or splits', async () => {
+    const { s } = scope()
+    const shown = (await s.result('browser:state', state())) as BrowserState
+    expect(shown.tabs.map((t) => t.id)).toEqual(['t1', 't2'])
+    expect(shown.activeId).toBeUndefined()
+    expect(shown.downloads.map((d) => d.id)).toEqual(['d1'])
+    expect(shown.permissions.map((p) => p.id)).toEqual(['q1', 'q3'])
+    expect(shown.auth).toEqual([])
+    expect(shown.groups.map((g) => g.id)).toEqual(['g1'])
+    expect(shown.splits.map((x) => x.id)).toEqual(['s1'])
+    // The same for the push event; an active everyday tab stays active.
+    const { auth: _auth, ...withoutAuth } = state({ activeId: 't2' })
+    const pushed = (await s.event('browser:state', withoutAuth)) as BrowserState
+    expect(pushed.activeId).toBe('t2')
+    expect(pushed).not.toHaveProperty('auth')
+    // No private tab left, but a private tab's download or group still is: those go.
+    const leftovers = (await s.result('browser:state', state({ tabs: [tab('t1')], splits: [], groups: [] }))) as BrowserState
+    expect(leftovers.downloads.map((d) => d.id)).toEqual(['d1'])
+    const group = (await s.result('browser:state', state({ tabs: [tab('t1')], splits: [], downloads: [] }))) as BrowserState
+    expect(group.groups.map((g) => g.id)).toEqual(['g1'])
+    // Nothing private at all: the state as it is.
+    const plain = state({ tabs: [tab('t1')], downloads: [], groups: [], splits: [] })
+    expect(await s.result('browser:state', plain)).toBe(plain)
+    expect(await s.event('browser:bookmarks', [])).toEqual([])
+  })
+
+  it('refuses private tabs by id, opening one, and suggestions that point at one', async () => {
+    const { s } = scope()
+    await expect(s.guard('browser:capture', { id: 'p1' })).rejects.toMatchObject({ code: 'remote-forbidden', message: 'Private tabs stay on the desktop' })
+    await expect(s.guard('browser:input', { id: 'p1', action: 'type', text: 'x' })).rejects.toMatchObject({ code: 'remote-forbidden' })
+    await expect(s.guard('browser:open', { url: 'x', private: true })).rejects.toMatchObject({ code: 'remote-forbidden' })
+    await s.guard('browser:capture', { id: 't1' })
+    await s.guard('browser:capture', { id: 'gone' })
+    await s.guard('browser:open', { url: 'x' })
+    await s.guard('browser:reopen', undefined)
+    const suggestions = await s.result('browser:suggest', [
+      { kind: 'tab', url: 'a', title: 'a', tabId: 't1' },
+      { kind: 'tab', url: 'b', title: 'b', tabId: 'p1' },
+      { kind: 'search', url: 'c', title: 'c' }
+    ])
+    expect((suggestions as { url: string }[]).map((x) => x.url)).toEqual(['a', 'c'])
+  })
+
+  it('lists files without hidden ones, keys and credentials', async () => {
+    const { s } = scope()
+    const entry = (name: string, hidden = false) => ({ name, path: `/home/ada/${name}`, kind: 'file', size: 1, mtimeMs: 0, hidden }) as FinderEntry
+    const listing: FinderListing = { path: '/home/ada', parent: '/home', entries: [entry('a.txt'), entry('id_rsa'), entry('.env', true)], total: 1003, offset: 0 }
+    const shown = (await s.result('finder:list', listing)) as FinderListing
+    expect(shown.entries.map((e) => e.name)).toEqual(['a.txt'])
+    expect(shown.total).toBe(1001)
+    expect(((await s.result('finder:search', [entry('a.txt'), entry('id_rsa')])) as FinderEntry[]).map((e) => e.name)).toEqual(['a.txt'])
   })
 })

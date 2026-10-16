@@ -24,6 +24,8 @@ export function registerFinderIpc(router: Router, finder: FinderService): void {
   router.register('finder:extract', ({ path, id }) => finder.extract(path, id))
   router.register('finder:clipboardWrite', ({ paths, cut }) => finder.clipboardWrite(paths, cut))
   router.register('finder:clipboardRead', () => finder.clipboardRead())
+  router.register('finder:read', ({ path, offset, length }) => finder.read(path, offset, length))
+  router.register('finder:write', ({ path, data, offset, replace }) => finder.write(path, data, offset, replace))
   router.register('finder:open', ({ path }) => finder.open(path))
   router.register('finder:reveal', ({ path }) => finder.reveal(path))
 }

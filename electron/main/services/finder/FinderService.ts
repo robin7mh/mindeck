@@ -1,11 +1,14 @@
 import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import type { Dirent } from 'node:fs'
-import { lstat, mkdir, open, readdir, realpath, rename, rm, stat } from 'node:fs/promises'
+import { appendFile, lstat, mkdir, open, readdir, realpath, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { homedir, userInfo } from 'node:os'
 import { basename, dirname, extname, isAbsolute, join, resolve, sep } from 'node:path'
 import {
+  extOf,
+  FINDER_CHUNK,
   fileType,
+  type FinderChunk,
   type FinderEntry,
   type FinderInfo,
   type FinderListing,
@@ -226,6 +229,48 @@ export class FinderService {
     // A NUL byte early on means binary, whatever the name says; an unknown name counts as text when it reads like text.
     if (head.subarray(0, 8192).includes(0) || (type === 'binary' && !looksLikeText(head))) return { entry, type: 'binary' }
     return { entry, type: 'text', text: head.toString('utf8'), truncated: entry.size > PREVIEW_BYTES }
+  }
+
+  /** A piece of a file, for another device to show or keep (base64, at most FINDER_CHUNK bytes). */
+  async read(path: string, offset = 0, length = FINDER_CHUNK): Promise<FinderChunk> {
+    const abs = this.absolute(path)
+    const info = await stat(abs).catch(() => null)
+    if (!info?.isFile()) throw coded('not-found', `Not a file: ${abs}`)
+    const want = Math.max(0, Math.min(length, FINDER_CHUNK, info.size - offset))
+    const handle = await open(abs, 'r')
+    try {
+      const buf = Buffer.alloc(want)
+      const { bytesRead } = await handle.read(buf, 0, want, offset)
+      return { data: buf.subarray(0, bytesRead).toString('base64'), offset, size: info.size, mime: mimeOf(basename(abs)), eof: offset + bytesRead >= info.size }
+    } finally {
+      await handle.close()
+    }
+  }
+
+  /**
+   * A piece of a file from another device. Offset 0 makes the file — over one
+   * that is there only with `replace`, and that one goes to the trash; a later
+   * piece goes on at the end, which must be where `offset` says (no gaps, no
+   * overlaps from a retried upload).
+   */
+  async write(path: string, data: string, offset = 0, replace = false): Promise<{ size: number }> {
+    const target = this.absolute(path)
+    checkName(basename(target))
+    await this.assertWritable(target)
+    const bytes = Buffer.from(data, 'base64')
+    if (offset === 0) {
+      if (await exists(target)) {
+        if (!replace) throw coded('exists', `“${basename(target)}” already exists`)
+        await this.trashOne(target)
+      }
+      await writeFile(target, bytes, { flag: 'wx' })
+    } else {
+      const info = await stat(target).catch(() => null)
+      if (!info?.isFile()) throw coded('not-found', `Not a file: ${target}`)
+      if (info.size !== offset) throw coded('bad-offset', `The file has ${info.size} bytes, not ${offset}`)
+      await appendFile(target, bytes)
+    }
+    return { size: (await stat(target)).size }
   }
 
   async mkdir(parent: string, name: string): Promise<string> {
@@ -604,6 +649,43 @@ async function readHead(path: string, bytes: number): Promise<Buffer> {
   } finally {
     await handle.close()
   }
+}
+
+const MIME: Record<string, string> = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  avif: 'image/avif',
+  bmp: 'image/bmp',
+  ico: 'image/x-icon',
+  svg: 'image/svg+xml',
+  heic: 'image/heic',
+  tif: 'image/tiff',
+  tiff: 'image/tiff',
+  mp4: 'video/mp4',
+  m4v: 'video/mp4',
+  mov: 'video/quicktime',
+  webm: 'video/webm',
+  mp3: 'audio/mpeg',
+  m4a: 'audio/mp4',
+  wav: 'audio/wav',
+  ogg: 'audio/ogg',
+  flac: 'audio/flac',
+  pdf: 'application/pdf',
+  zip: 'application/zip',
+  json: 'application/json',
+  html: 'text/html',
+  htm: 'text/html',
+  css: 'text/css',
+  csv: 'text/csv',
+  md: 'text/markdown'
+}
+
+/** A file's media type by its name (text for what the reader shows, else bytes). */
+export function mimeOf(name: string): string {
+  return MIME[extOf(name)] ?? (fileType(name) === 'text' ? 'text/plain' : 'application/octet-stream')
 }
 
 /** Mostly printable UTF-8 — a config file without a known extension, say. */

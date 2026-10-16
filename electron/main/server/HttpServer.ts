@@ -8,7 +8,7 @@ import { readFile, realpath, stat } from 'node:fs/promises'
 import { extname, join, resolve, sep } from 'node:path'
 import type { Duplex } from 'node:stream'
 import { WebSocketServer, type WebSocket } from 'ws'
-import { DESKTOP_EVENTS, TERMINAL_EVENTS, type IpcEvent } from '@shared/ipc/contract'
+import { BROWSER_EVENTS, DESKTOP_EVENTS, TERMINAL_EVENTS, type IpcEvent } from '@shared/ipc/contract'
 import { EVENTS_PROTOCOL, TOKEN_PROTOCOL_PREFIX } from '@shared/ipc/transport'
 import type { PermissionRequest } from '@shared/types/ai'
 import type { CoreMode, Device } from '@shared/types/server'
@@ -75,6 +75,8 @@ export interface HttpServerOptions {
   /** Built web UI to serve at `/` (optional — API-only without it). */
   webRoot?: string
   remoteTerminal: () => boolean
+  /** The browser's tabs are shared with paired devices (its push events go out). */
+  remoteBrowser?: () => boolean
   /** Connected WebSocket clients changed (drives remote telemetry sampling). */
   onClients?: (count: number) => void
   /** A push event as devices may see it (RemoteScope): itself, trimmed, or null — none of theirs. */
@@ -710,6 +712,7 @@ export class HttpServer {
     // Devices connected now or a moment ago (their events wait for their reconnect).
     if (!this.streams.size || DESKTOP_EVENTS.includes(channel)) return
     if (TERMINAL_EVENTS.includes(channel) && !this.opts.remoteTerminal()) return
+    if (BROWSER_EVENTS.includes(channel) && !this.opts.remoteBrowser?.()) return
     const scope = this.opts.scope
     if (!scope) return this.deliver(channel, payload)
     const max = this.opts.outbox?.max ?? OUTBOX_MAX

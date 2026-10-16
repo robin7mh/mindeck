@@ -39,13 +39,16 @@ function fail(code: string, message: string): IpcResult<never> {
  * The one dispatch point for every contract channel — used by the desktop IPC
  * bridge and by the HTTP API alike. Per call it checks, in order: the channel
  * exists, Mindeck is licensed (or the channel is license-free), the caller's
- * transport and role may use it (CHANNEL_ACCESS), the payload matches its
+ * transport and role may use it (CHANNEL_ACCESS, with remote shells and the
+ * shared browser as the desktop set them), the payload matches its
  * schema, a remote call passes the guard (shared folders); then runs the
  * handler (a remote call's answer trimmed to what the device may see) and
  * wraps the result in IpcResult. Errors never escape as throws.
  */
 export interface RouterOptions {
   remoteTerminal: () => boolean
+  /** The desktop lets paired devices use the browser (`browser` channels). */
+  remoteBrowser?: () => boolean
   /** License gate: false → the channel is refused until Mindeck is licensed. */
   licensed?: (channel: IpcChannel) => boolean
   /** Checks a remote call's validated payload (throws a coded error to refuse it). */
@@ -83,6 +86,9 @@ export class Router {
       }
       if (access === 'terminal' && !this.opts.remoteTerminal()) {
         return fail('remote-terminal-disabled', 'Remote shells are disabled on this Mindeck core')
+      }
+      if (access === 'browser' && !this.opts.remoteBrowser?.()) {
+        return fail('remote-browser-disabled', 'The browser is not shared with paired devices on this Mindeck core')
       }
       if (access === 'admin' && ctx.role !== 'admin') {
         return fail('admin-only', `${channel} needs a device with the admin role (or the Mindeck desktop app)`)

@@ -96,6 +96,21 @@ export interface FolderSize {
   partial: boolean
 }
 
+/** A piece of a file read for another device (`finder:read`): base64, at most FINDER_CHUNK bytes. */
+export interface FinderChunk {
+  /** Base64 of the bytes from `offset`. */
+  data: string
+  offset: number
+  /** The whole file's size. */
+  size: number
+  mime: string
+  /** This piece reaches the end. */
+  eof: boolean
+}
+
+/** The most a `finder:read` or `finder:write` moves at once (a remote request body stays below 8 MB). */
+export const FINDER_CHUNK = 4 * 1024 * 1024
+
 /** The usual places — each only when it exists. */
 export type FinderPlaceId = 'home' | 'desktop' | 'documents' | 'downloads' | 'pictures' | 'movies' | 'music'
 

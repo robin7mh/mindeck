@@ -192,6 +192,7 @@ function RemoteCard() {
             </p>
           )}
           <Toggle label={t.settings.shells} hint={t.settings.shellsHint} checked={cfg.remoteTerminal} disabled={s.busy} onChange={(v) => void s.configureServer({ remoteTerminal: v })} />
+          <Toggle label={t.settings.shareBrowser} hint={t.settings.shareBrowserHint} checked={cfg.remoteBrowser} disabled={s.busy} onChange={(v) => void s.configureServer({ remoteBrowser: v })} />
           <label className="mt-1 flex items-center gap-2">
             <TechLabel className="text-text-muted">{t.settings.port}</TechLabel>
             <input

@@ -1,6 +1,8 @@
 import type { IpcChannel, IpcEvent } from '@shared/ipc/contract'
 import { ALL_PROJECTS, type AgentRun, type ConversationSummary, type PermissionGrant, type PermissionRequest } from '@shared/types/ai'
 import type { AgentSession } from '@shared/types/agents'
+import type { BrowserState, BrowserSuggestion, BrowserTab } from '@shared/types/browser'
+import type { FinderEntry, FinderListing } from '@shared/types/finder'
 import type { MindeckEvent } from '@shared/types/events'
 import type { LiveServerStatus } from '@shared/types/live'
 import type { RemoteAccess } from './RemoteAccess'
@@ -9,17 +11,42 @@ import type { RemoteAccess } from './RemoteAccess'
 const VERDICT_MS = 2000
 
 export interface RemoteScopeDeps {
-  access: Pick<RemoteAccess, 'check' | 'project'>
+  access: Pick<RemoteAccess, 'check' | 'project' | 'denied'>
   /** The project an agent session works in (undefined: no such session). */
   sessionProject: (id: string) => string | undefined
   /** The project an assistant conversation belongs to (undefined: none, or no such conversation). */
   conversationProject: (id: string) => Promise<string | undefined>
   /** The approvals waiting now. */
   pending: () => PermissionRequest[]
+  /** A browser tab by id (undefined: none). */
+  browserTab: (id: string) => BrowserTab | undefined
   now?: () => number
 }
 
 type Payload = Record<string, unknown>
+
+const isPrivate = (tab: BrowserTab | undefined) => tab?.profile === 'private'
+
+function refused(message: string): Error {
+  return Object.assign(new Error(message), { code: 'remote-forbidden' })
+}
+
+/** The browser as a paired device sees it: private tabs — and their groups, splits, downloads and questions — left out. */
+export function publicBrowserState(state: BrowserState): BrowserState {
+  const hidden = new Set(state.tabs.filter(isPrivate).map((t) => t.id))
+  if (!hidden.size && !state.downloads.some((d) => d.private) && !state.groups.some((g) => g.private)) return state
+  const shown = (tabId: string | undefined) => !tabId || !hidden.has(tabId)
+  return {
+    ...state,
+    tabs: state.tabs.filter((t) => !hidden.has(t.id)),
+    activeId: shown(state.activeId) ? state.activeId : undefined,
+    downloads: state.downloads.filter((d) => !d.private),
+    permissions: state.permissions.filter((r) => shown(r.tabId)),
+    ...(state.auth ? { auth: state.auth.filter((r) => shown(r.tabId)) } : {}),
+    groups: state.groups.filter((g) => !g.private),
+    splits: state.splits.filter((sp) => sp.tabs.every((id) => !hidden.has(id)))
+  }
+}
 
 /**
  * What a paired device sees of the core's activity: agent sessions,
@@ -55,6 +82,10 @@ export class RemoteScope {
     if ((channel === 'ai:send' || channel === 'ai:cancel') && typeof p.conversationId === 'string') {
       return this.require(await this.conversation(p.conversationId))
     }
+    if (channel.startsWith('browser:')) {
+      if (channel === 'browser:open' && p.private) throw refused('Private tabs stay on the desktop')
+      if (id && isPrivate(this.deps.browserTab(id))) throw refused('Private tabs stay on the desktop')
+    }
     if (channel === 'permission:respond' && id) {
       const request = this.deps.pending().find((r) => r.id === id)
       if (request) return this.require(await this.requestProject(request))
@@ -78,6 +109,17 @@ export class RemoteScope {
         return this.keep(data as MindeckEvent[], (e) => this.eventProject(e))
       case 'liveServer:status':
         return this.keep(data as LiveServerStatus[], (s) => s.projectId)
+      case 'browser:state':
+        return publicBrowserState(data as BrowserState)
+      case 'browser:suggest':
+        return (data as BrowserSuggestion[]).filter((s) => !s.tabId || !isPrivate(this.deps.browserTab(s.tabId)))
+      case 'finder:list': {
+        const listing = data as FinderListing
+        const entries = listing.entries.filter((e) => this.visibleFile(e))
+        return { ...listing, entries, total: listing.total - (listing.entries.length - entries.length) }
+      }
+      case 'finder:search':
+        return (data as FinderEntry[]).filter((e) => this.visibleFile(e))
       default:
         return data
     }
@@ -107,9 +149,16 @@ export class RemoteScope {
         return this.only(p, await this.requestProject(payload as PermissionRequest))
       case 'events:event':
         return this.only(p, await this.eventProject(payload as MindeckEvent))
+      case 'browser:state':
+        return publicBrowserState(payload as BrowserState)
       default:
         return payload
     }
+  }
+
+  /** A file a device's Files lists: not hidden, not a key or credential. */
+  private visibleFile(e: FinderEntry): boolean {
+    return !e.hidden && !this.deps.access.denied(e.path)
   }
 
   /** Whether devices may see what belongs to `projectId` (nothing to see: yes). Verdicts are kept a moment. */

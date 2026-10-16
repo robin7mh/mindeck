@@ -80,6 +80,11 @@ export class ServerController {
     return this.config.remoteTerminal
   }
 
+  /** The desktop lets paired devices see and use the browser's tabs. */
+  remoteBrowser(): boolean {
+    return this.config.remoteBrowser
+  }
+
   /** The folders shared with paired devices. */
   remoteRoots(): string[] {
     return [...this.config.remoteRoots]
@@ -109,6 +114,7 @@ export class ServerController {
       version: this.opts.version,
       webRoot: this.opts.webRoot,
       remoteTerminal: () => this.config.remoteTerminal,
+      remoteBrowser: () => this.config.remoteBrowser,
       onClients: this.opts.onClients,
       scope: this.opts.scope,
       allowedHosts: allowedHostsFromEnv(),

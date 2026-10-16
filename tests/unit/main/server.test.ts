@@ -259,6 +259,7 @@ async function startHttp(
   opts: {
     webRoot?: string
     remoteTerminal?: boolean
+    remoteBrowser?: boolean
     onClients?: (n: number) => void
     scope?: (channel: string, payload: unknown) => Promise<unknown>
     allowedHosts?: string[]
@@ -272,6 +273,7 @@ async function startHttp(
   const auth = new AuthService(join(dir, 'devices.json'))
   const hub = new EventHub()
   let terminal = opts.remoteTerminal ?? false
+  let browser = opts.remoteBrowser ?? false
   const router = new Router({ remoteTerminal: () => terminal })
   router.register('projects:list', () => [{ id: 'p' }] as never)
   router.register('memory:read', ({ path }) => ({ path }) as never)
@@ -285,6 +287,7 @@ async function startHttp(
     version: '9.9.9',
     webRoot: opts.webRoot,
     remoteTerminal: () => terminal,
+    ...(opts.remoteBrowser === undefined ? {} : { remoteBrowser: () => browser }),
     onClients: opts.onClients,
     scope: opts.scope,
     allowedHosts: opts.allowedHosts,
@@ -299,7 +302,7 @@ async function startHttp(
   const base = `http://127.0.0.1:${http.port}`
   const { code } = await auth.createPairingCode()
   const { token, device } = await auth.pair(code, 'test')
-  return { http, hub, auth, base, token, device, setTerminal: (v: boolean) => (terminal = v) }
+  return { http, hub, auth, base, token, device, setTerminal: (v: boolean) => (terminal = v), setBrowser: (v: boolean) => (browser = v) }
 }
 
 const rpc = (base: string, channel: string, body?: unknown, token?: string) =>
@@ -320,6 +323,18 @@ function openSocket(url: string, protocols?: string[]): Promise<{ ws: WebSocket;
 }
 
 describe('HttpServer — API', () => {
+  it('sends the browser\'s tabs to devices only while the desktop shares the browser', async () => {
+    const { base, token, hub, setBrowser } = await startHttp({ remoteBrowser: false })
+    const { ws, messages } = await openSocket(`${base.replace('http', 'ws')}/api/events`, eventsProtocols(token))
+    hub.publish('browser:bookmarks', [])
+    setBrowser(true)
+    hub.publish('browser:bookmarks', [{ id: 'bar', title: 'Bar', children: [] }] as never)
+    hub.publish('browser:find', { tabId: 't', active: 0, matches: 0 }) // the desktop's own search bar
+    await tick(30)
+    expect(messages.slice(1)).toEqual([{ channel: 'browser:bookmarks', payload: [{ id: 'bar', title: 'Bar', children: [] }] }])
+    ws.close()
+  })
+
   it('serves health publicly and guards the RPC with device tokens', async () => {
     const { base, token } = await startHttp()
     const health = await fetch(`${base}/api/health`)
@@ -722,6 +737,7 @@ describe('HttpServer — events socket', () => {
     hub.publish('terminal:exit', { id: 't2', exitCode: 0 })
     hub.publish('permission:request', { id: 'r1', allowAlways: true } as never)
     hub.publish('browser:reveal', { tabId: 't' }) // the desktop window's own
+    hub.publish('browser:bookmarks', []) // the browser is not shared (no setting at all)
     // Search results (file contents) reach only the device that searched — the desktop's none.
     hub.publish('search:progress', { id: 's', files: [], done: true })
     hub.publish('search:progress', { id: 's', files: [], done: true, device: 'another-device' })
@@ -1059,11 +1075,13 @@ describe('ServerController', () => {
   it('desktop: off by default, configurable, restarts on network changes only', async () => {
     const { settings, deps } = await base()
     const created: { listen: ReturnType<typeof vi.fn>; close: ReturnType<typeof vi.fn>; disconnectDevice: ReturnType<typeof vi.fn>; resetReplay: ReturnType<typeof vi.fn> }[] = []
+    const serverOptions: { remoteBrowser?: () => boolean }[] = []
     const controller = new ServerController({
       ...deps,
       settings,
       addresses: () => ['192.168.1.5'],
-      createServer: () => {
+      createServer: (o) => {
+        serverOptions.push(o)
         const fake = { listen: vi.fn(async () => {}), close: vi.fn(async () => {}), disconnectDevice: vi.fn(), setTls: vi.fn(), resetReplay: vi.fn() }
         created.push(fake)
         return fake as never
@@ -1085,8 +1103,12 @@ describe('ServerController', () => {
     await controller.start() // already running
     expect(created).toHaveLength(1)
 
-    status = await controller.configure({ remoteTerminal: true, remoteRoots: ['/srv/code'] }) // no restart
+    expect(serverOptions[0].remoteBrowser!()).toBe(false)
+    status = await controller.configure({ remoteTerminal: true, remoteBrowser: true, remoteRoots: ['/srv/code'] }) // no restart
     expect(controller.remoteTerminal()).toBe(true)
+    // Sharing the browser applies at once, to the running server too.
+    expect(controller.remoteBrowser()).toBe(true)
+    expect(serverOptions[0].remoteBrowser!()).toBe(true)
     expect(controller.remoteRoots()).toEqual(['/srv/code'])
     expect(settings.get().server?.remoteRoots).toEqual(['/srv/code'])
     expect(created).toHaveLength(1)
@@ -1123,7 +1145,7 @@ describe('ServerController', () => {
 
   it('keeps a start error in the status; reads saved settings', async () => {
     const { settings, deps } = await base()
-    await settings.update({ server: { enabled: true, lan: false, tls: true, port: 7999, remoteTerminal: false, remoteRoots: [] } })
+    await settings.update({ server: { enabled: true, lan: false, tls: true, port: 7999, remoteTerminal: false, remoteBrowser: false, remoteRoots: [] } })
     const fake = { listen: vi.fn(async () => Promise.reject(new Error('EADDRINUSE'))), close: vi.fn(async () => {}) }
     const controller = new ServerController({ ...deps, settings, createServer: () => fake as never })
     await controller.start()
@@ -1133,7 +1155,7 @@ describe('ServerController', () => {
 
   it('standalone: fixed config, real server, not configurable', async () => {
     const { deps } = await base()
-    const controller = new ServerController({ ...deps, mode: 'server', fixedConfig: { enabled: true, lan: false, tls: true, port: 0, remoteTerminal: false, remoteRoots: [] } })
+    const controller = new ServerController({ ...deps, mode: 'server', fixedConfig: { enabled: true, lan: false, tls: true, port: 0, remoteTerminal: false, remoteBrowser: false, remoteRoots: [] } })
     await controller.start()
     expect(controller.status()).toMatchObject({ running: true, configurable: false })
     expect(controller.status().urls[0]).toMatch(/^http:\/\/127\.0\.0\.1:[1-9]\d*$/)
@@ -1147,7 +1169,7 @@ describe('ServerController', () => {
 
   it('LAN mode without injected addresses asks the OS', async () => {
     const { deps } = await base()
-    const c = new ServerController({ ...deps, mode: 'server', fixedConfig: { enabled: false, lan: true, tls: false, port: 7420, remoteTerminal: false, remoteRoots: [] } })
+    const c = new ServerController({ ...deps, mode: 'server', fixedConfig: { enabled: false, lan: true, tls: false, port: 7420, remoteTerminal: false, remoteBrowser: false, remoteRoots: [] } })
     expect(c.status().urls[0]).toBe('http://127.0.0.1:7420')
   })
 

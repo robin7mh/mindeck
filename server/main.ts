@@ -46,6 +46,8 @@ export function serverConfigFromEnv(env: NodeJS.ProcessEnv = process.env): Serve
     tls: env.MINDECK_TLS === undefined || flag(env.MINDECK_TLS),
     port: env.MINDECK_PORT && Number.isInteger(port) && port >= 0 && port < 65536 ? port : DEFAULT_SERVER_CONFIG.port,
     remoteTerminal: flag(env.MINDECK_REMOTE_TERMINAL),
+    // A headless core has no browser.
+    remoteBrowser: false,
     remoteRoots: env.MINDECK_REMOTE_ROOTS ? env.MINDECK_REMOTE_ROOTS.split(delimiter).filter(Boolean) : ['/projects']
   }
 }

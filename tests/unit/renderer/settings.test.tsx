@@ -33,7 +33,7 @@ const PK_HEX = 'EF'.repeat(32)
 const PK = formatFingerprint(PK_HEX)
 
 const server = (over: Partial<ServerStatus> = {}): ServerStatus => ({
-  config: { enabled: true, lan: false, tls: true, port: 7420, remoteTerminal: false, remoteRoots: [] },
+  config: { enabled: true, lan: false, tls: true, port: 7420, remoteTerminal: false, remoteBrowser: false, remoteRoots: [] },
   running: true,
   urls: ['http://127.0.0.1:7420'],
   configurable: true,
@@ -459,6 +459,10 @@ describe('SettingsView', () => {
     await act(settle)
     expect(useSettings.getState().server?.config.lan).toBe(true)
     fireEvent.click(screen.getByLabelText('Allow remote shells'))
+    // Sharing the browser with devices is its own, explicit switch.
+    fireEvent.click(screen.getByLabelText('Share the browser with paired devices'))
+    await act(settle)
+    expect(useSettings.getState().server?.config.remoteBrowser).toBe(true)
     fireEvent.click(screen.getByLabelText('Run the API server'))
     await act(settle)
     const port = screen.getByLabelText('Port')
@@ -592,7 +596,7 @@ describe('SettingsView', () => {
   it('in a browser: server settings are read-only, vault via folder browser, errors show', async () => {
     installRemote(
       settingsCore({
-        'server:status': () => server({ configurable: false, running: false, error: 'EADDRINUSE', config: { enabled: true, lan: true, tls: true, port: 7420, remoteTerminal: true, remoteRoots: [] } }),
+        'server:status': () => server({ configurable: false, running: false, error: 'EADDRINUSE', config: { enabled: true, lan: true, tls: true, port: 7420, remoteTerminal: true, remoteBrowser: false, remoteRoots: [] } }),
         'server:devices': () => [],
         'memory:setVault': () => fail('That folder does not exist')
       })

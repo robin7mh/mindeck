@@ -1903,6 +1903,8 @@ agents: {
     certificateOwn: (until) => `Eigenes Zertifikat · gültig bis ${until}`,
     shells: 'Remote-Shells erlauben',
     shellsHint: 'Gekoppelte Geräte dürfen Terminals öffnen, Agents Befehle ausführen und Dateien ändern lassen und Änderungen freigeben. Standardmäßig aus.',
+    shareBrowser: 'Browser mit gekoppelten Geräten teilen',
+    shareBrowserHint: 'Gekoppelte Geräte sehen deine Tabs als Bild und können sie bedienen — Seiten öffnen, tippen, schreiben. Sie handeln mit deinen Logins, also lass es aus, wenn du es nicht brauchst. Private Tabs verlassen diesen Computer nie.',
     port: 'Port',
     desktopOnly: 'Server-Einstellungen lassen sich nur in der Desktop-App ändern.',
     envOnly: 'Dieser Core wird über seine Umgebung konfiguriert (MINDECK_PORT, MINDECK_LAN, MINDECK_TLS, MINDECK_REMOTE_TERMINAL, MINDECK_REMOTE_ROOTS).',

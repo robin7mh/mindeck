@@ -66,7 +66,7 @@ async function core(opts: Partial<Parameters<typeof createCore>[0]> = {}) {
 
 describe('createCore', () => {
   it('wires every service onto one router', async () => {
-    const c = await core({ serverConfig: { enabled: false, lan: false, tls: true, port: 0, remoteTerminal: false, remoteRoots: [] } })
+    const c = await core({ serverConfig: { enabled: false, lan: false, tls: true, port: 0, remoteTerminal: false, remoteBrowser: false, remoteRoots: [] } })
     expect(await c.router.dispatch('app:info', undefined, { transport: 'ipc' })).toMatchObject({
       ok: true,
       data: { mode: 'server', version: '1.2.3', remoteTerminal: false }
@@ -214,7 +214,7 @@ describe('createCore', () => {
     const realPlatform = process.platform
     Object.defineProperty(process, 'platform', { value: 'linux' }) // no Spotlight here: Files walks
     const openExternal = vi.fn(async () => {})
-    const c = await core({ mode: 'desktop', serverConfig: { enabled: false, lan: false, tls: true, port: 0, remoteTerminal: false, remoteRoots: [] }, platform: { ...headlessPlatform, kind: 'desktop', openExternal } })
+    const c = await core({ mode: 'desktop', serverConfig: { enabled: false, lan: false, tls: true, port: 0, remoteTerminal: false, remoteBrowser: false, remoteRoots: [] }, platform: { ...headlessPlatform, kind: 'desktop', openExternal } })
     Object.defineProperty(process, 'platform', { value: realPlatform })
     const pushed: string[] = []
     c.hub.subscribe((channel) => pushed.push(channel))
@@ -272,6 +272,17 @@ describe('createCore', () => {
   })
 })
 
+describe('createCore — the browser shared with paired devices', () => {
+  it('lets a device reach the tabs only when the desktop shares them — private tabs never', async () => {
+    const c = await core({ serverConfig: { enabled: false, lan: false, tls: true, port: 0, remoteTerminal: false, remoteBrowser: true, remoteRoots: [] } })
+    const phone = { transport: 'remote' as const, deviceId: 'phone', role: 'member' as const }
+    // A headless core has the tabs' records but no web views.
+    expect(await c.router.dispatch('browser:state', undefined, phone)).toMatchObject({ ok: true, data: { available: false } })
+    expect(await c.router.dispatch('browser:capture', { id: 'nope' }, phone)).toMatchObject({ ok: false, error: { code: 'desktop-only' } })
+    expect(await c.router.dispatch('browser:open', { url: 'x', private: true }, phone)).toMatchObject({ ok: false, error: { code: 'remote-forbidden' } })
+  })
+})
+
 describe('createCore — Mindeck license', () => {
   it('a licensed core refuses work until its account may run Mindeck; signing in stays possible', async () => {
     const fetch = vi.fn(async () => new Response(JSON.stringify({ error: { code: 'invalid_credentials' } }), { status: 401 }))
@@ -318,7 +329,7 @@ describe('createCore — assistant end to end (scripted model)', () => {
     }
     try {
       const c = await core({
-        serverConfig: { enabled: false, lan: false, tls: true, port: 0, remoteTerminal: false, remoteRoots: [] },
+        serverConfig: { enabled: false, lan: false, tls: true, port: 0, remoteTerminal: false, remoteBrowser: false, remoteRoots: [] },
         providerFactory: { create: () => provider as never }
       })
       await c.router.dispatch('memory:createVault', undefined, { transport: 'ipc' })
@@ -511,13 +522,14 @@ describe('standalone server entry', () => {
   })
 
   it('reads its config from the environment', () => {
-    expect(serverConfigFromEnv({})).toEqual({ enabled: true, lan: false, tls: true, port: 7420, remoteTerminal: false, remoteRoots: ['/projects'] })
+    expect(serverConfigFromEnv({})).toEqual({ enabled: true, lan: false, tls: true, port: 7420, remoteTerminal: false, remoteBrowser: false, remoteRoots: ['/projects'] })
     expect(serverConfigFromEnv({ MINDECK_PORT: '8000', MINDECK_LAN: '1', MINDECK_TLS: '0', MINDECK_REMOTE_TERMINAL: 'true', MINDECK_REMOTE_ROOTS: `/srv/code${delimiter}${delimiter}/data/notes` })).toEqual({
       enabled: true,
       lan: true,
       tls: false,
       port: 8000,
       remoteTerminal: true,
+      remoteBrowser: false,
       remoteRoots: ['/srv/code', '/data/notes']
     })
     expect(serverConfigFromEnv({ MINDECK_PORT: 'abc' }).port).toBe(7420)

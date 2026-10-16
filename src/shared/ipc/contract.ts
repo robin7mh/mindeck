@@ -98,9 +98,11 @@ import type {
 import type { MindeckEvent } from '@shared/types/events'
 import type { CloudAccount, CloudStatus, PushSettings } from '@shared/types/cloud'
 import type {
+  BrowserCapture,
   BrowserCommand,
   BrowserFind,
   BrowserGo,
+  BrowserInput,
   BrowserPane,
   BrowserSettings,
   BrowserSplit,
@@ -115,6 +117,7 @@ import type {
   WorkspaceKey
 } from '@shared/types/browser'
 import type {
+  FinderChunk,
   FinderEntry,
   FinderInfo,
   FinderListing,
@@ -552,6 +555,10 @@ export interface IpcChannels {
   'browser:groupUpdate': { request: { id: string; title?: string; color?: TabGroupColor; collapsed?: boolean }; response: void }
   'browser:ungroup': { request: { id: string }; response: void }
   'browser:groupClose': { request: { id: string }; response: void }
+  /** A tab's picture for a paired device (null: nothing to show, e.g. the new-tab page). */
+  'browser:capture': { request: { id: string; width?: number }; response: BrowserCapture | null }
+  /** A tap, scroll, text or key from a paired device, at page coordinates. */
+  'browser:input': { request: BrowserInput & { id: string }; response: void }
   /** Split view: `id` on the left (top), `with` beside it — a new tab when absent. */
   'browser:split': { request: { id: string; with?: string; vertical?: boolean }; response: BrowserSplit }
   'browser:splitUpdate': { request: { id: string; ratio?: number; vertical?: boolean; swap?: boolean }; response: void }
@@ -594,6 +601,13 @@ export interface IpcChannels {
   'finder:clipboardWrite': { request: { paths: string[]; cut: boolean }; response: void }
   /** Files copied in Finder / Explorer. */
   'finder:clipboardRead': { request: void; response: string[] }
+  /** A piece of a file (at most FINDER_CHUNK bytes from `offset`) — how another device gets a file. */
+  'finder:read': { request: { path: string; offset?: number; length?: number }; response: FinderChunk }
+  /**
+   * A piece of a file from another device: offset 0 makes the file (`replace`: over one that is
+   * there — it goes to the trash), a later piece goes on at the file's end (`offset` = its size).
+   */
+  'finder:write': { request: { path: string; data: string; offset?: number; replace?: boolean }; response: { size: number } }
   /** With the app the OS opens it with. */
   'finder:open': { request: { path: string }; response: void }
   /** Show it in the OS file manager. */
@@ -613,11 +627,14 @@ export type IpcChannel = keyof IpcChannels
  *                devices, the AI key, the Mindeck account, global settings
  * - `trusted`  — desktop, admin devices, or any device while remote shells
  *                are enabled: data beyond the shared folders (databases)
+ * - `browser`  — desktop, or remote clients when the desktop lets paired
+ *                devices use the browser (its tabs carry the user's logins;
+ *                off by default, private tabs never)
  *
  * Paired devices also only reach shared folders, and approve changes and
  * commands only with remote shells (see RemoteAccess and PermissionService).
  */
-export type ChannelAccess = 'any' | 'desktop' | 'terminal' | 'admin' | 'trusted'
+export type ChannelAccess = 'any' | 'desktop' | 'terminal' | 'admin' | 'trusted' | 'browser'
 
 /** Every channel classified exactly once — a new channel without one is a type error. */
 export const CHANNEL_ACCESS: Record<IpcChannel, ChannelAccess> = {
@@ -893,37 +910,38 @@ export const CHANNEL_ACCESS: Record<IpcChannel, ChannelAccess> = {
   'browser:proceed': 'desktop',
   'browser:dismissDrm': 'desktop',
   'browser:pickDownloadDir': 'desktop',
-  // The browser lives in the desktop window — and its tabs are the user's private pages.
-  'browser:state': 'desktop',
-  'browser:open': 'desktop',
-  'browser:close': 'desktop',
-  'browser:activate': 'desktop',
-  'browser:navigate': 'desktop',
-  'browser:go': 'desktop',
+  // The browser lives in the desktop window — and its tabs carry the user's logins. A paired device
+  // sees and uses them only when the desktop allows it (remoteBrowser), private tabs never.
+  'browser:state': 'browser',
+  'browser:open': 'browser',
+  'browser:close': 'browser',
+  'browser:activate': 'browser',
+  'browser:navigate': 'browser',
+  'browser:go': 'browser',
   'browser:update': 'desktop',
   'browser:move': 'desktop',
-  'browser:duplicate': 'desktop',
-  'browser:reopen': 'desktop',
-  'browser:zoom': 'desktop',
+  'browser:duplicate': 'browser',
+  'browser:reopen': 'browser',
+  'browser:zoom': 'browser',
   'browser:find': 'desktop',
   'browser:findStop': 'desktop',
   'browser:tool': 'desktop',
   'browser:view': 'desktop',
   'browser:freeze': 'desktop',
   'browser:unfreeze': 'desktop',
-  'browser:suggest': 'desktop',
-  'browser:history': 'desktop',
+  'browser:suggest': 'browser',
+  'browser:history': 'browser',
   'browser:clearHistory': 'desktop',
   'browser:download': 'desktop',
   'browser:permission': 'desktop',
   'browser:settings': 'desktop',
   'browser:configure': 'desktop',
   'browser:ui': 'desktop',
-  'browser:searchSuggest': 'desktop',
-  'browser:historyList': 'desktop',
+  'browser:searchSuggest': 'browser',
+  'browser:historyList': 'browser',
   'browser:historyDelete': 'desktop',
-  'browser:bookmarks': 'desktop',
-  'browser:bookmarkAdd': 'desktop',
+  'browser:bookmarks': 'browser',
+  'browser:bookmarkAdd': 'browser',
   'browser:bookmarkUpdate': 'desktop',
   'browser:bookmarkMove': 'desktop',
   'browser:bookmarkRemove': 'desktop',
@@ -939,30 +957,36 @@ export const CHANNEL_ACCESS: Record<IpcChannel, ChannelAccess> = {
   'browser:split': 'desktop',
   'browser:splitUpdate': 'desktop',
   'browser:unsplit': 'desktop',
-  // The whole disk, beyond projects and the vault: the desktop app only.
-  'finder:places': 'desktop',
-  'finder:list': 'desktop',
-  'finder:search': 'desktop',
-  'finder:preview': 'desktop',
-  'finder:mkdir': 'desktop',
-  'finder:rename': 'desktop',
-  'finder:trash': 'desktop',
-  'finder:move': 'desktop',
-  'finder:copy': 'desktop',
-  'finder:untrash': 'desktop',
+  'browser:capture': 'browser',
+  'browser:input': 'browser',
+  // The whole disk, beyond projects and the vault: the desktop, or a device with remote shells (which
+  // could read it with a shell anyway) — inside Home and on drives, never hidden folders, keys or
+  // Mindeck's own data (RemoteAccess). The host's own apps, Finder and clipboard: the desktop only.
+  'finder:places': 'terminal',
+  'finder:list': 'terminal',
+  'finder:search': 'terminal',
+  'finder:preview': 'terminal',
+  'finder:mkdir': 'terminal',
+  'finder:rename': 'terminal',
+  'finder:trash': 'terminal',
+  'finder:move': 'terminal',
+  'finder:copy': 'terminal',
+  'finder:untrash': 'terminal',
   'finder:privacySettings': 'desktop',
-  'finder:conflicts': 'desktop',
-  'finder:transfer': 'desktop',
-  'finder:cancel': 'desktop',
-  'finder:restore': 'desktop',
-  'finder:info': 'desktop',
-  'finder:folderSize': 'desktop',
-  'finder:compress': 'desktop',
-  'finder:extract': 'desktop',
+  'finder:conflicts': 'terminal',
+  'finder:transfer': 'terminal',
+  'finder:cancel': 'terminal',
+  'finder:restore': 'terminal',
+  'finder:info': 'terminal',
+  'finder:folderSize': 'terminal',
+  'finder:compress': 'terminal',
+  'finder:extract': 'terminal',
   'finder:clipboardWrite': 'desktop',
   'finder:clipboardRead': 'desktop',
   'finder:open': 'desktop',
-  'finder:reveal': 'desktop'
+  'finder:reveal': 'desktop',
+  'finder:read': 'terminal',
+  'finder:write': 'terminal'
 }
 
 /** Runtime allowlist — the preload rejects any channel not in this set. */
@@ -1058,7 +1082,10 @@ export const IPC_EVENTS: readonly IpcEvent[] = [
 ]
 
 /** Push events remote clients only receive when remote shells are enabled. */
-export const TERMINAL_EVENTS: readonly IpcEvent[] = ['terminal:data', 'terminal:exit', 'terminal:info', 'terminal:reveal', 'debug:session', 'debug:output', 'notebook:event']
+export const TERMINAL_EVENTS: readonly IpcEvent[] = ['terminal:data', 'terminal:exit', 'terminal:info', 'terminal:reveal', 'debug:session', 'debug:output', 'notebook:event', 'finder:progress']
 
-/** Push events that never leave the desktop window (the browser's tabs are private pages; Remote-SSH windows are the desktop's own). */
-export const DESKTOP_EVENTS: readonly IpcEvent[] = ['browser:state', 'browser:find', 'browser:command', 'browser:reveal', 'browser:bookmarks', 'browser:import', 'finder:progress', 'remote:changed']
+/** Push events remote clients only receive when the desktop lets paired devices use the browser (private tabs left out). */
+export const BROWSER_EVENTS: readonly IpcEvent[] = ['browser:state', 'browser:bookmarks']
+
+/** Push events that never leave the desktop window (its own browser UI; Remote-SSH windows are the desktop's own). */
+export const DESKTOP_EVENTS: readonly IpcEvent[] = ['browser:find', 'browser:command', 'browser:reveal', 'browser:import', 'remote:changed']
