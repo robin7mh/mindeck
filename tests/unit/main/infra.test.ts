@@ -202,6 +202,29 @@ describe('ipc router', () => {
     expect(shape).toHaveBeenCalledTimes(1)
   })
 
+  it('lets an observer see each remote call that went through — never the desktop’s, refused ones or its own failure', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const seen: unknown[][] = []
+    const observe = vi.fn((...args: unknown[]) => {
+      seen.push(args)
+      if ((args[1] as { path?: unknown } | undefined)?.path === 'boom.md') throw new Error('observer broke')
+    })
+    const router = new Router({ remoteTerminal: () => false, observe })
+    router.register('memory:read', ({ path }) => ({ path }) as never)
+    router.register('agents:list', () => {
+      throw Object.assign(new Error('nope'), { code: 'x' })
+    })
+    await router.dispatch('memory:read', { path: 'a.md' }, ipcCtx)
+    expect(await router.dispatch('memory:read', { path: 'a.md' }, remoteCtx)).toEqual({ ok: true, data: { path: 'a.md' } })
+    await router.dispatch('agents:list', undefined, remoteCtx)
+    await router.dispatch('memory:read', { path: 1 }, remoteCtx)
+    expect(seen).toEqual([['memory:read', { path: 'a.md' }, { path: 'a.md' }, remoteCtx]])
+    // An observer that breaks never breaks the call.
+    expect(await router.dispatch('memory:read', { path: 'boom.md' }, remoteCtx)).toMatchObject({ ok: true })
+    expect(error).toHaveBeenCalledWith('[router] observing memory:read:', expect.any(Error))
+    error.mockRestore()
+  })
+
   it('paired devices list only the projects they may use, and add projects as remote ones', async () => {
     const router = new Router({ remoteTerminal: () => false })
     const service = { list: () => [{ id: 'a' }, { id: 'b' }], add: vi.fn(async (path: string) => ({ path })) }

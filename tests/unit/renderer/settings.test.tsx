@@ -33,7 +33,7 @@ const PK_HEX = 'EF'.repeat(32)
 const PK = formatFingerprint(PK_HEX)
 
 const server = (over: Partial<ServerStatus> = {}): ServerStatus => ({
-  config: { enabled: true, lan: false, tls: true, port: 7420, remoteTerminal: false, remoteBrowser: false, remoteRoots: [] },
+  config: { enabled: true, lan: false, tls: true, port: 7420, remoteTerminal: false, remoteRoots: [] },
   running: true,
   urls: ['http://127.0.0.1:7420'],
   configurable: true,
@@ -51,6 +51,9 @@ function settingsCore(over: Record<string, (p: never) => unknown> = {}) {
     'permission:grants': () => [{ agentId: 'assistant', toolName: 'memory_create_note', createdAt: '' }],
     'server:setDeviceRole': ({ id, role }: { id: string; role: string }) => [
       { id: 'd2', name: 'Chrome · macOS', role: id === 'd2' ? role : 'member', createdAt: new Date().toISOString() }
+    ],
+    'server:setDeviceBrowser': ({ id, browser }: { id: string; browser: boolean }) => [
+      { id, name: 'Chrome · macOS', role: 'admin', createdAt: new Date().toISOString(), ...(browser ? { browser: true } : {}) }
     ],
     'server:configure': (patch: Record<string, unknown>) => server({ config: { ...server().config, ...patch } as never }),
     'server:createPairingCode': () => ({ code: 'ABCD-EFGH', expiresAt: '', urls: ['http://127.0.0.1:7420', 'http://192.168.1.9:7420'] }),
@@ -175,6 +178,9 @@ describe('settings store', () => {
     expect(s().devices.map((d) => d.id)).toEqual(['d2'])
     await s().setDeviceRole('d2', 'admin')
     expect(s().devices).toEqual([expect.objectContaining({ id: 'd2', role: 'admin' })])
+    await s().setDeviceBrowser('d2', true)
+    expect(window.mindeck!.invoke).toHaveBeenLastCalledWith('server:setDeviceBrowser', { id: 'd2', browser: true })
+    expect(s().devices).toEqual([expect.objectContaining({ id: 'd2', browser: true })])
     await s().revokeGrant(s().grants[0])
     expect(window.mindeck!.invoke).toHaveBeenLastCalledWith('permission:revoke', { agentId: 'assistant', toolName: 'memory_create_note' })
     expect(s().grants).toEqual([])
@@ -185,7 +191,7 @@ describe('settings store', () => {
 
     installBridge(
       Object.fromEntries(
-        ['server:status', 'server:configure', 'server:createPairingCode', 'server:revokeDevice', 'server:setDeviceRole', 'permission:revoke'].map((ch) => [ch, () => fail(`${ch} failed`)])
+        ['server:status', 'server:configure', 'server:createPairingCode', 'server:revokeDevice', 'server:setDeviceRole', 'server:setDeviceBrowser', 'permission:revoke'].map((ch) => [ch, () => fail(`${ch} failed`)])
       )
     )
     for (const [run, text] of [
@@ -194,6 +200,7 @@ describe('settings store', () => {
       [() => s().createPairing(), 'server:createPairingCode failed'],
       [() => s().revokeDevice('x'), 'server:revokeDevice failed'],
       [() => s().setDeviceRole('x', 'admin'), 'server:setDeviceRole failed'],
+      [() => s().setDeviceBrowser('x', true), 'server:setDeviceBrowser failed'],
       [() => s().revokeGrant({ agentId: 'a', toolName: 't', createdAt: '' }), 'permission:revoke failed']
     ] as const) {
       await run()
@@ -459,10 +466,9 @@ describe('SettingsView', () => {
     await act(settle)
     expect(useSettings.getState().server?.config.lan).toBe(true)
     fireEvent.click(screen.getByLabelText('Allow remote shells'))
-    // Sharing the browser with devices is its own, explicit switch.
-    fireEvent.click(screen.getByLabelText('Share the browser with paired devices'))
     await act(settle)
-    expect(useSettings.getState().server?.config.remoteBrowser).toBe(true)
+    // The browser is shared per admin device, not for all of them.
+    expect(screen.queryByText(/an admin device you share the browser with/)).toBeNull()
     fireEvent.click(screen.getByLabelText('Run the API server'))
     await act(settle)
     const port = screen.getByLabelText('Port')
@@ -490,9 +496,20 @@ describe('SettingsView', () => {
     fireEvent.click(screen.getByLabelText('Revoke Pixel Phone'))
     await act(settle)
     expect(screen.queryByText('Pixel Phone')).toBeNull()
+    expect(screen.queryByLabelText('Share the browser with Chrome · macOS')).toBeNull() // members never get it
     choose('Role of Chrome · macOS', 'Admin')
     await act(settle)
     expect(useSettings.getState().devices[0].role).toBe('admin')
+    const share = screen.getByLabelText('Share the browser with Chrome · macOS')
+    expect(share).toHaveAttribute('aria-pressed', 'false')
+    expect(screen.getByText(/an admin device you share the browser with sees your tabs/)).toBeInTheDocument()
+    fireEvent.click(share)
+    await act(settle)
+    expect(window.mindeck!.invoke).toHaveBeenCalledWith('server:setDeviceBrowser', { id: 'd2', browser: true })
+    expect(screen.getByLabelText('Share the browser with Chrome · macOS')).toHaveAttribute('aria-pressed', 'true')
+    fireEvent.click(screen.getByLabelText('Share the browser with Chrome · macOS'))
+    await act(settle)
+    expect(window.mindeck!.invoke).toHaveBeenLastCalledWith('server:setDeviceBrowser', { id: 'd2', browser: false })
 
     // grants
     expect(screen.getByText('assistant → memory_create_note')).toBeInTheDocument()
@@ -564,7 +581,8 @@ describe('SettingsView', () => {
   it('in a browser: an admin device manages devices; a member removes only itself and sees the grants', async () => {
     const devices = (meRole: 'admin' | 'member') => [
       { id: 'me', name: 'This laptop', role: meRole, createdAt: new Date().toISOString() },
-      { id: 'phone', name: 'Pixel Phone', role: 'member' as const, createdAt: new Date().toISOString() }
+      { id: 'phone', name: 'Pixel Phone', role: 'member' as const, createdAt: new Date().toISOString() },
+      { id: 'tablet', name: 'iPad', role: 'admin' as const, createdAt: new Date().toISOString(), browser: true }
     ]
     localStorage.setItem('mindeck.deviceId', 'me')
     const remote = installRemote(settingsCore({ 'server:devices': () => devices('admin') }))
@@ -576,6 +594,9 @@ describe('SettingsView', () => {
     expect(screen.getByRole('combobox', { name: 'Role of Pixel Phone' })).toBeInTheDocument()
     expect(screen.getByLabelText('Revoke Pixel Phone')).toBeInTheDocument()
     expect(screen.getByLabelText('Revoke assistant memory_create_note · Outside projects')).toBeInTheDocument()
+    // Who uses the browser shows here too — sharing it is the desktop's decision.
+    expect(screen.getByLabelText('Uses the browser')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Share the browser with iPad')).toBeNull()
     unmount()
 
     remote.routes['server:devices'] = () => devices('member')
@@ -585,6 +606,7 @@ describe('SettingsView', () => {
     expect(screen.queryByLabelText('Pair as admin')).toBeNull()
     expect(screen.queryByRole('combobox', { name: 'Role of Pixel Phone' })).toBeNull()
     expect(screen.getAllByText('Member')).toHaveLength(2)
+    expect(screen.getByText('Admin')).toBeInTheDocument()
     expect(screen.queryByLabelText('Revoke Pixel Phone')).toBeNull()
     expect(screen.getByLabelText('Revoke This laptop')).toBeInTheDocument() // unpairing itself
     expect(screen.getByText('assistant → memory_create_note')).toBeInTheDocument()
@@ -596,7 +618,7 @@ describe('SettingsView', () => {
   it('in a browser: server settings are read-only, vault via folder browser, errors show', async () => {
     installRemote(
       settingsCore({
-        'server:status': () => server({ configurable: false, running: false, error: 'EADDRINUSE', config: { enabled: true, lan: true, tls: true, port: 7420, remoteTerminal: true, remoteBrowser: false, remoteRoots: [] } }),
+        'server:status': () => server({ configurable: false, running: false, error: 'EADDRINUSE', config: { enabled: true, lan: true, tls: true, port: 7420, remoteTerminal: true, remoteRoots: [] } }),
         'server:devices': () => [],
         'memory:setVault': () => fail('That folder does not exist')
       })

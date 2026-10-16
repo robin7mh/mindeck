@@ -21,6 +21,8 @@ export type MindeckEventType =
   | 'permission.denied'
   | 'session.started'
   | 'session.ended'
+  | 'device.browser'
+  | 'device.files'
 
 /**
  * How an event is persisted. The bus distributes ALL events to subscribers;
@@ -48,14 +50,32 @@ export const EVENT_CATALOG: Record<MindeckEventType, EventPersistence> = {
   'permission.granted': 'audit',
   'permission.denied': 'audit',
   'session.started': 'activity',
-  'session.ended': 'activity'
+  'session.ended': 'activity',
+  // What a paired device did with the desktop's browser and files: kept for good, shown on the desktop only.
+  'device.browser': 'audit',
+  'device.files': 'audit'
+}
+
+/** The payload of `device.browser` / `device.files` — what was done and where, never what was typed. */
+export interface DeviceActivity {
+  /** The device's name. */
+  device: string
+  /** browser: view, input, open, navigate, close, bookmark · files: download, upload, mkdir, rename, trash, restore, move, copy, undo, compress, extract */
+  action: string
+  /** The site (browser). */
+  host?: string
+  path?: string
+  /** The first few paths of a batch (`count`: all of them). */
+  paths?: string[]
+  count?: number
+  dest?: string
 }
 
 export interface MindeckEvent<T = unknown> {
   id: string
   type: MindeckEventType
   ts: string // ISO
-  actor: { kind: 'user' | 'agent' | 'system'; id?: string }
+  actor: { kind: 'user' | 'agent' | 'system' | 'device'; id?: string }
   /** Primary entity concerned, if any. */
   subject?: EntityRef
   /** Project scope, if any. */

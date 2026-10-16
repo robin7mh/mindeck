@@ -728,7 +728,29 @@ agents: {
       requested: (what: string) => `Approval requested: ${what}`,
       granted: (always: boolean, tool: string) => `Approved (${always ? 'always' : 'once'}): ${tool}`,
       denied: (tool: string) => `Denied: ${tool}`,
-      ended: (code?: number) => `Session ended${code ? ` (exit code ${code})` : ''}`
+      ended: (code?: number) => `Session ended${code ? ` (exit code ${code})` : ''}`,
+      items: (n: number) => `${n} items`,
+      // what a paired device did with the browser and the files (what: a site, a path, or "3 items → folder")
+      device: {
+        view: (device: string, what: string) => `${device} looked at ${what || 'a page'} in the browser`,
+        input: (device: string, what: string) => `${device} tapped or typed on ${what || 'a page'}`,
+        open: (device: string, what: string) => `${device} opened ${what || 'a new tab'}`,
+        navigate: (device: string, what: string) => `${device} went to ${what || 'a page'}`,
+        close: (device: string) => `${device} closed a tab`,
+        bookmark: (device: string, what: string) => `${device} bookmarked ${what || 'a page'}`,
+        download: (device: string, what: string) => `${device} downloaded ${what}`,
+        upload: (device: string, what: string) => `${device} uploaded ${what}`,
+        mkdir: (device: string, what: string) => `${device} created the folder ${what}`,
+        rename: (device: string, what: string) => `${device} renamed ${what}`,
+        trash: (device: string, what: string) => `${device} moved ${what} to the trash`,
+        restore: (device: string, what: string) => `${device} put ${what} back from the trash`,
+        move: (device: string, what: string) => `${device} moved ${what}`,
+        copy: (device: string, what: string) => `${device} copied ${what}`,
+        undo: (device: string) => `${device} undid a move`,
+        compress: (device: string, what: string) => `${device} compressed ${what}`,
+        extract: (device: string, what: string) => `${device} extracted ${what}`,
+        other: (device: string, what: string) => `${device}: ${what}`
+      }
     }
   },
 
@@ -1784,7 +1806,10 @@ agents: {
     importFailed: (what: string) => `${what}: could not be read. Close the other browser and try again.`,
     // after a crash
     crashed: (n: number) => `Mindeck quit unexpectedly. Restore ${n === 1 ? 'the tab' : `${n} tabs`} from before?`,
-    restore: 'Restore'
+    restore: 'Restore',
+    // a paired device uses the browser
+    remoteUse: (device: string) => `${device} is using this browser — it sees your tabs and acts with your logins`,
+    remoteStop: 'Stop'
   },
 
   projects: {
@@ -1928,8 +1953,9 @@ agents: {
     certificateOwn: (until: string) => `Own certificate · valid until ${until}`,
     shells: 'Allow remote shells',
     shellsHint: 'Paired devices may open terminals, let agents run commands and change files, and approve changes. Off by default.',
-    shareBrowser: 'Share the browser with paired devices',
-    shareBrowserHint: 'Paired devices see your tabs as pictures and can use them — open pages, tap, type. They act with your logins, so leave this off unless you use it. Private tabs never leave this computer.',
+    shareBrowser: (name: string) => `Share the browser with ${name}`,
+    shareBrowserHint: 'Globe: an admin device you share the browser with sees your tabs as pictures and can use them — open pages, tap, type. It acts with your logins, so share it only while you use it. Private tabs never leave this computer.',
+    browserShared: 'Uses the browser',
     port: 'Port',
     desktopOnly: 'Server settings can only be changed in the desktop app.',
     envOnly: 'This core is configured through its environment (MINDECK_PORT, MINDECK_LAN, MINDECK_TLS, MINDECK_REMOTE_TERMINAL, MINDECK_REMOTE_ROOTS).',

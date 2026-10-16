@@ -80,11 +80,6 @@ export class ServerController {
     return this.config.remoteTerminal
   }
 
-  /** The desktop lets paired devices see and use the browser's tabs. */
-  remoteBrowser(): boolean {
-    return this.config.remoteBrowser
-  }
-
   /** The folders shared with paired devices. */
   remoteRoots(): string[] {
     return [...this.config.remoteRoots]
@@ -114,7 +109,6 @@ export class ServerController {
       version: this.opts.version,
       webRoot: this.opts.webRoot,
       remoteTerminal: () => this.config.remoteTerminal,
-      remoteBrowser: () => this.config.remoteBrowser,
       onClients: this.opts.onClients,
       scope: this.opts.scope,
       allowedHosts: allowedHostsFromEnv(),
@@ -193,6 +187,11 @@ export class ServerController {
 
   setDeviceRole(id: string, role: DeviceRole): Promise<Device[]> {
     return this.opts.auth.setRole(id, role)
+  }
+
+  /** Share the browser with a device or stop: its next call and push already go by it. */
+  setDeviceBrowser(id: string, browser: boolean): Promise<Device[]> {
+    return this.opts.auth.setBrowser(id, browser)
   }
 
   async revoke(id: string): Promise<void> {

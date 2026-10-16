@@ -70,6 +70,7 @@ import { ServerController } from '../server/ServerController'
 import { Certificates } from '../server/Certificates'
 import { RemoteAccess } from '../server/RemoteAccess'
 import { RemoteScope } from '../server/RemoteScope'
+import { RemoteActivity } from '../server/RemoteActivity'
 import { SecretStore, type Cipher } from '../services/ai/SecretStore'
 import { AiService, type ProviderFactory } from '../services/ai/AiService'
 import { InlineService } from '../services/ai/InlineService'
@@ -254,20 +255,31 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
   })
   // …and what they see of the core's activity: sessions, conversations, approvals and events of those projects only.
   const conversations = new ConversationStore(paths.dataDir)
+  const browserTab = (id: string) => browser.state().tabs.find((t) => t.id === id)
+  const webUrl = (input: string) => browser.webUrl(input)
   const remoteScope = new RemoteScope({
     access: remoteAccess,
     sessionProject: (id) => agents.projectOf(id),
     conversationProject: (id) => conversations.projectOf(id),
     pending: () => permissions.list(),
-    browserTab: (id) => browser.state().tabs.find((t) => t.id === id)
+    browserTab,
+    webUrl
+  })
+  // What devices do with the browser and the files: the audit log, and the desktop's sign that one uses the browser.
+  const remoteActivity = new RemoteActivity({
+    devices: () => auth.devices(),
+    log: (type, deviceId, payload) => events.emit(type, { actor: { kind: 'device', id: deviceId }, payload }),
+    inUse: (devices) => browser.setRemote(devices),
+    browserTab,
+    webUrl
   })
 
   const router = new Router({
     remoteTerminal: () => controller.remoteTerminal(),
-    remoteBrowser: () => controller.remoteBrowser(),
     licensed: (channel) => isLicenseFree(channel) || cloud.allowed(),
     guard: (channel, payload) => remoteScope.guard(channel, payload),
-    shape: (channel, data) => remoteScope.result(channel, data)
+    shape: (channel, data) => remoteScope.result(channel, data),
+    observe: (channel, payload, data, ctx) => remoteActivity.observe(channel, payload, data, ctx)
   })
 
   const controller: ServerController = new ServerController({
@@ -448,9 +460,17 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
     if (ctx.transport === 'remote' && ctx.role !== 'admin' && id !== ctx.deviceId) {
       throw Object.assign(new Error('Removing other devices needs the admin role'), { code: 'admin-only' })
     }
+    remoteActivity.release(id)
     return controller.revoke(id)
   })
-  router.register('server:setDeviceRole', ({ id, role }) => controller.setDeviceRole(id, role))
+  router.register('server:setDeviceRole', ({ id, role }) => {
+    if (role !== 'admin') remoteActivity.release(id)
+    return controller.setDeviceRole(id, role)
+  })
+  router.register('server:setDeviceBrowser', ({ id, browser }) => {
+    if (!browser) remoteActivity.release(id)
+    return controller.setDeviceBrowser(id, browser)
+  })
   router.register('ai:status', () => ai.status())
   router.register('ai:setKey', ({ key }) => ai.setKey(key))
   router.register('ai:clearKey', () => ai.clearKey())
@@ -545,6 +565,7 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
       debug.dispose()
       await mongo.dispose()
       remote.dispose()
+      remoteActivity.dispose()
       lint.dispose()
       search.dispose()
       notebooks.dispose()

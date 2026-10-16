@@ -300,6 +300,26 @@ describe('useAgents store', () => {
     expect(describeEvent(e('session.ended', { code: 2 }))).toEqual({ text: 'Session ended (exit code 2)', tone: 'warn' })
     expect(describeEvent(e('session.ended', { code: 0 }))).toEqual({ text: 'Session ended', tone: 'muted' })
   })
+
+  it('describes what a paired device did with the browser and the files', () => {
+    const e = (type: string, payload: Record<string, unknown>) => ({ id: '1', type, ts: '', actor: { kind: 'device', id: 'd1' }, payload }) as MindeckEvent
+    const text = (type: string, payload: Record<string, unknown>) => describeEvent(e(type, { device: 'iPhone', ...payload })).text
+    expect(describeEvent(e('device.browser', { device: 'iPhone', action: 'navigate', host: 'github.com' }))).toEqual({ text: 'iPhone went to github.com', tone: 'cyan' })
+    expect(text('device.browser', { action: 'view', host: 'bank.example' })).toBe('iPhone looked at bank.example in the browser')
+    expect(text('device.browser', { action: 'input' })).toBe('iPhone tapped or typed on a page')
+    expect(text('device.browser', { action: 'open' })).toBe('iPhone opened a new tab')
+    expect(text('device.browser', { action: 'close' })).toBe('iPhone closed a tab')
+    expect(text('device.browser', { action: 'bookmark', host: 'x.dev' })).toBe('iPhone bookmarked x.dev')
+    expect(text('device.files', { action: 'download', path: '/home/ada/a.pdf' })).toBe('iPhone downloaded /home/ada/a.pdf')
+    expect(text('device.files', { action: 'rename', path: '/a.txt', dest: '/b.txt' })).toBe('iPhone renamed /a.txt → /b.txt')
+    expect(text('device.files', { action: 'move', paths: ['/a', '/b', '/c'], count: 3, dest: '/Archive' })).toBe('iPhone moved 3 items → /Archive')
+    expect(text('device.files', { action: 'copy', paths: ['/a'], count: 1, dest: '/USB' })).toBe('iPhone copied /a → /USB')
+    expect(text('device.files', { action: 'undo', count: 1 })).toBe('iPhone undid a move')
+    expect(text('device.files', { action: 'mkdir', paths: [] })).toBe('iPhone created the folder ')
+    expect(text('device.files', { action: 'something-new' })).toBe('iPhone: something-new')
+    expect(describeEvent(e('device.files', { device: 'iPhone', action: 'trash', paths: ['/a'], count: 1 }))).toEqual({ text: 'iPhone moved /a to the trash', tone: 'warn' })
+    expect(describeEvent(e('device.browser', { device: 'iPhone', action: 'trash' })).tone).toBe('cyan')
+  })
 })
 
 describe('NewChatDialog', () => {

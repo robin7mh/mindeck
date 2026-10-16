@@ -1,4 +1,4 @@
-import type { MindeckEvent } from '@shared/types/events'
+import type { DeviceActivity, MindeckEvent } from '@shared/types/events'
 import { getT, intlLocale } from '@/lib/i18n'
 
 /** "just now", "5 min ago", "3 h ago", else a short date. */
@@ -62,9 +62,22 @@ export function describeEvent(e: MindeckEvent): { text: string; tone: Tone } {
       return { text: t.started(p.agent ?? t.agent, p.title ?? ''), tone: 'cyan' }
     case 'session.ended':
       return { text: t.ended(p.code), tone: p.code ? 'warn' : 'muted' }
+    case 'device.browser':
+    case 'device.files':
+      return describeDevice(e.payload as DeviceActivity, e.type === 'device.files' && (e.payload as DeviceActivity).action === 'trash')
     default:
       return { text: e.type, tone: 'muted' }
   }
+}
+
+/** What a paired device did: "iPhone went to github.com", "iPhone moved 3 items → ~/Archive". */
+function describeDevice(d: DeviceActivity, warn: boolean): { text: string; tone: Tone } {
+  const t = getT().agents.ev
+  const did = t.device[d.action as keyof typeof t.device] as ((device: string, what: string) => string) | undefined
+  const items = d.paths?.length ? (d.count && d.count > 1 ? t.items(d.count) : d.paths[0]) : d.path
+  const base = d.host ?? items ?? ''
+  const what = d.dest ? `${base} → ${d.dest}` : base
+  return { text: did ? did(d.device, what) : t.device.other(d.device, d.action), tone: warn ? 'warn' : 'cyan' }
 }
 
 export function clock(iso: string): string {

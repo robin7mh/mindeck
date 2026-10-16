@@ -74,6 +74,7 @@ interface SettingsState {
   closePairing: () => void
   revokeDevice: (id: string) => Promise<void>
   setDeviceRole: (id: string, role: DeviceRole) => Promise<void>
+  setDeviceBrowser: (id: string, browser: boolean) => Promise<void>
   revokeGrant: (grant: PermissionGrant) => Promise<void>
   clearError: () => void
 }
@@ -144,6 +145,14 @@ export const useSettings = create<SettingsState>((set, get) => {
     setDeviceRole: async (id, role) => {
       try {
         set({ devices: await ipc('server:setDeviceRole', { id, role }) })
+      } catch (err) {
+        fail(err)
+      }
+    },
+
+    setDeviceBrowser: async (id, browser) => {
+      try {
+        set({ devices: await ipc('server:setDeviceBrowser', { id, browser }) })
       } catch (err) {
         fail(err)
       }

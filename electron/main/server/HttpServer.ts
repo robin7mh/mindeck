@@ -75,8 +75,6 @@ export interface HttpServerOptions {
   /** Built web UI to serve at `/` (optional — API-only without it). */
   webRoot?: string
   remoteTerminal: () => boolean
-  /** The browser's tabs are shared with paired devices (its push events go out). */
-  remoteBrowser?: () => boolean
   /** Connected WebSocket clients changed (drives remote telemetry sampling). */
   onClients?: (count: number) => void
   /** A push event as devices may see it (RemoteScope): itself, trimmed, or null — none of theirs. */
@@ -634,7 +632,8 @@ export class HttpServer {
     const result = await this.opts.router.dispatch(decoded(channel), payload, {
       transport: 'remote',
       deviceId: device.id,
-      role: device.role
+      role: device.role,
+      browser: device.browser === true
     })
     send(res, 200, result)
   }
@@ -712,9 +711,17 @@ export class HttpServer {
     // Devices connected now or a moment ago (their events wait for their reconnect).
     if (!this.streams.size || DESKTOP_EVENTS.includes(channel)) return
     if (TERMINAL_EVENTS.includes(channel) && !this.opts.remoteTerminal()) return
-    if (BROWSER_EVENTS.includes(channel) && !this.opts.remoteBrowser?.()) return
+    if (BROWSER_EVENTS.includes(channel)) return this.pushBrowser(channel, payload)
     const scope = this.opts.scope
     if (!scope) return this.deliver(channel, payload)
+    this.enqueue(channel, async () => {
+      const shown = await withTimeout(scope(channel, payload), this.opts.outbox?.timeoutMs ?? SCOPE_TIMEOUT_MS)
+      if (shown !== null) this.deliver(channel, shown)
+    })
+  }
+
+  /** An event's check, in order behind the others; while the outbox is full, new ones are dropped (and devices resync later). */
+  private enqueue(channel: IpcEvent, check: () => Promise<void>): void {
     const max = this.opts.outbox?.max ?? OUTBOX_MAX
     if (this.queued >= max) {
       if (!this.dropping) console.warn(`[server] ${max} events wait for their check — dropping new ones until those are through`)
@@ -725,8 +732,7 @@ export class HttpServer {
     this.queued += 1
     this.outbox = this.outbox.then(async () => {
       try {
-        const shown = await withTimeout(scope(channel, payload), this.opts.outbox?.timeoutMs ?? SCOPE_TIMEOUT_MS)
-        if (shown !== null) this.deliver(channel, shown)
+        await check()
       } catch (err) {
         // What can't be checked (in time) is not sent.
         console.error(`[server] not sending ${channel}:`, err)
@@ -754,7 +760,18 @@ export class HttpServer {
     return JSON.stringify({ channel: 'resync-required', payload: { stream: stream.id, seq: stream.seq } })
   }
 
-  private deliver(channel: IpcEvent, payload: unknown): void {
+  /** The browser's tabs: only to the admin devices the desktop shared them with — asked anew for every push. */
+  private pushBrowser(channel: IpcEvent, payload: unknown): void {
+    this.enqueue(channel, async () => {
+      const shared = new Set((await this.opts.auth.devices()).filter((d) => d.role === 'admin' && d.browser).map((d) => d.id))
+      if (!shared.size) return
+      const scope = this.opts.scope
+      const shown = scope ? await withTimeout(scope(channel, payload), this.opts.outbox?.timeoutMs ?? SCOPE_TIMEOUT_MS) : payload
+      if (shown !== null) this.deliver(channel, shown, shared)
+    })
+  }
+
+  private deliver(channel: IpcEvent, payload: unknown, to?: Set<string>): void {
     // "Always allow" is only ever given at the desktop: devices are not offered it.
     const shown = channel === 'permission:request' ? { ...(payload as PermissionRequest), allowAlways: false } : payload
     // Search results (file contents) and inline edits go only to the device that asked (the desktop's to none).
@@ -764,6 +781,7 @@ export class HttpServer {
     // Each device numbers (and keeps) its own events — also while it is away, for its reconnect.
     for (const [deviceId, stream] of this.streams.entries()) {
       if (only !== undefined && deviceId !== only) continue
+      if (to && !to.has(deviceId)) continue
       const message = VOLATILE.includes(channel) ? body : stream.record(body, now)
       for (const client of this.clients) {
         if (client.deviceId === deviceId && client.ws.readyState === client.ws.OPEN) client.ws.send(message)

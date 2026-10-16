@@ -66,7 +66,7 @@ async function core(opts: Partial<Parameters<typeof createCore>[0]> = {}) {
 
 describe('createCore', () => {
   it('wires every service onto one router', async () => {
-    const c = await core({ serverConfig: { enabled: false, lan: false, tls: true, port: 0, remoteTerminal: false, remoteBrowser: false, remoteRoots: [] } })
+    const c = await core({ serverConfig: { enabled: false, lan: false, tls: true, port: 0, remoteTerminal: false, remoteRoots: [] } })
     expect(await c.router.dispatch('app:info', undefined, { transport: 'ipc' })).toMatchObject({
       ok: true,
       data: { mode: 'server', version: '1.2.3', remoteTerminal: false }
@@ -214,7 +214,7 @@ describe('createCore', () => {
     const realPlatform = process.platform
     Object.defineProperty(process, 'platform', { value: 'linux' }) // no Spotlight here: Files walks
     const openExternal = vi.fn(async () => {})
-    const c = await core({ mode: 'desktop', serverConfig: { enabled: false, lan: false, tls: true, port: 0, remoteTerminal: false, remoteBrowser: false, remoteRoots: [] }, platform: { ...headlessPlatform, kind: 'desktop', openExternal } })
+    const c = await core({ mode: 'desktop', serverConfig: { enabled: false, lan: false, tls: true, port: 0, remoteTerminal: false, remoteRoots: [] }, platform: { ...headlessPlatform, kind: 'desktop', openExternal } })
     Object.defineProperty(process, 'platform', { value: realPlatform })
     const pushed: string[] = []
     c.hub.subscribe((channel) => pushed.push(channel))
@@ -273,13 +273,38 @@ describe('createCore', () => {
 })
 
 describe('createCore — the browser shared with paired devices', () => {
-  it('lets a device reach the tabs only when the desktop shares them — private tabs never', async () => {
-    const c = await core({ serverConfig: { enabled: false, lan: false, tls: true, port: 0, remoteTerminal: false, remoteBrowser: true, remoteRoots: [] } })
-    const phone = { transport: 'remote' as const, deviceId: 'phone', role: 'member' as const }
+  it('lets an admin device it is shared with reach the tabs — web pages only, private tabs never — and logs what it did for the desktop', async () => {
+    const c = await core({ serverConfig: { enabled: false, lan: false, tls: true, port: 0, remoteTerminal: false, remoteRoots: [] } })
+    const desktop = (channel: string, payload?: unknown) => c.router.dispatch(channel, payload, { transport: 'ipc' })
+    const member = { transport: 'remote' as const, deviceId: 'member', role: 'member' as const, browser: true }
+    const phone = { transport: 'remote' as const, deviceId: 'phone', role: 'admin' as const, browser: true }
+    expect(await c.router.dispatch('browser:state', undefined, member)).toMatchObject({ ok: false, error: { code: 'remote-browser-disabled' } })
+    expect(await c.router.dispatch('browser:state', undefined, { ...phone, browser: false })).toMatchObject({ ok: false, error: { code: 'remote-browser-disabled' } })
     // A headless core has the tabs' records but no web views.
     expect(await c.router.dispatch('browser:state', undefined, phone)).toMatchObject({ ok: true, data: { available: false } })
     expect(await c.router.dispatch('browser:capture', { id: 'nope' }, phone)).toMatchObject({ ok: false, error: { code: 'desktop-only' } })
     expect(await c.router.dispatch('browser:open', { url: 'x', private: true }, phone)).toMatchObject({ ok: false, error: { code: 'remote-forbidden' } })
+    expect(await c.router.dispatch('browser:open', { url: 'file:///etc/passwd' }, phone)).toMatchObject({ ok: false, error: { code: 'remote-forbidden' } })
+    expect(await c.router.dispatch('browser:activate', { id: 'x' }, phone)).toMatchObject({ ok: false, error: { code: 'desktop-only' } })
+    expect(await c.router.dispatch('browser:open', { url: 'github.com', background: true }, phone)).toMatchObject({ ok: true, data: { url: 'https://github.com/' } })
+
+    // The desktop sees who uses its browser, and what it did; the device sees neither.
+    await vi.waitFor(async () => expect(await desktop('browser:state')).toMatchObject({ ok: true, data: { remote: [{ deviceId: 'phone', device: 'phone' }] } }))
+    expect(await c.router.dispatch('browser:state', undefined, phone)).toMatchObject({ ok: true, data: expect.not.objectContaining({ remote: expect.anything() }) })
+    await vi.waitFor(async () =>
+      expect(await desktop('events:recent', { limit: 20 })).toMatchObject({ ok: true, data: expect.arrayContaining([expect.objectContaining({ type: 'device.browser', actor: { kind: 'device', id: 'phone' }, payload: { device: 'phone', action: 'open', host: 'github.com' } })]) })
+    )
+    const seen = (await c.router.dispatch('events:recent', { limit: 20 }, phone)) as { data: { type: string }[] }
+    expect(seen.data.some((e) => e.type.startsWith('device.'))).toBe(false)
+
+    // Stopped at the desktop: the sign goes at once (the device is unknown here, so the call itself fails).
+    expect(await desktop('server:setDeviceBrowser', { id: 'phone', browser: false })).toMatchObject({ ok: false, error: { code: 'not-found' } })
+    await vi.waitFor(async () => expect(await desktop('browser:state')).toMatchObject({ ok: true, data: expect.not.objectContaining({ remote: expect.anything() }) }))
+    // Demoting or removing a device stops it as well.
+    for (const [channel, payload] of [['server:setDeviceRole', { id: 'phone', role: 'member' }], ['server:setDeviceRole', { id: 'phone', role: 'admin' }], ['server:revokeDevice', { id: 'phone' }], ['server:setDeviceBrowser', { id: 'phone', browser: true }]] as const) {
+      await c.router.dispatch('browser:state', undefined, phone)
+      await desktop(channel, payload)
+    }
   })
 })
 
@@ -329,7 +354,7 @@ describe('createCore — assistant end to end (scripted model)', () => {
     }
     try {
       const c = await core({
-        serverConfig: { enabled: false, lan: false, tls: true, port: 0, remoteTerminal: false, remoteBrowser: false, remoteRoots: [] },
+        serverConfig: { enabled: false, lan: false, tls: true, port: 0, remoteTerminal: false, remoteRoots: [] },
         providerFactory: { create: () => provider as never }
       })
       await c.router.dispatch('memory:createVault', undefined, { transport: 'ipc' })
@@ -522,14 +547,13 @@ describe('standalone server entry', () => {
   })
 
   it('reads its config from the environment', () => {
-    expect(serverConfigFromEnv({})).toEqual({ enabled: true, lan: false, tls: true, port: 7420, remoteTerminal: false, remoteBrowser: false, remoteRoots: ['/projects'] })
+    expect(serverConfigFromEnv({})).toEqual({ enabled: true, lan: false, tls: true, port: 7420, remoteTerminal: false, remoteRoots: ['/projects'] })
     expect(serverConfigFromEnv({ MINDECK_PORT: '8000', MINDECK_LAN: '1', MINDECK_TLS: '0', MINDECK_REMOTE_TERMINAL: 'true', MINDECK_REMOTE_ROOTS: `/srv/code${delimiter}${delimiter}/data/notes` })).toEqual({
       enabled: true,
       lan: true,
       tls: false,
       port: 8000,
       remoteTerminal: true,
-      remoteBrowser: false,
       remoteRoots: ['/srv/code', '/data/notes']
     })
     expect(serverConfigFromEnv({ MINDECK_PORT: 'abc' }).port).toBe(7420)

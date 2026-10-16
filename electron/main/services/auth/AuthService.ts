@@ -123,9 +123,27 @@ export class AuthService {
       const device = s.devices.find((d) => d.id === id)
       if (!device) return
       device.role = role
+      // The browser is for admin devices: a member keeps no share of it.
+      if (role !== 'admin') delete device.browser
       found = true
     })
     if (!found) throw coded('not-found', 'No such device')
+    return this.devices()
+  }
+
+  /** Share the desktop's browser with a device, or stop (admin devices only); answers the updated list. */
+  async setBrowser(id: string, browser: boolean): Promise<Device[]> {
+    let role: DeviceRole | undefined
+    await this.mutate((s) => {
+      const device = s.devices.find((d) => d.id === id)
+      if (!device) return
+      role = device.role
+      if (browser && role !== 'admin') return
+      if (browser) device.browser = true
+      else delete device.browser
+    })
+    if (!role) throw coded('not-found', 'No such device')
+    if (browser && role !== 'admin') throw coded('admin-only', 'Only an admin device may use the browser')
     return this.devices()
   }
 

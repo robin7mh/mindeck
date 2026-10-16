@@ -1,14 +1,19 @@
 import { describe, expect, it, vi } from 'vitest'
 import { setupBrowser } from './browserServiceFixtures'
 import type { AutomationTarget } from '../../../electron/main/services/browser/types'
+import { SECRET_FOCUS } from '../../../electron/main/services/browser/secretFocus'
 
-/** A tab's DevTools and pictures, as a paired device uses them through the core. */
-function target(metrics: unknown = { cssLayoutViewport: { clientWidth: 1280, clientHeight: 720 } }) {
+/** A tab's DevTools and pictures, as a paired device uses them through the core; `focus.secret`: what the page says of its focused field. */
+function target(metrics: unknown = { cssLayoutViewport: { clientWidth: 1280, clientHeight: 720 } }, focus: { secret: unknown } = { secret: false }) {
   return {
     cdp: vi.fn(async (method: string, _params?: unknown) => {
       if (method === 'Page.getLayoutMetrics') {
         if (metrics instanceof Error) throw metrics
         return metrics
+      }
+      if (method === 'Runtime.evaluate') {
+        if (focus.secret instanceof Error) throw focus.secret
+        return { result: { value: focus.secret } }
       }
       return {}
     }),
@@ -68,18 +73,51 @@ describe('the browser for a paired device', () => {
     await b.input(tab.id, { action: 'scroll', x: 5, y: 6, dx: 0, dy: 400 })
     expect(t.cdp).toHaveBeenCalledWith('Input.dispatchMouseEvent', { type: 'mouseWheel', x: 5, y: 6, deltaX: 0, deltaY: 400 })
     await b.input(tab.id, { action: 'type', text: 'hallo' })
+    expect(t.cdp).toHaveBeenCalledWith('Runtime.evaluate', { expression: SECRET_FOCUS, returnByValue: true })
     expect(t.cdp).toHaveBeenCalledWith('Input.insertText', { text: 'hallo' })
     t.cdp.mockClear()
     await b.input(tab.id, { action: 'key', key: 'Enter' })
-    expect(t.cdp.mock.calls).toEqual([
+    expect(t.cdp.mock.calls.filter((c) => c[0] !== 'Runtime.evaluate')).toEqual([
       ['Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13, text: '\r', unmodifiedText: '\r' }],
       ['Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 }]
     ])
     t.cdp.mockClear()
     await b.input(tab.id, { action: 'key', key: 'Backspace' })
-    expect(t.cdp.mock.calls[0]).toEqual(['Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'Backspace', code: 'Backspace', windowsVirtualKeyCode: 8, nativeVirtualKeyCode: 8 }])
+    expect(t.cdp.mock.calls[1]).toEqual(['Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'Backspace', code: 'Backspace', windowsVirtualKeyCode: 8, nativeVirtualKeyCode: 8 }])
     const blank = b.open({})
     await expect(b.input(blank.id, { action: 'type', text: 'x' })).rejects.toMatchObject({ code: 'no-page' })
+  })
+
+  it('types no passwords, codes or card numbers — nor into frames of other sites, nor when the page cannot say', async () => {
+    const focus: { secret: unknown } = { secret: true }
+    const { b, t } = await setup(target(undefined, focus))
+    const tab = b.open({ url: 'https://bank.dev/' })
+    await expect(b.input(tab.id, { action: 'type', text: 'hunter2' })).rejects.toMatchObject({ code: 'secret-field', message: 'Passwords and codes are typed at the desktop only' })
+    await expect(b.input(tab.id, { action: 'key', key: 'Enter' })).rejects.toMatchObject({ code: 'secret-field' })
+    focus.secret = new Error('page is gone')
+    await expect(b.input(tab.id, { action: 'type', text: 'x' })).rejects.toMatchObject({ code: 'secret-field' })
+    focus.secret = undefined
+    await expect(b.input(tab.id, { action: 'type', text: 'x' })).rejects.toMatchObject({ code: 'secret-field' })
+    expect(t.cdp.mock.calls.some((c) => String(c[0]).startsWith('Input.'))).toBe(false)
+    // Taps and scrolls still go: the field gets focus, the desktop types.
+    await b.input(tab.id, { action: 'click', x: 1, y: 1 })
+    expect(t.cdp).toHaveBeenCalledWith('Input.dispatchMouseEvent', expect.objectContaining({ type: 'mousePressed' }))
+  })
+
+  it('tells a paired device which typed text is a web page, and shows the desktop who uses the browser', async () => {
+    const { b, sent } = await setup()
+    expect(b.webUrl('github.com')).toBe('https://github.com/')
+    expect(b.webUrl('http://localhost:5173/x')).toBe('http://localhost:5173/x')
+    expect(b.webUrl('center a div')).toMatch(/^https:\/\/[^/]+\/.*center%20a%20div/)
+    for (const input of ['/etc/passwd', 'file:///etc/passwd', 'mailto:ada@example.com', 'vscode://file/x', 'javascript:alert(1)', 'mindeck://history', '']) {
+      expect(b.webUrl(input), input).toBeUndefined()
+    }
+    expect(b.state()).not.toHaveProperty('remote')
+    b.setRemote([{ deviceId: 'd1', device: 'iPhone', since: '2026-10-16T10:00:00.000Z' }])
+    expect(b.state().remote).toEqual([{ deviceId: 'd1', device: 'iPhone', since: '2026-10-16T10:00:00.000Z' }])
+    await vi.waitFor(() => expect(sent('browser:state').at(-1)).toMatchObject({ remote: [{ device: 'iPhone' }] }))
+    b.setRemote([])
+    expect(b.state()).not.toHaveProperty('remote')
   })
 
   it('never a private tab, an unknown one, or a core without the desktop window', async () => {

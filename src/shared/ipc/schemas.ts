@@ -350,7 +350,6 @@ export const REQUEST_SCHEMAS: Schemas = {
     tls: z.boolean().optional(),
     port: z.number().int().min(1024).max(65535).optional(),
     remoteTerminal: z.boolean().optional(),
-    remoteBrowser: z.boolean().optional(),
     remoteRoots: z.array(path).max(50).optional()
   }),
   'server:createPairingCode': z
@@ -360,6 +359,7 @@ export const REQUEST_SCHEMAS: Schemas = {
   'server:devices': none,
   'server:revokeDevice': z.object({ id }),
   'server:setDeviceRole': z.object({ id, role: z.enum(DEVICE_ROLES) }),
+  'server:setDeviceBrowser': z.object({ id, browser: z.boolean() }),
 
   'ai:status': none,
   'ai:setKey': z.object({ key: z.string().min(1).max(500) }),

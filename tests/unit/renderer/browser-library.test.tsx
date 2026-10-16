@@ -12,6 +12,7 @@ import { BookmarkEditor } from '@/features/browser/components/BookmarkEditor'
 import { BOOKMARK_DRAG, BookmarksBar } from '@/features/browser/components/BookmarksBar'
 import { TabSearch } from '@/features/browser/components/TabSearch'
 import { RestoreBar } from '@/features/browser/components/RestoreBar'
+import { RemoteUseBar } from '@/features/browser/components/RemoteUseBar'
 import { Omnibox } from '@/features/browser/components/Omnibox'
 import { Viewport } from '@/features/browser/components/Viewport'
 import { TabStrip } from '@/features/browser/components/TabStrip'
@@ -431,6 +432,31 @@ describe('TabSearch (⌘⇧A)', () => {
     fireEvent.change(screen.getByRole('textbox'), { target: { value: 'b' } })
     await settle()
     expect(screen.getByText('Nothing found')).toBeInTheDocument()
+  })
+})
+
+describe('RemoteUseBar', () => {
+  it('shows which paired device uses the browser, and stops it at once', async () => {
+    const { sent } = bridge({ 'server:setDeviceBrowser': () => [] })
+    const { container } = render(<RemoteUseBar />)
+    expect(container).toBeEmptyDOMElement()
+    act(() => useBrowser.setState({ state: state([tab('n', '')], { remote: [] }) }))
+    expect(container).toBeEmptyDOMElement()
+    act(() =>
+      useBrowser.setState({
+        state: state([tab('n', '')], {
+          remote: [
+            { deviceId: 'd1', device: 'iPhone', since: '2026-10-16T10:00:00.000Z' },
+            { deviceId: 'd2', device: 'iPad', since: '2026-10-16T09:00:00.000Z' }
+          ]
+        })
+      })
+    )
+    expect(screen.getByRole('status')).toHaveTextContent('iPhone is using this browser — it sees your tabs and acts with your logins')
+    expect(screen.getByRole('status')).toHaveTextContent('iPad is using this browser')
+    fireEvent.click(screen.getAllByRole('button', { name: 'Stop' })[1])
+    await settle()
+    expect(sent('server:setDeviceBrowser')).toEqual([{ id: 'd2', browser: false }])
   })
 })
 

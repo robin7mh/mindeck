@@ -110,16 +110,16 @@ describe('browser and files channels', () => {
     expect(await router.dispatch('browser:input', { id: 't', action: 'key', key: 'F13' }, ipc)).toMatchObject({ ok: false, error: { code: 'bad-request' } })
     expect(await router.dispatch('browser:input', { id: 't', action: 'type', text: '' }, ipc)).toMatchObject({ ok: false, error: { code: 'bad-request' } })
     expect(await router.dispatch('browser:input', { id: 't', action: 'click', x: -1, y: 0 }, ipc)).toMatchObject({ ok: false, error: { code: 'bad-request' } })
-    // A paired phone reaches the tabs only when the desktop shares the browser — and never its own UI's channels.
-    const remote = { transport: 'remote' as const }
-    expect(await router.dispatch('browser:state', undefined, remote)).toMatchObject({ ok: false, error: { code: 'remote-browser-disabled' } })
-    let shared = false
-    const sharing = new Router({ remoteTerminal: () => false, remoteBrowser: () => shared })
-    registerBrowserIpc(sharing, browser as unknown as BrowserService)
-    expect(await sharing.dispatch('browser:capture', { id: 't' }, remote)).toMatchObject({ ok: false, error: { code: 'remote-browser-disabled' } })
-    shared = true
-    expect(await sharing.dispatch('browser:capture', { id: 't' }, remote)).toEqual({ ok: true, data: { called: 'capture', args: ['t', undefined] } })
-    expect(await sharing.dispatch('browser:freeze', undefined, remote)).toMatchObject({ ok: false, error: { code: 'desktop-only' } })
+    // A paired device reaches the tabs only when it is an admin the desktop shared the browser with — and never the desktop's own UI.
+    const remote = { transport: 'remote' as const, deviceId: 'd1' }
+    for (const ctx of [remote, { ...remote, role: 'member' as const, browser: true }, { ...remote, role: 'admin' as const }, { ...remote, role: 'admin' as const, browser: false }]) {
+      expect(await router.dispatch('browser:capture', { id: 't' }, ctx), JSON.stringify(ctx)).toMatchObject({ ok: false, error: { code: 'remote-browser-disabled' } })
+    }
+    const shared = { ...remote, role: 'admin' as const, browser: true }
+    expect(await router.dispatch('browser:capture', { id: 't' }, shared)).toEqual({ ok: true, data: { called: 'capture', args: ['t', undefined] } })
+    for (const channel of ['browser:freeze', 'browser:activate', 'browser:permission', 'browser:downloads']) {
+      if (router.has(channel)) expect(await router.dispatch(channel, { id: 't' }, shared), channel).toMatchObject({ ok: false, error: { code: 'desktop-only' } })
+    }
   })
 
   it('reach the files service — and refuse names and paths that are no names or paths', async () => {

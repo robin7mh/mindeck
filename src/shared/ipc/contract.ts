@@ -391,6 +391,8 @@ export interface IpcChannels {
   /** Admins remove any device; every device may remove itself (unpair). */
   'server:revokeDevice': { request: { id: string }; response: void }
   'server:setDeviceRole': { request: { id: string; role: DeviceRole }; response: Device[] }
+  /** Share the desktop's browser with an admin device, or stop — at once, for its next call and push. */
+  'server:setDeviceBrowser': { request: { id: string; browser: boolean }; response: Device[] }
 
   'ai:status': { request: void; response: AiStatus }
   'ai:setKey': { request: { key: string }; response: AiStatus }
@@ -627,9 +629,9 @@ export type IpcChannel = keyof IpcChannels
  *                devices, the AI key, the Mindeck account, global settings
  * - `trusted`  — desktop, admin devices, or any device while remote shells
  *                are enabled: data beyond the shared folders (databases)
- * - `browser`  — desktop, or remote clients when the desktop lets paired
- *                devices use the browser (its tabs carry the user's logins;
- *                off by default, private tabs never)
+ * - `browser`  — desktop, or admin devices the desktop shared its browser
+ *                with (per device, off by default — its tabs carry the user's
+ *                logins; private tabs never)
  *
  * Paired devices also only reach shared folders, and approve changes and
  * commands only with remote shells (see RemoteAccess and PermissionService).
@@ -829,6 +831,8 @@ export const CHANNEL_ACCESS: Record<IpcChannel, ChannelAccess> = {
   'server:devices': 'any',
   'server:revokeDevice': 'any',
   'server:setDeviceRole': 'admin',
+  // Which device may use the browser (with the user's logins): decided at the desktop only.
+  'server:setDeviceBrowser': 'desktop',
   'ai:status': 'any',
   'ai:setKey': 'admin',
   'ai:clearKey': 'admin',
@@ -910,12 +914,13 @@ export const CHANNEL_ACCESS: Record<IpcChannel, ChannelAccess> = {
   'browser:proceed': 'desktop',
   'browser:dismissDrm': 'desktop',
   'browser:pickDownloadDir': 'desktop',
-  // The browser lives in the desktop window — and its tabs carry the user's logins. A paired device
-  // sees and uses them only when the desktop allows it (remoteBrowser), private tabs never.
+  // The browser lives in the desktop window — and its tabs carry the user's logins. An admin device sees
+  // and uses them only when the desktop shared the browser with it, private tabs never; switching tabs on
+  // the desktop's screen stays the desktop's.
   'browser:state': 'browser',
   'browser:open': 'browser',
   'browser:close': 'browser',
-  'browser:activate': 'browser',
+  'browser:activate': 'desktop',
   'browser:navigate': 'browser',
   'browser:go': 'browser',
   'browser:update': 'desktop',

@@ -25,6 +25,8 @@ function scope() {
     conversationProject: async (id) => conversations[id],
     pending: () => pending,
     browserTab: (id) => tabs[id],
+    // What the address bar makes of it: a web page, a file, Mindeck's own page or another app's link.
+    webUrl: (input) => (/^(file:|\/|mindeck:|vscode:)/.test(input) ? undefined : input.startsWith('http') ? input : `https://${input}/`),
     now: () => now
   })
   return { s, project, check, tick: (ms: number) => (now += ms) }
@@ -86,7 +88,10 @@ describe('RemoteScope · calls', () => {
         { id: 'e1', projectId: 'private' },
         { id: 'e2', conversationId: 'c1' },
         { id: 'e3', conversationId: 'c2' },
-        { id: 'e4' }
+        { id: 'e4' },
+        // What devices did is the desktop's audit, not for other devices.
+        { id: 'e5', type: 'device.browser', payload: { device: 'iPhone', action: 'navigate', host: 'bank.example' } },
+        { id: 'e6', type: 'device.files', payload: { device: 'iPhone', action: 'download', path: '/home/ada/a.txt' } }
       ])
     ).toEqual([
       { id: 'e3', conversationId: 'c2' },
@@ -125,6 +130,8 @@ describe('RemoteScope · events', () => {
     await drop('events:event', { id: 'e', projectId: 'private' })
     await drop('events:event', { id: 'e', conversationId: 's1' })
     await pass('events:event', { id: 'e' })
+    await drop('events:event', { id: 'e', type: 'device.browser', payload: { device: 'iPhone', action: 'view' } })
+    await drop('events:event', { id: 'e', type: 'device.files', payload: { device: 'iPhone', action: 'trash' } })
     await pass('memory:changed', { paths: ['a.md'] })
   })
 
@@ -143,7 +150,7 @@ describe('RemoteScope · events', () => {
   })
 
   it('the clock defaults to Date.now', async () => {
-    const s = new RemoteScope({ access: { project: async () => {}, check: async () => {}, denied: () => undefined }, sessionProject: () => undefined, conversationProject: async () => undefined, pending: () => [], browserTab: () => undefined })
+    const s = new RemoteScope({ access: { project: async () => {}, check: async () => {}, denied: () => undefined }, sessionProject: () => undefined, conversationProject: async () => undefined, pending: () => [], browserTab: () => undefined, webUrl: () => undefined })
     expect(await s.allows('p')).toBe(true)
   })
 })
@@ -164,30 +171,51 @@ describe('RemoteScope · the shared browser and Files', () => {
     ...over
   })
 
-  it('never shows a private tab — nor its downloads, questions, groups or splits', async () => {
+  it('never shows a private tab, its groups or splits — nor the desktop’s downloads, questions, extensions or remote users', async () => {
     const { s } = scope()
-    const shown = (await s.result('browser:state', state())) as BrowserState
+    const desktop = state({
+      extensions: [{ id: 'x1' } as NonNullable<BrowserState['extensions']>[number]],
+      remote: [{ deviceId: 'dev1', device: 'iPhone', since: '2026-10-16T10:00:00.000Z' }],
+      restorable: 2
+    })
+    const shown = (await s.result('browser:state', desktop)) as BrowserState
     expect(shown.tabs.map((t) => t.id)).toEqual(['t1', 't2'])
     expect(shown.activeId).toBeUndefined()
-    expect(shown.downloads.map((d) => d.id)).toEqual(['d1'])
-    expect(shown.permissions.map((p) => p.id)).toEqual(['q1', 'q3'])
-    expect(shown.auth).toEqual([])
+    expect(shown.downloads).toEqual([])
+    expect(shown.permissions).toEqual([])
+    expect(shown).not.toHaveProperty('auth')
+    expect(shown).not.toHaveProperty('extensions')
+    expect(shown).not.toHaveProperty('remote')
+    expect(shown.restorable).toBe(2)
     expect(shown.groups.map((g) => g.id)).toEqual(['g1'])
     expect(shown.splits.map((x) => x.id)).toEqual(['s1'])
     // The same for the push event; an active everyday tab stays active.
-    const { auth: _auth, ...withoutAuth } = state({ activeId: 't2' })
-    const pushed = (await s.event('browser:state', withoutAuth)) as BrowserState
+    const pushed = (await s.event('browser:state', state({ activeId: 't2' }))) as BrowserState
     expect(pushed.activeId).toBe('t2')
+    expect(pushed.downloads).toEqual([])
     expect(pushed).not.toHaveProperty('auth')
-    // No private tab left, but a private tab's download or group still is: those go.
-    const leftovers = (await s.result('browser:state', state({ tabs: [tab('t1')], splits: [], groups: [] }))) as BrowserState
-    expect(leftovers.downloads.map((d) => d.id)).toEqual(['d1'])
-    const group = (await s.result('browser:state', state({ tabs: [tab('t1')], splits: [], downloads: [] }))) as BrowserState
-    expect(group.groups.map((g) => g.id)).toEqual(['g1'])
-    // Nothing private at all: the state as it is.
-    const plain = state({ tabs: [tab('t1')], downloads: [], groups: [], splits: [] })
-    expect(await s.result('browser:state', plain)).toBe(plain)
     expect(await s.event('browser:bookmarks', [])).toEqual([])
+  })
+
+  it('opens and saves web pages only — no files, Mindeck pages or links that start another app', async () => {
+    const { s } = scope()
+    await s.guard('browser:navigate', { id: 't1', input: 'github.com' })
+    await s.guard('browser:navigate', { id: 't1', input: 'how to center a div' })
+    await s.guard('browser:navigate', { id: 't1', input: '  ' })
+    await s.guard('browser:open', { url: 'https://example.com' })
+    await s.guard('browser:open', {})
+    await s.guard('browser:bookmarkAdd', { title: 'Work', url: 'https://example.com/' })
+    await s.guard('browser:bookmarkAdd', { title: 'A folder' })
+    for (const [channel, payload] of [
+      ['browser:navigate', { id: 't1', input: 'file:///etc/passwd' }],
+      ['browser:navigate', { id: 't1', input: '/Users/ada/.ssh/id_rsa' }],
+      ['browser:navigate', { id: 't1', input: 'mindeck://passwords' }],
+      ['browser:open', { url: 'vscode://open?file=/x' }],
+      ['browser:bookmarkAdd', { title: 'x', url: 'javascript:alert(1)' }],
+      ['browser:bookmarkAdd', { title: 'x', url: 'file:///etc/passwd' }]
+    ] as const) {
+      await expect(s.guard(channel, payload), `${channel} ${JSON.stringify(payload)}`).rejects.toMatchObject({ code: 'remote-forbidden', message: expect.stringMatching(/web pages only/) })
+    }
   })
 
   it('refuses private tabs by id, opening one, and suggestions that point at one', async () => {

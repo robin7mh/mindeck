@@ -215,6 +215,15 @@ export interface BrowserState {
   groups: BrowserTabGroup[]
   /** Pairs of tabs shown side by side; the active tab's pair is on screen, `activeId` is its focused side. */
   splits: BrowserSplit[]
+  /** Paired devices using the browser right now (the desktop shows it, with a way to stop them). */
+  remote?: BrowserRemoteUse[]
+}
+
+/** A paired device using the desktop's browser: since when (ISO). */
+export interface BrowserRemoteUse {
+  deviceId: string
+  device: string
+  since: string
 }
 
 /** A server asks for a user name and password (HTTP Basic/Digest, or a proxy). */

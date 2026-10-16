@@ -13,6 +13,8 @@ export interface CallContext {
   transport: 'ipc' | 'remote'
   deviceId?: string
   role?: DeviceRole
+  /** The desktop shared its browser with this device. */
+  browser?: boolean
 }
 
 export type Handler<K extends IpcChannel> = (
@@ -40,21 +42,21 @@ function fail(code: string, message: string): IpcResult<never> {
  * bridge and by the HTTP API alike. Per call it checks, in order: the channel
  * exists, Mindeck is licensed (or the channel is license-free), the caller's
  * transport and role may use it (CHANNEL_ACCESS, with remote shells and the
- * shared browser as the desktop set them), the payload matches its
+ * browser as the desktop shared them), the payload matches its
  * schema, a remote call passes the guard (shared folders); then runs the
  * handler (a remote call's answer trimmed to what the device may see) and
  * wraps the result in IpcResult. Errors never escape as throws.
  */
 export interface RouterOptions {
   remoteTerminal: () => boolean
-  /** The desktop lets paired devices use the browser (`browser` channels). */
-  remoteBrowser?: () => boolean
   /** License gate: false → the channel is refused until Mindeck is licensed. */
   licensed?: (channel: IpcChannel) => boolean
   /** Checks a remote call's validated payload (throws a coded error to refuse it). */
   guard?: (channel: IpcChannel, payload: unknown, ctx: CallContext) => Promise<void> | void
   /** A remote call's answer as the device may see it (lists trimmed to its projects). */
   shape?: (channel: IpcChannel, data: unknown, ctx: CallContext) => Promise<unknown> | unknown
+  /** Sees each remote call that went through, with its answer (the activity log, the desktop's "in use" sign). */
+  observe?: (channel: IpcChannel, payload: unknown, data: unknown, ctx: CallContext) => void
 }
 
 export class Router {
@@ -87,8 +89,8 @@ export class Router {
       if (access === 'terminal' && !this.opts.remoteTerminal()) {
         return fail('remote-terminal-disabled', 'Remote shells are disabled on this Mindeck core')
       }
-      if (access === 'browser' && !this.opts.remoteBrowser?.()) {
-        return fail('remote-browser-disabled', 'The browser is not shared with paired devices on this Mindeck core')
+      if (access === 'browser' && !(ctx.role === 'admin' && ctx.browser)) {
+        return fail('remote-browser-disabled', 'The desktop has not shared its browser with this device (admin devices only)')
       }
       if (access === 'admin' && ctx.role !== 'admin') {
         return fail('admin-only', `${channel} needs a device with the admin role (or the Mindeck desktop app)`)
@@ -105,6 +107,11 @@ export class Router {
       if (ctx.transport !== 'remote') return { ok: true, data: await handler(parsed.data, ctx) }
       await this.opts.guard?.(key, parsed.data, ctx)
       const data = await handler(parsed.data, ctx)
+      try {
+        this.opts.observe?.(key, parsed.data, data, ctx)
+      } catch (err) {
+        console.error(`[router] observing ${channel}:`, err)
+      }
       return { ok: true, data: this.opts.shape ? await this.opts.shape(key, data, ctx) : data }
     } catch (err) {
       const e = err as { code?: string; message?: string; syscall?: string }

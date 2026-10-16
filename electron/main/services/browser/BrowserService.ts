@@ -14,6 +14,7 @@ import {
   type BrowserInput,
   type BrowserKey,
   type BrowserPermissionRequest,
+  type BrowserRemoteUse,
   type BrowserProfile,
   type BrowserPane,
   type BrowserSettings,
@@ -56,6 +57,7 @@ import { ENGINE_NAMES, labels, type Labels } from './labels'
 import { parseNetscape, toNetscape } from './netscape'
 import { SearchSuggestions, type Fetch } from './suggestions'
 import type { AutomationTarget, BrowserHost, BrowserHostEvents, ConsoleEntry, LoginAsk, MenuEntry, PermissionAsk, ShortcutAction, TabNavigation } from './types'
+import { SECRET_FOCUS } from './secretFocus'
 import { hostOf, isLoopback, isPageUrl, isWebUrl, originOf, resolveInput, searchUrl } from './url'
 
 type BrowserEvent = 'browser:state' | 'browser:find' | 'browser:command' | 'browser:reveal' | 'browser:bookmarks' | 'browser:import'
@@ -255,6 +257,7 @@ export class BrowserService {
   /** The session file says "running" — on a clean quit it must say so. */
   private marked = false
   private auth: BrowserAuthRequest[] = []
+  private remote: BrowserRemoteUse[] = []
   private readonly authResponders = new Map<string, (credentials: { username: string; password: string } | null) => void>()
   private downloads: BrowserDownload[] = []
   private readonly downloadControls = new Map<string, { cancel(): void }>()
@@ -465,8 +468,25 @@ export class BrowserService {
       auth: this.auth.map((a) => ({ ...a })),
       extensions: this.extensions.list(),
       groups: this.arrangement.groups.map((g) => ({ ...g })),
-      splits: this.arrangement.splits.map((x) => ({ ...x, tabs: [...x.tabs] }))
+      splits: this.arrangement.splits.map((x) => ({ ...x, tabs: [...x.tabs] })),
+      ...(this.remote.length ? { remote: this.remote.map((r) => ({ ...r })) } : {})
     }
+  }
+
+  /** The paired devices using the browser now (RemoteActivity): the desktop shows them. */
+  setRemote(devices: BrowserRemoteUse[]): void {
+    this.remote = devices
+    this.changed()
+  }
+
+  /**
+   * The web page typed text leads to, for a paired device — undefined unless
+   * it is one (http or https): files, Mindeck's own pages and links that start
+   * another app stay the desktop's.
+   */
+  webUrl(input: string): string | undefined {
+    const target = this.target(input)
+    return target?.kind === 'page' && isWebUrl(target.url) ? target.url : undefined
   }
 
   /**
@@ -1119,13 +1139,23 @@ export class BrowserService {
     } else if (input.action === 'scroll') {
       await target.cdp('Input.dispatchMouseEvent', { type: 'mouseWheel', x: input.x, y: input.y, deltaX: input.dx, deltaY: input.dy })
     } else if (input.action === 'type') {
+      await this.refuseSecret(target)
       await target.cdp('Input.insertText', { text: input.text })
     } else {
+      await this.refuseSecret(target)
       const key = KEY_CODES[input.key]
       const base = { key: input.key, code: input.key, windowsVirtualKeyCode: key.code, nativeVirtualKeyCode: key.code }
       await target.cdp('Input.dispatchKeyEvent', { type: key.text ? 'keyDown' : 'rawKeyDown', ...base, ...(key.text ? { text: key.text, unmodifiedText: key.text } : {}) })
       await target.cdp('Input.dispatchKeyEvent', { type: 'keyUp', ...base })
     }
+  }
+
+  /** Passwords, one-time codes, card numbers and frames of other sites are typed at the desktop only (an unknown focus counts as one). */
+  private async refuseSecret(target: AutomationTarget): Promise<void> {
+    const secret = await target
+      .cdp<{ result?: { value?: unknown } }>('Runtime.evaluate', { expression: SECRET_FOCUS, returnByValue: true })
+      .then((r) => r.result?.value !== false, () => true)
+    if (secret) throw coded('secret-field', 'Passwords and codes are typed at the desktop only')
   }
 
   /** A tab another device may see and use: never a private one; loaded first when it was not yet. Null for pages without a view. */

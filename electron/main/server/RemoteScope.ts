@@ -20,29 +20,36 @@ export interface RemoteScopeDeps {
   pending: () => PermissionRequest[]
   /** A browser tab by id (undefined: none). */
   browserTab: (id: string) => BrowserTab | undefined
+  /** The web page (http or https) typed text leads to — undefined for files, Mindeck's pages and other apps' links. */
+  webUrl: (input: string) => string | undefined
   now?: () => number
 }
 
 type Payload = Record<string, unknown>
 
 const isPrivate = (tab: BrowserTab | undefined) => tab?.profile === 'private'
+const isWeb = (url: string) => /^https?:\/\//i.test(url)
+/** The desktop's audit of what devices did — not for other devices to read. */
+const isDeviceEvent = (e: MindeckEvent) => e.type?.startsWith('device.') === true
 
 function refused(message: string): Error {
   return Object.assign(new Error(message), { code: 'remote-forbidden' })
 }
 
-/** The browser as a paired device sees it: private tabs — and their groups, splits, downloads and questions — left out. */
+/**
+ * The browser as a paired device sees it: its tabs, groups and splits —
+ * never private ones — and nothing of the desktop's own business: no
+ * downloads, permission or login questions, extensions, or which devices use it.
+ */
 export function publicBrowserState(state: BrowserState): BrowserState {
   const hidden = new Set(state.tabs.filter(isPrivate).map((t) => t.id))
-  if (!hidden.size && !state.downloads.some((d) => d.private) && !state.groups.some((g) => g.private)) return state
-  const shown = (tabId: string | undefined) => !tabId || !hidden.has(tabId)
+  const { auth: _auth, extensions: _extensions, remote: _remote, ...rest } = state
   return {
-    ...state,
+    ...rest,
     tabs: state.tabs.filter((t) => !hidden.has(t.id)),
-    activeId: shown(state.activeId) ? state.activeId : undefined,
-    downloads: state.downloads.filter((d) => !d.private),
-    permissions: state.permissions.filter((r) => shown(r.tabId)),
-    ...(state.auth ? { auth: state.auth.filter((r) => shown(r.tabId)) } : {}),
+    activeId: state.activeId && !hidden.has(state.activeId) ? state.activeId : undefined,
+    downloads: [],
+    permissions: [],
     groups: state.groups.filter((g) => !g.private),
     splits: state.splits.filter((sp) => sp.tabs.every((id) => !hidden.has(id)))
   }
@@ -85,6 +92,10 @@ export class RemoteScope {
     if (channel.startsWith('browser:')) {
       if (channel === 'browser:open' && p.private) throw refused('Private tabs stay on the desktop')
       if (id && isPrivate(this.deps.browserTab(id))) throw refused('Private tabs stay on the desktop')
+      // Web pages only: no files, no Mindeck pages (logins, extensions), no links that start another app.
+      const input = channel === 'browser:navigate' ? p.input : channel === 'browser:open' ? p.url : undefined
+      if (typeof input === 'string' && input.trim() && !this.deps.webUrl(input)) throw refused('Paired devices open web pages only (http or https)')
+      if (channel === 'browser:bookmarkAdd' && typeof p.url === 'string' && !isWeb(p.url)) throw refused('Paired devices save web pages only (http or https)')
     }
     if (channel === 'permission:respond' && id) {
       const request = this.deps.pending().find((r) => r.id === id)
@@ -106,7 +117,7 @@ export class RemoteScope {
       case 'permission:grants':
         return this.keep(data as PermissionGrant[], (g) => (g.projectId === ALL_PROJECTS ? undefined : g.projectId))
       case 'events:recent':
-        return this.keep(data as MindeckEvent[], (e) => this.eventProject(e))
+        return this.keep((data as MindeckEvent[]).filter((e) => !isDeviceEvent(e)), (e) => this.eventProject(e))
       case 'liveServer:status':
         return this.keep(data as LiveServerStatus[], (s) => s.projectId)
       case 'browser:state':
@@ -148,6 +159,7 @@ export class RemoteScope {
       case 'permission:request':
         return this.only(p, await this.requestProject(payload as PermissionRequest))
       case 'events:event':
+        if (isDeviceEvent(payload as MindeckEvent)) return null
         return this.only(p, await this.eventProject(payload as MindeckEvent))
       case 'browser:state':
         return publicBrowserState(payload as BrowserState)
