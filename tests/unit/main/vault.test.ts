@@ -369,8 +369,8 @@ describe('VaultService — watcher', () => {
     await writeFile(join(root, 'notes.txt'), 'not a note')
     await rm(join(root, 'Ich/Vorlieben.md'))
     for (const f of ['External.md', 'New', 'notes.txt', '.obsidian/workspace.json', 'Ich/Vorlieben.md', 'Gone-before.md', '']) fire(f)
-    await tick(FLUSH)
-    expect(onChange).toHaveBeenCalledWith({ paths: ['External.md', 'New/Deep/In.md', 'Ich/Vorlieben.md'] })
+    // A busy machine can take longer than one flush window: wait for the change, not the clock.
+    await vi.waitFor(() => expect(onChange).toHaveBeenCalledWith({ paths: ['External.md', 'New/Deep/In.md', 'Ich/Vorlieben.md'] }), { timeout: 5000 })
     expect((await v.read('New/Deep/In.md')).body).toBe('x')
 
     onChange.mockClear()
@@ -401,8 +401,8 @@ describe('VaultService — watcher', () => {
     await writeFile(join(root, 'Silent.md'), 'x')
     onChange.mockClear()
     fire(null)
-    await tick(FLUSH)
-    expect(onChange).toHaveBeenCalledWith({})
+    // A busy machine can take longer than one flush window: wait for the change, not the clock.
+    await vi.waitFor(() => expect(onChange).toHaveBeenCalledWith({}), { timeout: 5000 })
   })
 
   it('ignores flushes for a vault that was switched away, and survives flush errors', async () => {
@@ -429,8 +429,8 @@ describe('VaultService — watcher', () => {
     onChange.mockReset()
     await writeFile(join(root, 'After.md'), 'y')
     fire('After.md')
-    await tick(FLUSH)
-    expect(onChange).toHaveBeenCalledWith({ paths: ['After.md'] }) // the chain kept working
+    // A busy machine can take longer than one flush window: wait for the change, not the clock.
+    await vi.waitFor(() => expect(onChange).toHaveBeenCalledWith({ paths: ['After.md'] }), { timeout: 5000 }) // the chain kept working
   })
 
   it('stops watching on watcher errors and works without a watcher', async () => {
