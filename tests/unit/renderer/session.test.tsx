@@ -373,7 +373,7 @@ const initialSession = useSession.getState()
  * and handing over a stored token set it, signing out clears it.
  */
 const jar = { cookie: false }
-const sessionFetch = (opts: { health?: boolean; pair?: 'ok' | 'bad'; info?: number; session?: 'down' } = {}) =>
+const sessionFetch = (opts: { health?: boolean; pair?: 'ok' | 'bad'; info?: number; session?: 'down'; logout?: 'down' } = {}) =>
   fakeFetch((url, init) => {
     const auth = init?.headers?.Authorization
     if (url.endsWith('/api/health')) {
@@ -391,6 +391,7 @@ const sessionFetch = (opts: { health?: boolean; pair?: 'ok' | 'bad'; info?: numb
       return { status: 200, body: { ok: true, data: { device: { id: 'dev-old', name: 'n', createdAt: '' } } } }
     }
     if (url.endsWith('/api/logout')) {
+      if (opts.logout === 'down') return { status: 0, throws: new Error('ECONNREFUSED') }
       jar.cookie = false
       return { status: 200, body: { ok: true } }
     }
@@ -475,6 +476,15 @@ describe('session store', () => {
     expect(localStorage.getItem('mindeck.deviceId')).toBeNull()
     await useSession.getState().logout() // signed out already: nothing to tell the core
     expect(called(out, '/api/logout')).toHaveLength(1)
+
+    // The core can't be reached: signed out here all the same.
+    withFetch(sessionFetch())
+    expect(await useSession.getState().pair('ABCD-EFGH', 'Me')).toBe(true)
+    const down = withFetch(sessionFetch({ logout: 'down' }))
+    await useSession.getState().logout()
+    expect(called(down, '/api/logout')).toHaveLength(1)
+    expect(useSession.getState().status).toBe('unpaired')
+    expect(localStorage.getItem('mindeck.deviceId')).toBeNull()
   })
 
   it('"stay paired" off: a session cookie, the device id only for this tab', async () => {

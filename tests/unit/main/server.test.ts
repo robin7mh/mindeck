@@ -784,9 +784,13 @@ describe('HttpServer — events socket', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     let hang = true
     const scope = vi.fn((channel: string, payload: unknown) => (channel === 'tests:changed' && hang ? new Promise<unknown>(() => {}) : Promise.resolve(payload)))
-    const { hub, base, token } = await startHttp({ scope, outbox: { timeoutMs: 40, max: 3 } })
+    const { hub, base, token, http, device } = await startHttp({ scope, outbox: { timeoutMs: 40, max: 3 } })
     const { messages } = await openSocket(`${base.replace('http', 'ws')}/api/events`, eventsProtocols(token))
     await tick(20)
+    // A second connection of the device that is closing just now: it gets nothing, not even the resync.
+    const closing = { deviceId: device.id, alive: true, ws: { readyState: 2, OPEN: 1, send: vi.fn(), terminate: vi.fn(), ping: vi.fn() } }
+    const clients = (http as unknown as { clients: Set<unknown> }).clients
+    clients.add(closing)
     hub.publish('tests:changed', { projectId: 'on-a-dead-mount' } as never)
     hub.publish('memory:changed', { paths: ['a.md'] })
     hub.publish('memory:changed', { paths: ['b.md'] })
@@ -799,6 +803,8 @@ describe('HttpServer — events socket', () => {
     // Drained: the dropped events left a gap no seq shows — the device is told to resync (FE-BUG-01).
     const hello = messages[0] as { payload: { stream: string } }
     expect(messages[3]).toEqual({ channel: 'resync-required', payload: { stream: hello.payload.stream, seq: 2 } })
+    expect(closing.ws.send).not.toHaveBeenCalled()
+    clients.delete(closing)
     expect(error).toHaveBeenCalledWith('[server] not sending tests:changed:', expect.objectContaining({ message: 'no answer within 40 ms' }))
     // Events flow again, and a full outbox would be said again.
     hang = false
