@@ -11,39 +11,69 @@
 
 ---
 
-## 0. Umsetzungsstand (2026-10-17)
+## 0. Umsetzungsstand (2026-10-17, abgeschlossen)
 
-Die Findings dieses Plans wurden auf `feature/claude-remote` umgesetzt, jeder Fix mit Regressionstest (Commits `fix(security): … (ID)`, `fix: … (ID)`).
+Alle Findings dieses Plans sind auf `feature/claude-remote` umgesetzt, in zwei Runden und jeweils mit Regressionstests. Commits heißen `fix(security): … (ID)` oder `fix: … (ID)`.
 
 | | Anzahl |
 |---|---|
-| ✅ behoben | 55 |
-| ⚠️ teilweise (Rest braucht anderes Repo oder größeren Umbau) | 9 |
-| ⏭️ bewusst offen | 1 (BE-SEC-14) |
+| ✅ behoben | 64 |
+| ⚠️ in mindeck fertig, Rest in einem anderen Repo | 1 (BE-SEC-10: SPKI-Pinning in mindeck-mobile) |
 
-**Prüfung nach dem Zusammenführen:** `npm run typecheck` ✅ · `npm run lint` (neu) ✅ · Vitest 2085/2087 ✅. Die 2 roten Tests hängen an der Container-Umgebung: `tests.test` „unreadable folder“ läuft als root, `notebook` „too slow“ ist nur unter Volllast zu langsam und einzeln grün. `npm audit --omit=dev`: nur noch 2 × niedrig (DOMPurify in Monaco, N7).
+**Prüfung des Endstands:**
 
-**Verhaltensänderungen, die man kennen muss:**
-- **Workspace-Trust:** Neu hinzugefügte Projekte sind *eingeschränkt*, bis man im Editor-Banner „Diesem Projekt vertrauen“ klickt. Bis dahin laufen keine projekteigenen Tools: tsserver, ESLint/Prettier, andere Sprachserver, Notebooks, SFTP-Config. Git läuft gehärtet (keine Repo-Hooks/fsmonitor/Treiber). Bestehende Projekte gelten beim Upgrade als vertraut.
+| Prüfung | Ergebnis |
+|---|---|
+| `npm run typecheck` | ✅ |
+| `npm run lint` | ✅ (ESLint 9, neu) |
+| Vitest | ✅ 2182/2182 Tests, 100 % Coverage in allen Kategorien, mehrfach hintereinander |
+| E2E mit Playwright (Electron + Web, unter Xvfb) | ✅ 30/30 |
+| Builds (`build`, `web:build`, `server:build`, `electron-builder --linux --dir`) | ✅ |
+| `npm audit` | ✅ 0 kritisch, 0 hoch |
+
+Übrig bleiben in `npm audit` 8 moderate Meldungen in einer einzigen Kette, die nur das Packaging betrifft: electron-builder → `@electron/get` → global-agent → sprintf-js. Ein stabiler Fix existiert noch nicht, Dependabot meldet ihn. Dazu 2 niedrige: DOMPurify in Monaco (N7).
+
+**Runde 2 im Überblick:**
+- **Toolchain:** electron-vite 5, Vite 7, Vitest 4 und Tailwind 4. Das Aussehen wurde per Screenshot-Vergleich hell und dunkel geprüft.
+- **RunAsNode-Fuse aus:** tsserver, Lint-Worker, PHP-Adapter und Dev-Containers-CLI laufen als `utilityProcess`.
+- **Event-Replay:** Nach einem Reconnect spielt der Server fehlende Events nach.
+- **Web-UI:** meldet sich per HttpOnly-Cookie an, mit CSRF-Prüfung.
+- **Gekoppelte Geräte:** Rate-Limit pro Gerät; Mongo lehnt serverseitiges JavaScript von Geräten ab.
+- **Lizenzen:**
+  - Follower-Leases, die an die Install-ID gebunden sind.
+  - Multi-Key-Entitlements über `kid`, dazu eine signierte Sperrliste.
+  - Das Offline-Zertifikat ist an das Konto gebunden.
+  - Eigener Zustand `license_suspended`.
+- **Explorer:** virtualisiert; das Polling hängt an Sichtbarkeit und Fokus.
+- **Tests:** alle umgebungsabhängigen und wackeligen Tests sind deterministisch, ohne Skip.
+
+**Verhaltensänderungen gegenüber dem Ausgangsstand:**
+- **Workspace-Trust:** Neu hinzugefügte Projekte sind *eingeschränkt*, bis man im Editor-Banner „Diesem Projekt vertrauen“ wählt. Bestehende Projekte gelten beim Upgrade als vertraut.
 - **Netzwerk-API:**
-  - Host-Allowlist: Zugriff über Reverse-Proxy- oder Tailscale-Namen braucht `MINDECK_ALLOWED_HOSTS`.
-  - Der `?token=`-Fallback im WebSocket ist entfernt.
-  - Geräte-Tokens laufen nach 90 Tagen ohne Nutzung ab.
-  - `/api/health` zeigt die Version nur noch mit Token.
-- **Gekoppelte `member`-Geräte:** Vault, Daily Notes, AI-Einstellungen, Push, Sync und Trust nur noch `admin`. Mongo und Inline-AI nur mit Remote-Shells.
-- **Electron:** Kamera, Mikrofon, Standort und Clipboard-Lesen werden abgelehnt (außer Clipboard-Lesen für die App selbst). Das Remote-Fenster speichert nichts mehr auf der Platte. Scheitert der Start, kommt ein Fehlerdialog statt eines Zombie-Prozesses.
+  - Host-Allowlist; bei Zugriff über einen Proxy- oder Tailscale-Namen `MINDECK_ALLOWED_HOSTS` setzen.
+  - Kein `?token=` mehr.
+  - Tokens laufen nach 90 Tagen Inaktivität ab.
+  - Die Web-UI nutzt ein Cookie statt Web-Storage.
+- **`member`-Geräte:** Vault, Daily Notes, AI-Einstellungen, Push, Sync und Trust sind nur noch `admin`. Mongo und Inline-AI nur mit Remote-Shells. Kostenpflichtige Kanäle haben ein Rate-Limit (`MINDECK_RATE_LIMITS`).
+- **Electron:** Kamera, Mikrofon und Standort werden abgelehnt. Das Remote-Fenster ist In-Memory. Scheitert der Start, gibt es einen Fehlerdialog. Die RunAsNode-Fuse ist aus.
 - **Release/CI:**
-  - Typecheck und Coverage laufen vor jedem Build und Release, Lint läuft in der CI.
-  - Tag-Builds ohne Signatur-Secrets schlagen fehl.
-  - Actions sind per SHA gepinnt, Dependabot ist aktiv.
-  - Server-Pakete werden mit eingebackenem SHA-256 geprüft.
-- **Docker:** `read_only`, `cap_drop: ALL` und `no-new-privileges` sind gesetzt. Projekte liegen standardmäßig in `./projects` (Lesen und Schreiben per `MINDECK_PROJECTS_MODE=rw`).
+  - Typecheck, Coverage und Lint laufen vor Build und Release.
+  - Tag-Builds ohne Signatur schlagen fehl.
+  - Actions sind per SHA gepinnt; Dependabot ist aktiv.
+  - Server-Pakete werden per SHA-256 geprüft.
+  - `MINDECK_CLOUD_KEY` darf eine Liste sein. Bei einer Rotation den neuen Key *hinten* anhängen.
+- **Docker:** `read_only`, `cap_drop: ALL`, `no-new-privileges`. Projekte liegen in `./projects`.
+- **macOS:** Den Sign-Hook mit den Plugin-Entitlements (`build/sign.cjs`) einmal real signieren und notarisieren. Hier war das nicht prüfbar.
 
 **Folgearbeit in anderen Repos:**
-- **mindeck-mobile:** auf SPKI-Pinning (`&pk=`) umstellen, `sync:shared` laufen lassen (neue Zugriffsklasse `trusted`), `401` bei abgelaufenem Token sauber behandeln.
-- **mindeck-cloud:** Follower-Leases ausstellen (BE-SEC-09) und Größe von `/v1/me/sync` begrenzen.
+- **mindeck-mobile:**
+  - Auf SPKI-Pinning umstellen (`&pk=`).
+  - `npm run sync:shared` ausführen (neue Zugriffsklasse `trusted`, Transport mit Replay) und `onResync` in den Stores nutzen.
+  - `401` bei abgelaufenem Token sauber behandeln.
+  - Eigene Texte für `rate-limited` (Gerätelimit), `license_suspended`, `device_limit` und `push_token_taken`.
+- **mindeck-cloud:** erledigt (Follower-Leases, `kid`, Sperrliste).
 
-In der Checkliste (Abschnitt 5) heißt `[x]` erledigt und `[~]` teilweise erledigt. Was bei `[~]` noch fehlt, steht in der Zeile darunter.
+In der Checkliste (Abschnitt 5) heißt `[x]` erledigt, `[~]` heißt teilweise erledigt, der Rest liegt in einem anderen Repo.
 
 ---
 
@@ -683,8 +713,7 @@ Für den Frontend-Teil gibt es kein Problem: Renderer 935/935 grün. Kein `.only
 - [x] **BE-SEC-03** (🟠) – Windows: `git` ohne absoluten Pfad mit `cwd` = Projekt (Binary-Planting) – *zu verifizieren auf Windows*
 - [x] **BE-SEC-04** (🟠) – Remote-Fenster und Hauptfenster ohne Permission-Handler (Mikrofon, Kamera, Clipboard-Lesen, Standort)
 - [x] **FE-SEC-01** (🟠) – Markdown-Sanitizer lässt `<style>`, `style`/`class`-Attribute und Formulare durch: globales CSS-Injection/UI-Redressing und Phishing-Formulare
-- [~] **BE-SEC-09** (🟡) – Lizenz: Follower-Modus per Umgebungsvariable auch in Release-Builds; `cloud:adopt` prüft weder Gerät noch Ablauf
-  - ⚠️ teilweise: Follower nur noch im Server-Paket (`MINDECK_FOLLOWER_BUILD`), `cloud:adopt` lehnt abgelaufene/inaktive/Offline-Entitlements ab. **Offen:** echte Gerätebindung braucht Follower-Leases aus mindeck-cloud.
+- [x] **BE-SEC-09** (🟡) – Lizenz: Follower-Modus per Umgebungsvariable auch in Release-Builds; `cloud:adopt` prüft weder Gerät noch Ablauf
 - [x] **BE-SEC-13** (🟡) – `npm audit --omit=dev`: node-forge (hoch) über `selfsigned@2.4.1`
 - [x] **BE-BUG-01** (🟡) – `mindeck pair` / `docker:pair`: Code wird vom laufenden Core wieder gelöscht (veralteter Cache)
 - [x] **BE-BUG-02** (🟡) – `SecretStore.set`: Lost Update bei parallelen Aufrufen
@@ -698,32 +727,26 @@ Für den Frontend-Teil gibt es kein Problem: Renderer 935/935 grün. Kein `.only
 - [x] **BE-SEC-05** (🟡) – Gerät ohne Remote-Shells schreibt beliebige `.md`-Dateien in Projekte (Vault auf Projektordner umstellen)
 - [x] **BE-SEC-06** (🟡) – Deny-Liste lückenhaft: `.git/config` (Tokens in Remote-URLs) & Co. für Geräte lesbar
 - [x] **BE-SEC-07** (🟡) – Projekt-Kanäle mit `id` statt `projectId` umgehen das Projekt-Scoping; `liveServer:status` verrät fremde Projekt-IDs
-- [~] **BE-SEC-08** (🟡) – MongoDB-Verbindungen sind für jedes Gerät lesbar – unabhängig von freigegebenen Ordnern
-  - ⚠️ teilweise: Mongo-Kanäle brauchen jetzt Zugriffsklasse `trusted`. **Offen:** `$where`/`$function` in Filtern ablehnen.
+- [x] **BE-SEC-08** (🟡) – MongoDB-Verbindungen sind für jedes Gerät lesbar – unabhängig von freigegebenen Ordnern
 - [~] **BE-SEC-10** (🟡) – TLS-Pinning auf das **Zertifikat** bricht bei jeder Erneuerung (Adresswechsel) – Druck zum „Warnung wegklicken“
-  - ⚠️ teilweise: Core gibt zusätzlich `spkiFingerprint` (Pairing-Antwort, `server:status`, QR `&pk=`) aus, Schlüssel bleibt bei Neuausstellung gleich. **Offen:** mindeck-mobile auf SPKI-Pinning umstellen.
+  - ⚠️ mindeck fertig: `spkiFingerprint` in Pairing-Antwort, `server:status` und QR (`&pk=`); bei Neuausstellung bleibt der Schlüssel gleich. **Offen in mindeck-mobile:** auf SPKI-Pinning umstellen.
 - [x] **BE-SEC-11** (🟡) – Live Server: dotfiles ausgeliefert, kein Host-Check → DNS-Rebinding liest `.env`
 - [x] **BE-SEC-12** (🟡) – SFTP aus `.vscode/sftp.json` des Repos: Upload folgt Symlinks; Repo-Konfiguration wird ungefragt benutzt
-- [ ] **BE-SEC-14** (🟡) – Fuse `RunAsNode` an + `disable-library-validation` + Kamera/Mikrofon-Entitlements (N5, weiterhin offen)
-  - ⏭️ Bewusst offen: `ELECTRON_RUN_AS_NODE` wird von TsServer, Lint-Worker, PHP-Debug-Adapter und Dev-Containers-CLI gebraucht. Fix = Umstellung auf `utilityProcess` (M–L).
+- [x] **BE-SEC-14** (🟡) – Fuse `RunAsNode` an + `disable-library-validation` + Kamera/Mikrofon-Entitlements (N5, weiterhin offen)
 - [x] **BE-SEC-15** (🟡) – Geräte-Tokens laufen nie ab; `?token=` im WS-Query weiter akzeptiert (Rest von ANALYSE §3.4)
 - [x] **BE-QA-01** (🟡) – CD und Release laufen ohne Tests; unsignierte Builds werden nur mit Warnung veröffentlicht
 - [x] **BE-QA-02** (🟡) – Remote-SSH/Dev-Container-Pakete sind manueller Release-Schritt und werden nicht geprüft
-- [~] **FE-SEC-03** (🟡) – Web-UI-Gerätetoken liegt dauerhaft in `localStorage` (ANALYSE §3.4, weiter offen)
-  - ⚠️ teilweise: Option „In diesem Browser gekoppelt bleiben“ (aus → sessionStorage). **Offen:** HttpOnly-Cookie statt Web-Storage (Server-Änderung).
-- [~] **FE-BUG-01** (🟡) – Web-UI: keine Resynchronisierung nach einem WebSocket-Reconnect, sodass Freigaben, Status und Terminal-Ausgabe verloren gehen
-  - ⚠️ teilweise: Client-Resync nach Reconnect (Freigaben, Agents, Sessions, Terminal-Lücken). **Offen:** Sequenznummern/Replay im Server, damit kein Delta-Fenster bleibt.
+- [x] **FE-SEC-03** (🟡) – Web-UI-Gerätetoken liegt dauerhaft in `localStorage` (ANALYSE §3.4, weiter offen)
+- [x] **FE-BUG-01** (🟡) – Web-UI: keine Resynchronisierung nach einem WebSocket-Reconnect, sodass Freigaben, Status und Terminal-Ausgabe verloren gehen
 - [x] **FE-QA-01** (🟡) – Kein Linter, besonders keine Prüfung der Hook-Regeln
 - [x] **FE-TEST-01** (🟡) – Sicherheitstests für den Sanitizer und die Link-Behandlung decken die relevanten Payloads nicht ab
-- [~] **FE-TEST-02** (🟡) – Keine Tests für Reconnect- und Race-Szenarien
-  - ⚠️ teilweise: Unit-Tests für Resync und Races. **Offen:** Playwright-Test mit `setOffline`.
+- [x] **FE-TEST-02** (🟡) – Keine Tests für Reconnect- und Race-Szenarien
 
 ### Phase 3 – Verbesserungen / Härtung
 
 - [x] **BE-SEC-16** (🟢) – Remote-Bundle (inkl. `node`-Binary) ohne Integritätsprüfung heruntergeladen und auf dem Remote-Host ausgeführt
 - [x] **BE-SEC-17** (🟢) – Freigaben vom Gerät: Claude-Code-`Read`/`WebFetch` gelten als „read“, ohne Pfad-/Ziel-Prüfung
-- [~] **BE-SEC-18** (🟢) – `member`-Geräte ändern globale Einstellungen und verbrauchen Kontingente
-  - ⚠️ teilweise: Globale Einstellungen, AI-Konfiguration, Push, Sync und `cloud:forgotPassword` nur noch `admin`. **Offen:** Token-Bucket pro Gerät für Kontingente.
+- [x] **BE-SEC-18** (🟢) – `member`-Geräte ändern globale Einstellungen und verbrauchen Kontingente
 - [x] **BE-SEC-19** (🟢) – HTTP-API: kein Host-Check, Version öffentlich, interne Fehlermeldungen an Geräte (ANALYSE §3.9, offen)
 - [x] **BE-SEC-20** (🟢) – Pairing-Rate-Limit pro IP: IPv6-Rotation, unbegrenzte Map, 8 MB Body unauthentifiziert
 - [x] **BE-SEC-21** (🟢) – Loopback gilt als vertrauenswürdig (Klartext + geteiltes Rate-Limit) – riskant hinter Proxys/Port-Forwarding
@@ -740,8 +763,7 @@ Für den Frontend-Teil gibt es kein Problem: Renderer 935/935 grün. Kein `.only
 - [x] **BE-BUG-07** (🟢) – `AuthService`/`SecretStore`: Lesefehler ≠ beschädigt → Geräte bzw. Secrets können verloren gehen
 - [x] **BE-BUG-08** (🟢) – `ProjectService.requireProject`/`openFile` werfen Fehler ohne `code` (ANALYSE §4.6, offen)
 - [x] **BE-QA-03** (🟢) – Veraltete Doku/Reste aus der DB-Zeit (ANALYSE §4.5, teilweise offen)
-- [~] **BE-QA-04** (🟢) – Dev-/Build-Toolchain mit kritischen/hohen Advisories und veralteten Majors
-  - ⚠️ teilweise: Nicht-brechende Dev-Updates (`npm audit` 31 → 24). **Offen:** vitest 4 (tinypool) braucht vorher Migration auf electron-vite 5 / vite 7; ebenso tailwind 4, `@electron/get`.
+- [x] **BE-QA-04** (🟢) – Dev-/Build-Toolchain mit kritischen/hohen Advisories und veralteten Majors
 - [x] **BE-QA-05** (🟢) – Fehlende Regressionstests für sicherheitskritische Pfade
 - [x] **BE-QA-06** (🟢) – Codex-Adapter weiterhin per `npx -y` zur Laufzeit aus der Registry (ANALYSE §3.9)
 - [x] **FE-SEC-05** (🟢) – Desktop-CSP härten
@@ -754,8 +776,7 @@ Für den Frontend-Teil gibt es kein Problem: Renderer 935/935 grün. Kein `.only
 - [x] **FE-BUG-07** (🟢) – i18n-Lücken: Datumsformate ohne App-Sprache, englische Transportfehler
 - [x] **FE-BUG-08** (🟢) – Uneinheitliche Link-Behandlung in Markdown (PR, Notebook): im Web-UI verlässt der Tab die App
 - [x] **FE-QA-02** (🟢) – Duplizierte und inkonsistente Markdown-Pfade
-- [~] **FE-QA-03** (🟢) – Performance: Markdown pro Delta neu gerendert, lange Listen ohne Virtualisierung
-  - ⚠️ teilweise: Markdown beim Streamen gedrosselt, Chat-Cache begrenzt. **Offen:** Virtualisierung des Explorer-Baums, Polling an Fokus/FS-Watch koppeln.
+- [x] **FE-QA-03** (🟢) – Performance: Markdown pro Delta neu gerendert, lange Listen ohne Virtualisierung
 - [x] **FE-QA-04** (🟢) – Barrierefreiheit: Kleinigkeiten
 - [x] **FE-QA-05** (🟢) – Veraltete Kommentare und Konfiguration
 - [x] **FE-TEST-03** (🟢) – Die vollständige Suite ist nur in einer passenden Umgebung grün
