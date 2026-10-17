@@ -96,7 +96,7 @@ const variable = (name: string, o: Remote): DebugVariable => ({
 })
 
 /** Inspector chatter on stderr that isn't the program's. */
-const NOISE = /^(Debugger listening on|Debugger attached\.|Waiting for the debugger to disconnect|For help, see: https:\/\/nodejs\.org)/
+const NOISE = /^(Debugger listening on|Debugger attached\.|Debugger ending on|Waiting for the debugger to disconnect|For help, see: https:\/\/nodejs\.org)/
 
 const MAX_PROPERTIES = 500
 
