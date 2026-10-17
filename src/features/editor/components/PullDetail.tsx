@@ -7,7 +7,7 @@ import { Select } from '@/components/ui/Select'
 import { Markdown as Prose } from '@/components/ui/Markdown'
 import { useGitHub } from '../github'
 
-const button = 'flex items-center gap-1 rounded border px-2 py-0.5 font-sans text-[12px] transition-colors disabled:opacity-40'
+const button = 'flex items-center gap-1 rounded-sm border px-2 py-0.5 font-sans text-[12px] transition-colors disabled:opacity-40'
 const CHECK_ICON: Record<CheckState, { Icon: typeof CircleCheck; tint: string }> = {
   success: { Icon: CircleCheck, tint: 'text-green' },
   failure: { Icon: CircleX, tint: 'text-danger' },
@@ -43,7 +43,7 @@ function Respond() {
   const gh = useGitHub.getState()
   return (
     <div className="space-y-1.5">
-      <textarea aria-label={t.github.comment} placeholder={t.github.commentPlaceholder} value={text} onChange={(e) => setText(e.target.value)} rows={4} className="w-full resize-y rounded-md border border-hud/60 bg-void/40 px-2 py-1 font-mono text-[12px] text-text-primary outline-none focus:border-cyan/60" />
+      <textarea aria-label={t.github.comment} placeholder={t.github.commentPlaceholder} value={text} onChange={(e) => setText(e.target.value)} rows={4} className="w-full resize-y rounded-md border border-hud/60 bg-void/40 px-2 py-1 font-mono text-[12px] text-text-primary outline-hidden focus:border-cyan/60" />
       <div className="flex flex-wrap gap-1.5">
         <button type="button" disabled={!text.trim() || !!busy} onClick={() => void send(() => gh.comment(text))} className={cn(button, 'border-hud/60 text-text-secondary hover:text-text-primary')}>
           {busy === 'comment' && <Loader2 size={11} className="animate-spin" />}
@@ -102,8 +102,8 @@ export function PullDetail() {
             {pr.title} <span className="text-text-muted">#{pr.number}</span>
           </h2>
           <p className="flex flex-wrap items-center gap-2 font-mono text-[11px] text-text-muted">
-            <span className={cn('rounded px-1.5 font-sans', tint)}>{t.github.prState[pr.state]}</span>
-            {pr.draft && <span className="rounded bg-elevated px-1.5 font-sans">{t.github.draft}</span>}
+            <span className={cn('rounded-sm px-1.5 font-sans', tint)}>{t.github.prState[pr.state]}</span>
+            {pr.draft && <span className="rounded-sm bg-elevated px-1.5 font-sans">{t.github.draft}</span>}
             <span>{pr.author}</span>
             <span className="flex items-center gap-1">
               <GitBranch size={11} /> {t.github.into(pr.head, pr.base)}
@@ -111,7 +111,7 @@ export function PullDetail() {
             <span className="text-green">+{pr.additions}</span>
             <span className="text-danger">−{pr.deletions}</span>
             {pr.labels.map((l) => (
-              <span key={l} className="rounded bg-cyan/10 px-1.5 font-sans text-cyan">
+              <span key={l} className="rounded-sm bg-cyan/10 px-1.5 font-sans text-cyan">
                 {l}
               </span>
             ))}
@@ -123,10 +123,10 @@ export function PullDetail() {
             {t.github.checkout}
           </button>
         )}
-        <a href={pr.url} target="_blank" rel="noreferrer" aria-label={t.github.openOnGitHub} title={t.github.openOnGitHub} className="flex h-6 w-6 items-center justify-center rounded text-text-muted hover:bg-elevated hover:text-text-primary">
+        <a href={pr.url} target="_blank" rel="noreferrer" aria-label={t.github.openOnGitHub} title={t.github.openOnGitHub} className="flex h-6 w-6 items-center justify-center rounded-sm text-text-muted hover:bg-elevated hover:text-text-primary">
           <ExternalLink size={13} />
         </a>
-        <button type="button" aria-label={t.github.close} title={t.github.close} onClick={() => gh.close()} className="flex h-6 w-6 items-center justify-center rounded text-text-muted hover:bg-elevated hover:text-text-primary">
+        <button type="button" aria-label={t.github.close} title={t.github.close} onClick={() => gh.close()} className="flex h-6 w-6 items-center justify-center rounded-sm text-text-muted hover:bg-elevated hover:text-text-primary">
           <X size={14} />
         </button>
       </header>
@@ -168,7 +168,7 @@ export function PullDetail() {
           <ul className="space-y-0.5">
             {pr.files.map((f) => (
               <li key={f.path}>
-                <button type="button" onClick={() => void gh.openFile(f.path)} className="flex w-full items-center gap-1.5 rounded px-1 py-0.5 text-left font-mono text-[11.5px] text-text-secondary hover:bg-elevated/60 hover:text-text-primary">
+                <button type="button" onClick={() => void gh.openFile(f.path)} className="flex w-full items-center gap-1.5 rounded-sm px-1 py-0.5 text-left font-mono text-[11.5px] text-text-secondary hover:bg-elevated/60 hover:text-text-primary">
                   <FileDiff size={12} className="shrink-0 text-text-muted" />
                   <span className="min-w-0 flex-1 truncate">{f.path}</span>
                   <span className="text-green">+{f.additions}</span>

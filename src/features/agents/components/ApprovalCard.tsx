@@ -21,7 +21,7 @@ export function revealInvisible(text: string) {
   const parts = text.split(new RegExp(`(${INVISIBLE.source})`, 'u'))
   return parts.map((part, i) =>
     i % 2 ? (
-      <mark key={i} className="rounded-sm bg-amber/25 px-px text-amber">{`⟨U+${part.codePointAt(0)!.toString(16).toUpperCase().padStart(4, '0')}⟩`}</mark>
+      <mark key={i} className="rounded-xs bg-amber/25 px-px text-amber">{`⟨U+${part.codePointAt(0)!.toString(16).toUpperCase().padStart(4, '0')}⟩`}</mark>
     ) : (
       <Fragment key={i}>{part}</Fragment>
     )
@@ -62,7 +62,7 @@ export function ApprovalCard({
       role="alertdialog"
       aria-label={t.agents.approve(request.toolTitle)}
       className={cn(
-        'rounded-md border bg-surface/90 p-3 backdrop-blur',
+        'rounded-md border bg-surface/90 p-3 backdrop-blur-sm',
         execute ? 'border-amber/60' : 'border-cyan/50'
       )}
     >
@@ -76,7 +76,7 @@ export function ApprovalCard({
         <Icon size={14} className="mt-0.5 shrink-0 text-cyan" />
         <div className="min-w-0">
           {/* The whole text, line breaks and runs of spaces as they are: what is approved is what is seen. */}
-          <p className="max-h-60 overflow-auto whitespace-pre-wrap break-words font-mono text-[12px] text-text-primary">
+          <p className="max-h-60 overflow-auto whitespace-pre-wrap wrap-break-word font-mono text-[12px] text-text-primary">
             {revealInvisible(short ?? request.summary)}
             {short !== null && '…'}
           </p>
@@ -99,7 +99,7 @@ export function ApprovalCard({
         </div>
       </div>
       <div className="mt-3 flex flex-wrap gap-2">
-        <button type="button" onClick={() => onRespond('once')} className={cn(btn, 'border-cyan/50 bg-cyan/[0.10] text-cyan hover:bg-cyan/[0.16]')}>
+        <button type="button" onClick={() => onRespond('once')} className={cn(btn, 'border-cyan/50 bg-cyan/[0.10] text-cyan hover:bg-cyan/16')}>
           <Check size={13} /> {t.agents.allowOnce}
         </button>
         {request.allowAlways && (

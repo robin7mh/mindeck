@@ -14,8 +14,8 @@ import { notebookSession } from '../notebook/session'
 import { fileUri } from './CodeEditor'
 import type { EditorTab } from '../store'
 
-const tool = 'flex h-7 items-center gap-1 rounded px-2 font-sans text-[12px] text-text-secondary transition-colors hover:bg-elevated hover:text-text-primary disabled:pointer-events-none disabled:opacity-40'
-const icon = 'flex h-6 w-6 items-center justify-center rounded text-text-muted hover:bg-elevated hover:text-text-primary disabled:opacity-40'
+const tool = 'flex h-7 items-center gap-1 rounded-sm px-2 font-sans text-[12px] text-text-secondary transition-colors hover:bg-elevated hover:text-text-primary disabled:pointer-events-none disabled:opacity-40'
+const icon = 'flex h-6 w-6 items-center justify-center rounded-sm text-text-muted hover:bg-elevated hover:text-text-primary disabled:opacity-40'
 type Run = 'stay' | 'next' | 'insert'
 
 /** One cell's code, in its own small Monaco editor that grows with its text. */
@@ -97,18 +97,18 @@ function HtmlOutput({ html }: { html: string }) {
     const el = frame.current!
     el.style.height = `${Math.min(600, el.contentDocument!.body.scrollHeight + 4)}px`
   }
-  return <iframe ref={frame} title="output" sandbox="allow-same-origin" srcDoc={doc} onLoad={fit} className="h-8 w-full rounded border-0 bg-transparent" />
+  return <iframe ref={frame} title="output" sandbox="allow-same-origin" srcDoc={doc} onLoad={fit} className="h-8 w-full rounded-sm border-0 bg-transparent" />
 }
 
 const text = (value: unknown) => (Array.isArray(value) ? value.join('') : String(value ?? ''))
 
 /** One output, in the richest form the kernel gave and Mindeck shows. */
 function Output({ output }: { output: NotebookOutput }) {
-  const pre = 'max-h-[420px] overflow-auto whitespace-pre-wrap break-words font-mono text-[12px] leading-[1.5]'
+  const pre = 'max-h-[420px] overflow-auto whitespace-pre-wrap wrap-break-word font-mono text-[12px] leading-normal'
   if (output.output_type === 'stream') return <pre className={cn(pre, output.name === 'stderr' ? 'text-danger/90' : 'text-text-secondary')}>{stripAnsi(joinSource(output.text))}</pre>
   if (output.output_type === 'error')
     return (
-      <pre role="alert" className={cn(pre, 'rounded border border-danger/30 bg-danger/[0.06] px-2 py-1 text-text-secondary')}>
+      <pre role="alert" className={cn(pre, 'rounded-sm border border-danger/30 bg-danger/6 px-2 py-1 text-text-secondary')}>
         <span className="text-danger">{`${output.ename}: ${output.evalue}`}</span>
         {output.traceback.length > 1 && `\n${stripAnsi(output.traceback.join('\n'))}`}
       </pre>
@@ -116,9 +116,9 @@ function Output({ output }: { output: NotebookOutput }) {
   const data = output.data
   if (data['image/png'] || data['image/jpeg']) {
     const type = data['image/png'] ? 'image/png' : 'image/jpeg'
-    return <img alt="" src={`data:${type};base64,${text(data[type]).replace(/\s/g, '')}`} className="max-w-full rounded bg-white/90" />
+    return <img alt="" src={`data:${type};base64,${text(data[type]).replace(/\s/g, '')}`} className="max-w-full rounded-sm bg-white/90" />
   }
-  if (data['image/svg+xml']) return <img alt="" src={`data:image/svg+xml;charset=utf-8,${encodeURIComponent(text(data['image/svg+xml']))}`} className="max-w-full rounded bg-white/90" />
+  if (data['image/svg+xml']) return <img alt="" src={`data:image/svg+xml;charset=utf-8,${encodeURIComponent(text(data['image/svg+xml']))}`} className="max-w-full rounded-sm bg-white/90" />
   if (data['text/html']) return <HtmlOutput html={text(data['text/html'])} />
   if (data['text/markdown']) return <Markdown text={text(data['text/markdown'])} />
   if (data['application/json'] !== undefined) return <pre className={cn(pre, 'text-text-secondary')}>{JSON.stringify(data['application/json'], null, 2)}</pre>
@@ -173,7 +173,7 @@ function CellView({ cell, index, count, language, readOnly, running, queued, foc
             dangerouslySetInnerHTML={{ __html: html || `<p class="text-text-muted">${t.emptyMarkdown}</p>` }}
           />
         ) : (
-          <div className={cn('overflow-hidden rounded border border-hud/50', cell.cell_type === 'code' ? 'bg-void/40' : 'bg-surface/40')}>
+          <div className={cn('overflow-hidden rounded-sm border border-hud/50', cell.cell_type === 'code' ? 'bg-void/40' : 'bg-surface/40')}>
             <CellEditor value={source} language={markdown ? 'markdown' : cell.cell_type === 'raw' ? 'plaintext' : language} readOnly={readOnly} focus={focus} onChange={(s) => onChange(cell.key, s)} onRun={run} onEscape={markdown ? () => setEditing(false) : undefined} />
           </div>
         )}
@@ -186,7 +186,7 @@ function CellView({ cell, index, count, language, readOnly, running, queued, foc
         )}
       </div>
       {!readOnly && (
-        <div className="absolute right-1 top-1 hidden items-center gap-0.5 rounded bg-elevated/90 group-hover:flex group-focus-within:flex">
+        <div className="absolute right-1 top-1 hidden items-center gap-0.5 rounded-sm bg-elevated/90 group-hover:flex group-focus-within:flex">
           {markdown && editing && (
             <button type="button" aria-label={t.done} title={t.done} onClick={() => setEditing(false)} className={icon}>
               <Check size={12} />
@@ -303,7 +303,7 @@ export default function NotebookView({ tab, readOnly, onRaw }: Props) {
         </div>
       </div>
       {error && (
-        <p role="alert" className="flex shrink-0 items-start gap-2 border-b border-danger/30 bg-danger/[0.06] px-3 py-1.5 font-sans text-[12px] text-danger">
+        <p role="alert" className="flex shrink-0 items-start gap-2 border-b border-danger/30 bg-danger/6 px-3 py-1.5 font-sans text-[12px] text-danger">
           <span className="flex-1 whitespace-pre-wrap">{error}</span>
           <button type="button" aria-label={t.dismiss} onClick={() => session.clearError()}>
             <X size={12} />

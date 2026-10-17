@@ -48,7 +48,7 @@ export function TerminalFind({ api, onClose }: { api: XtermApi; onClose: () => v
       aria-pressed={!!opts[key]}
       onClick={() => setOpts((o) => ({ ...o, [key]: !o[key] }))}
       className={cn(
-        'flex h-5 min-w-5 items-center justify-center rounded px-1 font-mono text-[10.5px] transition-colors',
+        'flex h-5 min-w-5 items-center justify-center rounded-sm px-1 font-mono text-[10.5px] transition-colors',
         opts[key] ? 'bg-cyan/15 text-cyan' : 'text-text-muted hover:text-text-secondary'
       )}
     >
@@ -56,7 +56,7 @@ export function TerminalFind({ api, onClose }: { api: XtermApi; onClose: () => v
     </button>
   )
 
-  const nav = 'rounded p-0.5 text-text-muted transition-colors hover:bg-elevated hover:text-text-primary disabled:opacity-40'
+  const nav = 'rounded-sm p-0.5 text-text-muted transition-colors hover:bg-elevated hover:text-text-primary disabled:opacity-40'
 
   return (
     <div
@@ -77,7 +77,7 @@ export function TerminalFind({ api, onClose }: { api: XtermApi; onClose: () => v
           else return
           e.preventDefault()
         }}
-        className="w-44 bg-transparent px-1 font-mono text-[12px] text-text-primary outline-none placeholder:text-text-muted"
+        className="w-44 bg-transparent px-1 font-mono text-[12px] text-text-primary outline-hidden placeholder:text-text-muted"
       />
       {toggle('caseSensitive', t.terminal.matchCase, 'Aa')}
       {toggle('regex', t.terminal.regex, '.*')}

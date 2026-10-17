@@ -129,7 +129,7 @@ export function BookmarksPage() {
               placeholder={t.library.bookmarksSearch}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              className="min-w-0 flex-1 bg-transparent font-sans text-[12.5px] text-text-primary outline-none placeholder:text-text-muted"
+              className="min-w-0 flex-1 bg-transparent font-sans text-[12.5px] text-text-primary outline-hidden placeholder:text-text-muted"
             />
           </label>
           <button type="button" onClick={() => void newFolder()} className={small}>
@@ -157,7 +157,7 @@ export function BookmarksPage() {
           </button>
         </div>
         {notice && (
-          <p role="status" className="border-b border-green/30 bg-green/[0.06] px-4 py-1.5 font-sans text-[12px] text-text-secondary">
+          <p role="status" className="border-b border-green/30 bg-green/6 px-4 py-1.5 font-sans text-[12px] text-text-secondary">
             {notice}
           </p>
         )}
@@ -183,20 +183,20 @@ export function BookmarksPage() {
                 {isFolder(node) ? (
                   <Folder size={16} className="shrink-0 text-text-muted" />
                 ) : (
-                  <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded border border-hud/60 bg-elevated/60 font-sans text-[10px] font-semibold text-cyan">{initial(node.url, node.title)}</span>
+                  <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-sm border border-hud/60 bg-elevated/60 font-sans text-[10px] font-semibold text-cyan">{initial(node.url, node.title)}</span>
                 )}
                 <span className="min-w-0 truncate font-sans text-[12.5px] text-text-primary">{nodeName(node, displayUrl)}</span>
                 {!isFolder(node) && <span className="min-w-0 shrink truncate font-mono text-[11px] text-text-muted">{displayUrl(node.url)}</span>}
                 {node.path && node.path.length > 0 && <span className="shrink-0 truncate font-sans text-[11px] text-text-muted">· {node.path.join(' › ')}</span>}
               </button>
-              <button type="button" aria-label={`${t.library.edit} ${node.title}`} onClick={() => useBrowser.getState().edit(node.id)} className="rounded p-1 text-text-muted opacity-0 hover:bg-elevated hover:text-cyan focus:opacity-100 group-hover:opacity-100">
+              <button type="button" aria-label={`${t.library.edit} ${node.title}`} onClick={() => useBrowser.getState().edit(node.id)} className="rounded-sm p-1 text-text-muted opacity-0 hover:bg-elevated hover:text-cyan focus:opacity-100 group-hover:opacity-100">
                 <Pencil size={12} />
               </button>
               <button
                 type="button"
                 aria-label={`${t.library.delete} ${node.title}`}
                 onClick={() => void run('browser:bookmarkRemove', { ids: [node.id] })}
-                className="rounded p-1 text-text-muted opacity-0 hover:bg-elevated hover:text-danger focus:opacity-100 group-hover:opacity-100"
+                className="rounded-sm p-1 text-text-muted opacity-0 hover:bg-elevated hover:text-danger focus:opacity-100 group-hover:opacity-100"
               >
                 <Trash2 size={12} />
               </button>

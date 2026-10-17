@@ -37,7 +37,7 @@ function Popover({ at, onClose, label, children }: { at: { x: number; y: number 
       role="menu"
       aria-label={label}
       style={{ left: at.x, top: at.y }}
-      className="fixed z-[60] max-h-[70vh] w-64 overflow-y-auto rounded-lg border border-hud/70 bg-panel/95 p-1 shadow-xl shadow-black/40 backdrop-blur-md"
+      className="fixed z-60 max-h-[70vh] w-64 overflow-y-auto rounded-lg border border-hud/70 bg-panel/95 p-1 shadow-xl shadow-black/40 backdrop-blur-md"
     >
       {children}
     </div>
@@ -49,7 +49,7 @@ const row = 'flex w-full items-center gap-2 rounded-md px-2 py-1 text-left font-
 function NodeIcon({ node }: { node: BookmarkNode }) {
   if (isFolder(node)) return <Folder size={13} className="shrink-0 text-text-muted" />
   return (
-    <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-sm bg-elevated font-sans text-[9px] font-semibold text-cyan" aria-hidden>
+    <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-xs bg-elevated font-sans text-[9px] font-semibold text-cyan" aria-hidden>
       {initial(node.url, node.title)}
     </span>
   )

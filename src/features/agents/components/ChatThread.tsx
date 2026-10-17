@@ -93,13 +93,13 @@ function ToolCard({ part, request, onRespond }: { part: ToolCallPart; request?: 
       {open && (
         <div className="mt-1 space-y-1.5 rounded-md border border-hud/40 bg-surface/60 p-2">
           <TechLabel className="text-text-muted">{t.agents.input}</TechLabel>
-          <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words font-mono text-[11px] text-text-secondary">
+          <pre className="max-h-40 overflow-auto whitespace-pre-wrap wrap-break-word font-mono text-[11px] text-text-secondary">
             {JSON.stringify(part.input, null, 2)}
           </pre>
           {part.output !== undefined && (
             <>
               <TechLabel className="text-text-muted">{t.agents.result}</TechLabel>
-              <pre className="max-h-60 overflow-auto whitespace-pre-wrap break-words font-mono text-[11px] text-text-secondary">{part.output}</pre>
+              <pre className="max-h-60 overflow-auto whitespace-pre-wrap wrap-break-word font-mono text-[11px] text-text-secondary">{part.output}</pre>
             </>
           )}
         </div>
@@ -133,13 +133,13 @@ function Message({
             <User size={11} className="text-cyan" />
             <TechLabel className="text-text-muted">{t.agents.you}</TechLabel>
           </div>
-          {text && <p className="whitespace-pre-wrap break-words font-sans text-[13px] text-text-primary">{text}</p>}
+          {text && <p className="whitespace-pre-wrap wrap-break-word font-sans text-[13px] text-text-primary">{text}</p>}
           {message.attachments && (
             <ul aria-label={t.agents.attached} className="mt-1 flex flex-wrap gap-1">
               {message.attachments.map((a, i) => {
                 const Icon = ATTACHMENT_ICON[a.kind]
                 return (
-                  <li key={i} className="flex max-w-[220px] items-center gap-1 rounded border border-cyan/25 px-1.5 py-0.5 font-mono text-[10.5px] text-text-secondary">
+                  <li key={i} className="flex max-w-[220px] items-center gap-1 rounded-sm border border-cyan/25 px-1.5 py-0.5 font-mono text-[10.5px] text-text-secondary">
                     <Icon size={10} className="shrink-0 text-cyan" />
                     <span className="truncate">{a.label}</span>
                   </li>

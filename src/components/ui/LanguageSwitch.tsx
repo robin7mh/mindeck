@@ -15,8 +15,8 @@ export function LanguageSwitch({ className }: { className?: string }) {
           aria-checked={locale === l.id}
           onClick={() => setLocale(l.id)}
           className={cn(
-            'rounded px-3 py-1 font-sans text-[12px] transition-colors',
-            locale === l.id ? 'bg-cyan/[0.12] text-cyan' : 'text-text-muted hover:text-text-secondary'
+            'rounded-sm px-3 py-1 font-sans text-[12px] transition-colors',
+            locale === l.id ? 'bg-cyan/12 text-cyan' : 'text-text-muted hover:text-text-secondary'
           )}
         >
           {l.label}

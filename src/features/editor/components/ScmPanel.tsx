@@ -21,7 +21,7 @@ const TONE: Record<ScmChange, string> = {
   conflicted: 'text-danger'
 }
 
-const icon = 'flex h-6 w-6 shrink-0 items-center justify-center rounded text-text-muted transition-colors hover:bg-elevated hover:text-text-primary disabled:opacity-40'
+const icon = 'flex h-6 w-6 shrink-0 items-center justify-center rounded-sm text-text-muted transition-colors hover:bg-elevated hover:text-text-primary disabled:opacity-40'
 const syncButton =
   'flex flex-1 items-center justify-center gap-1 rounded-md border border-hud/60 px-2 py-1 font-sans text-[11.5px] text-text-secondary transition-colors hover:border-cyan/50 hover:text-cyan disabled:opacity-40'
 
@@ -38,7 +38,7 @@ function FileRow({ file, section, onDiscard }: { file: ScmFile; section: Section
   // A conflicted file opens in the editor — its conflicts are resolved there.
   const show = () => (section === 'conflicts' ? openFile(file.path) : openDiff(file, target, `${name} (${where})`))
   return (
-    <li className="group flex items-center gap-1.5 rounded px-1.5 py-0.5 hover:bg-elevated/50">
+    <li className="group flex items-center gap-1.5 rounded-sm px-1.5 py-0.5 hover:bg-elevated/50">
       <button
         type="button"
         title={`${file.path} · ${t.scm.change[change]}`}
@@ -227,7 +227,7 @@ export function ScmPanel({ readOnly = false }: { readOnly?: boolean }) {
                 if (e.key === 'Enter') createBranch()
                 if (e.key === 'Escape') setNaming(false)
               }}
-              className="min-w-0 flex-1 rounded-md border border-hud/60 bg-surface/50 px-2 py-1 font-mono text-[12px] text-text-primary outline-none focus:border-cyan/50"
+              className="min-w-0 flex-1 rounded-md border border-hud/60 bg-surface/50 px-2 py-1 font-mono text-[12px] text-text-primary outline-hidden focus:border-cyan/50"
             />
             <button type="button" className={syncButton} disabled={!branchName.trim()} onClick={createBranch}>
               {t.scm.create}
@@ -272,14 +272,14 @@ export function ScmPanel({ readOnly = false }: { readOnly?: boolean }) {
           rows={3}
           onChange={(e) => scm.setMessage(e.target.value)}
           onKeyDown={onMessageKey}
-          className="w-full resize-y rounded-md border border-hud/60 bg-surface/50 px-2 py-1.5 font-sans text-[12.5px] text-text-primary outline-none placeholder:text-text-muted focus:border-cyan/50"
+          className="w-full resize-y rounded-md border border-hud/60 bg-surface/50 px-2 py-1.5 font-sans text-[12.5px] text-text-primary outline-hidden placeholder:text-text-muted focus:border-cyan/50"
         />
         <div className="mt-1.5 flex items-center gap-2">
           <button
             type="button"
             disabled={!canCommit}
             onClick={() => void scm.commit()}
-            className="flex flex-1 items-center justify-center gap-1.5 rounded-md border border-cyan/50 bg-cyan/[0.1] px-2 py-1.5 font-sans text-[12px] font-medium text-cyan transition-colors hover:bg-cyan/[0.16] disabled:opacity-40"
+            className="flex flex-1 items-center justify-center gap-1.5 rounded-md border border-cyan/50 bg-cyan/[0.1] px-2 py-1.5 font-sans text-[12px] font-medium text-cyan transition-colors hover:bg-cyan/16 disabled:opacity-40"
           >
             {busy === 'commit' ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} {staged.length || amend ? t.scm.commit : t.scm.commitAll}
           </button>
@@ -290,7 +290,7 @@ export function ScmPanel({ readOnly = false }: { readOnly?: boolean }) {
         </div>
 
         {confirm && (
-          <div role="alertdialog" className="mt-2 space-y-1.5 rounded-md border border-danger/40 bg-danger/[0.06] p-2">
+          <div role="alertdialog" className="mt-2 space-y-1.5 rounded-md border border-danger/40 bg-danger/6 p-2">
             <p className="font-sans text-[11.5px] text-text-primary">{t.scm.confirmDiscard(confirm.name)}</p>
             <div className="flex gap-1.5">
               <button

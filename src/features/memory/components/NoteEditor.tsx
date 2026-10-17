@@ -145,7 +145,7 @@ export function NoteEditor(p: Props) {
     followHref(a.getAttribute('href') ?? '')
   }
 
-  const seg = 'flex items-center gap-1.5 rounded px-2 py-1 font-sans text-[11px] font-medium transition-colors'
+  const seg = 'flex items-center gap-1.5 rounded-sm px-2 py-1 font-sans text-[11px] font-medium transition-colors'
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -161,12 +161,12 @@ export function NoteEditor(p: Props) {
           {(note.type || note.tags.length > 0) && (
             <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
               {note.type && (
-                <span className="rounded border border-cyan/30 bg-cyan/[0.06] px-1.5 py-px font-mono text-[10px] text-cyan">
+                <span className="rounded-sm border border-cyan/30 bg-cyan/6 px-1.5 py-px font-mono text-[10px] text-cyan">
                   {note.type}
                 </span>
               )}
               {note.tags.map((tag) => (
-                <span key={tag} className="rounded border border-hud/60 bg-elevated/50 px-1.5 py-px font-mono text-[10px] text-purple">
+                <span key={tag} className="rounded-sm border border-hud/60 bg-elevated/50 px-1.5 py-px font-mono text-[10px] text-purple">
                   #{tag}
                 </span>
               ))}
@@ -344,7 +344,7 @@ function TitleInput({ title, onRename }: { title: string; onRename: (title: stri
       }}
       title={t.memory.renameHint}
       spellCheck={false}
-      className="-mx-1 w-full truncate rounded bg-transparent px-1 font-sans text-[18px] font-semibold text-text-primary outline-none transition-colors hover:bg-elevated/40 focus:bg-elevated/60 focus:ring-1 focus:ring-cyan/40"
+      className="-mx-1 w-full truncate rounded-sm bg-transparent px-1 font-sans text-[18px] font-semibold text-text-primary outline-hidden transition-colors hover:bg-elevated/40 focus:bg-elevated/60 focus:ring-1 focus:ring-cyan/40"
     />
   )
 }
@@ -378,7 +378,7 @@ function ConnectionChip({
         onClick={onRemove}
         title={t.memory.disconnectHint}
         aria-label={t.memory.disconnect(title)}
-        className="mr-1 rounded p-0.5 text-text-muted opacity-0 transition-opacity hover:bg-elevated hover:text-danger group-hover:opacity-100"
+        className="mr-1 rounded-sm p-0.5 text-text-muted opacity-0 transition-opacity hover:bg-elevated hover:text-danger group-hover:opacity-100"
       >
         <X size={11} />
       </button>
@@ -422,7 +422,7 @@ function ConnectPicker({ notes, onPick }: { notes: NoteMeta[]; onPick: (path: st
           setOpen((o) => !o)
           setQ('')
         }}
-        className="flex items-center gap-1 rounded-md border border-cyan/40 bg-cyan/[0.06] px-2 py-0.5 font-sans text-[11px] font-medium text-cyan transition-colors hover:bg-cyan/[0.12]"
+        className="flex items-center gap-1 rounded-md border border-cyan/40 bg-cyan/6 px-2 py-0.5 font-sans text-[11px] font-medium text-cyan transition-colors hover:bg-cyan/12"
       >
         <Plus size={12} /> {t.memory.connect}
       </button>
@@ -443,7 +443,7 @@ function ConnectPicker({ notes, onPick }: { notes: NoteMeta[]; onPick: (path: st
               }}
               placeholder={t.memory.connectTo}
               spellCheck={false}
-              className="min-w-0 flex-1 bg-transparent font-sans text-[12px] text-text-primary outline-none placeholder:text-text-muted/70"
+              className="min-w-0 flex-1 bg-transparent font-sans text-[12px] text-text-primary outline-hidden placeholder:text-text-muted/70"
             />
           </label>
           <div className="max-h-56 overflow-y-auto py-1">

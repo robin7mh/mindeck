@@ -11,9 +11,9 @@ import { MAX_NAME, useWorkspace, type SavedWorkspace } from '../store'
 
 export const PRESET_ICONS: Record<Preset, LucideIcon> = { single: Square, columns: Columns2, rows: Rows2, main: LayoutPanelLeft, grid: Grid2x2 }
 
-const icon = 'flex h-7 w-7 shrink-0 items-center justify-center rounded text-text-muted transition-colors hover:bg-elevated hover:text-text-primary'
+const icon = 'flex h-7 w-7 shrink-0 items-center justify-center rounded-sm text-text-muted transition-colors hover:bg-elevated hover:text-text-primary'
 const field =
-  'min-w-0 flex-1 rounded-md border border-hud/60 bg-surface/60 px-2 py-1 font-sans text-[12.5px] text-text-primary outline-none placeholder:text-text-muted focus:border-cyan/50'
+  'min-w-0 flex-1 rounded-md border border-hud/60 bg-surface/60 px-2 py-1 font-sans text-[12.5px] text-text-primary outline-hidden placeholder:text-text-muted focus:border-cyan/50'
 
 /** A saved workspace: switch to it, save the layout on screen into it, rename, delete. */
 function SavedRow({ w, index, current, onApply }: { w: SavedWorkspace; index: number; current: boolean; onApply: () => void }) {
@@ -52,12 +52,12 @@ function SavedRow({ w, index, current, onApply }: { w: SavedWorkspace; index: nu
     )
   }
   return (
-    <div className={cn('group flex items-center gap-0.5 rounded px-1', current && 'bg-cyan/[0.06]')}>
+    <div className={cn('group flex items-center gap-0.5 rounded-sm px-1', current && 'bg-cyan/6')}>
       <button
         type="button"
         onClick={onApply}
         aria-label={t.open(w.name)}
-        className={cn('flex min-w-0 flex-1 items-center gap-2 rounded px-1.5 py-1.5 text-left transition-colors hover:text-text-primary', current ? 'text-cyan' : 'text-text-secondary')}
+        className={cn('flex min-w-0 flex-1 items-center gap-2 rounded-sm px-1.5 py-1.5 text-left transition-colors hover:text-text-primary', current ? 'text-cyan' : 'text-text-secondary')}
       >
         <span className="flex-1 truncate font-sans text-[12.5px]">{w.name}</span>
         {keys && <span className="font-mono text-[10px] text-text-muted">{keys}</span>}
@@ -159,7 +159,7 @@ export function WorkspaceMenu() {
                     onClick={() => useWorkspace.getState().setPreset(p)}
                     className={cn(
                       'flex h-9 items-center justify-center rounded-md border transition-colors',
-                      p === preset ? 'border-cyan/50 bg-cyan/[0.08] text-cyan' : 'border-hud/50 text-text-muted hover:border-hud-strong/70 hover:text-text-primary'
+                      p === preset ? 'border-cyan/50 bg-cyan/8 text-cyan' : 'border-hud/50 text-text-muted hover:border-hud-strong/70 hover:text-text-primary'
                     )}
                   >
                     <Icon size={16} />
@@ -182,7 +182,7 @@ export function WorkspaceMenu() {
               <button
                 type="submit"
                 disabled={!name.trim()}
-                className="shrink-0 rounded-md border border-cyan/40 px-2.5 py-1 font-sans text-[12px] text-cyan transition-colors hover:bg-cyan/[0.08] disabled:pointer-events-none disabled:opacity-40"
+                className="shrink-0 rounded-md border border-cyan/40 px-2.5 py-1 font-sans text-[12px] text-cyan transition-colors hover:bg-cyan/8 disabled:pointer-events-none disabled:opacity-40"
               >
                 {t.saveAs}
               </button>

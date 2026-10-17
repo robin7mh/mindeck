@@ -7,8 +7,8 @@ import { Select } from '@/components/ui/Select'
 import { useSftp } from '../sftp'
 import { fileIcon } from './FileTree'
 
-const row = 'flex w-full items-center gap-1.5 rounded py-[3px] pr-2 text-left font-sans text-[12.5px] text-text-secondary transition-colors hover:bg-elevated/60 hover:text-text-primary'
-const tool = 'flex h-6 w-6 items-center justify-center rounded text-text-muted transition-colors hover:bg-elevated hover:text-text-primary disabled:opacity-40'
+const row = 'flex w-full items-center gap-1.5 rounded-sm py-[3px] pr-2 text-left font-sans text-[12.5px] text-text-secondary transition-colors hover:bg-elevated/60 hover:text-text-primary'
+const tool = 'flex h-6 w-6 items-center justify-center rounded-sm text-text-muted transition-colors hover:bg-elevated hover:text-text-primary disabled:opacity-40'
 
 function Level({ dir, depth }: { dir: string; depth: number }) {
   const t = useT()
@@ -96,13 +96,13 @@ export function RemotePanel() {
           {current?.uploadOnSave && <span className="ml-auto font-sans text-[10.5px] text-text-muted">{t.sftp.uploadOnSave}</span>}
         </div>
         {confirmDown && (
-          <div role="alertdialog" aria-label={t.sftp.syncDown} className="space-y-1.5 rounded-md border border-amber/40 bg-amber/[0.06] p-2">
+          <div role="alertdialog" aria-label={t.sftp.syncDown} className="space-y-1.5 rounded-md border border-amber/40 bg-amber/6 p-2">
             <p className="font-sans text-[12px] text-text-primary">{t.sftp.confirmDown}</p>
             <div className="flex gap-1.5">
-              <button type="button" onClick={() => void sftp.sync('down')} className="rounded border border-amber/50 px-2 py-0.5 font-sans text-[12px] text-amber hover:bg-amber/10">
+              <button type="button" onClick={() => void sftp.sync('down')} className="rounded-sm border border-amber/50 px-2 py-0.5 font-sans text-[12px] text-amber hover:bg-amber/10">
                 {t.sftp.syncDown}
               </button>
-              <button type="button" onClick={() => sftp.setConfirmDown(false)} className="rounded border border-hud/60 px-2 py-0.5 font-sans text-[12px] text-text-secondary">
+              <button type="button" onClick={() => sftp.setConfirmDown(false)} className="rounded-sm border border-hud/60 px-2 py-0.5 font-sans text-[12px] text-text-secondary">
                 {t.common.cancel}
               </button>
             </div>
@@ -116,7 +116,7 @@ export function RemotePanel() {
         )}
         {!busy && message !== undefined && <p className="font-sans text-[11.5px] text-green">{t.sftp.done(message)}</p>}
         {error && (
-          <p role="alert" className="flex items-start gap-1 rounded bg-danger/10 px-2 py-1 font-sans text-[11.5px] text-danger">
+          <p role="alert" className="flex items-start gap-1 rounded-sm bg-danger/10 px-2 py-1 font-sans text-[11.5px] text-danger">
             <span className="flex-1 whitespace-pre-wrap">{error}</span>
             <button type="button" aria-label={t.common.dismiss} onClick={() => sftp.clearError()}>
               <X size={12} />

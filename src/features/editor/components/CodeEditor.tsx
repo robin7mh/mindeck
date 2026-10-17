@@ -380,7 +380,7 @@ export default function CodeEditor({ tab, readOnly, onCursor, group }: Props) {
     <>
       <div ref={hostRef} className="absolute inset-0" />
       {/* Vim's mode, pending keys and `:` command line. */}
-      <div ref={vimRef} aria-label="Vim" className="absolute bottom-1 left-14 z-10 rounded bg-elevated/90 px-2 py-0.5 font-mono text-[11px] text-text-secondary [&_input]:bg-transparent [&_input]:text-text-primary [&_input]:outline-none" />
+      <div ref={vimRef} aria-label="Vim" className="absolute bottom-1 left-14 z-10 rounded-sm bg-elevated/90 px-2 py-0.5 font-mono text-[11px] text-text-secondary [&_input]:bg-transparent [&_input]:text-text-primary [&_input]:outline-hidden" />
     </>
   )
 }

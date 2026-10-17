@@ -59,7 +59,7 @@ function ModuleMenu({ id, at, onSelect, onClose }: { id: ModuleId; at: { x: numb
     onClose()
     fn()
   }
-  const item = 'flex w-full items-center gap-2 rounded px-2 py-1.5 text-left font-sans text-[12.5px] text-text-secondary outline-none transition-colors hover:bg-elevated hover:text-text-primary focus:bg-elevated focus:text-text-primary'
+  const item = 'flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left font-sans text-[12.5px] text-text-secondary outline-hidden transition-colors hover:bg-elevated hover:text-text-primary focus:bg-elevated focus:text-text-primary'
   return (
     <div
       ref={ref}
@@ -73,7 +73,7 @@ function ModuleMenu({ id, at, onSelect, onClose }: { id: ModuleId; at: { x: numb
         const at = items.indexOf(document.activeElement as HTMLElement)
         items[(at + (e.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length].focus()
       }}
-      className="fixed z-[70] min-w-[230px] rounded-lg border border-hud/70 bg-panel/95 p-1 shadow-xl shadow-black/40 backdrop-blur-md"
+      className="fixed z-70 min-w-[230px] rounded-lg border border-hud/70 bg-panel/95 p-1 shadow-xl shadow-black/40 backdrop-blur-md"
     >
       <button type="button" role="menuitem" onClick={run(() => onSelect(id))} className={item}>
         <SquareArrowOutUpRight size={13} className="shrink-0" />
@@ -131,7 +131,7 @@ export function SideNavigation({
     setMenu({ id, x: e.clientX || box.right, y: e.clientY || box.top })
   }
   return (
-    <nav className={cn('flex h-full shrink-0 flex-col items-stretch gap-1 border-r border-hud/70 bg-surface/40 px-2 py-3 backdrop-blur-sm', collapsed ? 'w-14' : 'w-52')}>
+    <nav className={cn('flex h-full shrink-0 flex-col items-stretch gap-1 border-r border-hud/70 bg-surface/40 px-2 py-3 backdrop-blur-xs', collapsed ? 'w-14' : 'w-52')}>
       <div className={cn('mb-1 flex items-center', collapsed ? 'justify-center' : 'justify-between pl-2')}>
         {!collapsed && <TechLabel className="text-text-muted">{t.nav.modules}</TechLabel>}
         <button

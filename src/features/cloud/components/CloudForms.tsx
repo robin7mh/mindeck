@@ -6,10 +6,10 @@ import { useT } from '@/lib/i18n'
 import { useCloud } from '../store'
 
 const input =
-  'rounded-md border border-hud/70 bg-surface/70 px-3 py-2 font-sans text-[13px] text-text-primary outline-none placeholder:text-text-muted/60 focus:border-cyan/60'
+  'rounded-md border border-hud/70 bg-surface/70 px-3 py-2 font-sans text-[13px] text-text-primary outline-hidden placeholder:text-text-muted/60 focus:border-cyan/60'
 
 export const primaryButton =
-  'flex items-center justify-center gap-2 rounded-md border border-cyan/50 bg-cyan/[0.10] px-3 py-2 font-sans text-[13px] font-medium text-cyan transition-colors hover:bg-cyan/[0.16] disabled:cursor-not-allowed disabled:opacity-40'
+  'flex items-center justify-center gap-2 rounded-md border border-cyan/50 bg-cyan/[0.10] px-3 py-2 font-sans text-[13px] font-medium text-cyan transition-colors hover:bg-cyan/16 disabled:cursor-not-allowed disabled:opacity-40'
 
 export const quietButton =
   'flex items-center justify-center gap-2 rounded-md border border-hud/70 px-3 py-2 font-sans text-[12.5px] text-text-secondary transition-colors hover:border-cyan/40 hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40'

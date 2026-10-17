@@ -20,8 +20,8 @@ import { useT } from '@/lib/i18n'
 import { useEditor } from '../store'
 import { useDebug } from '../debug'
 
-const tool = 'flex h-7 w-7 items-center justify-center rounded text-text-secondary transition-colors hover:bg-elevated hover:text-text-primary disabled:opacity-40'
-const field = 'w-full rounded-md border border-hud/60 bg-surface/50 px-2 py-1 font-mono text-[12px] text-text-primary outline-none placeholder:text-text-muted focus:border-cyan/50'
+const tool = 'flex h-7 w-7 items-center justify-center rounded-sm text-text-secondary transition-colors hover:bg-elevated hover:text-text-primary disabled:opacity-40'
+const field = 'w-full rounded-md border border-hud/60 bg-surface/50 px-2 py-1 font-mono text-[12px] text-text-primary outline-hidden placeholder:text-text-muted focus:border-cyan/50'
 
 function Section({ title, right, children }: { title: string; right?: ReactNode; children: ReactNode }) {
   return (
@@ -48,7 +48,7 @@ function Variable({ v, path, depth }: { v: DebugVariable; path: string; depth: n
         aria-expanded={v.objectId ? open : undefined}
         onClick={() => void useDebug.getState().toggleVariable(path, v.objectId!)}
         style={{ paddingLeft: 4 + depth * 12 }}
-        className="flex w-full items-center gap-1 rounded py-px pr-2 text-left font-mono text-[11.5px] hover:bg-elevated/50 disabled:cursor-default disabled:hover:bg-transparent"
+        className="flex w-full items-center gap-1 rounded-sm py-px pr-2 text-left font-mono text-[11.5px] hover:bg-elevated/50 disabled:cursor-default disabled:hover:bg-transparent"
       >
         <ChevronRight size={11} className={cn('shrink-0 text-text-muted transition-transform', !v.objectId && 'invisible', open && 'rotate-90')} />
         <span className={cn('shrink-0', v.type === 'scope' ? 'font-sans text-[11.5px] text-text-secondary' : 'text-cyan/90')}>{v.name}</span>
@@ -139,7 +139,7 @@ export function DebugPanel() {
             <button
               type="button"
               onClick={() => void debug.start()}
-              className="flex w-full items-center justify-center gap-1.5 rounded-md border border-cyan/40 bg-cyan/[0.08] py-1.5 font-sans text-[12.5px] font-medium text-cyan hover:bg-cyan/[0.14]"
+              className="flex w-full items-center justify-center gap-1.5 rounded-md border border-cyan/40 bg-cyan/8 py-1.5 font-sans text-[12.5px] font-medium text-cyan hover:bg-cyan/[0.14]"
             >
               <Play size={13} /> {d.start} <span className="font-mono text-[10.5px] opacity-70">F5</span>
             </button>
@@ -178,9 +178,9 @@ export function DebugPanel() {
             {session.status === 'paused' ? d.paused(d.reasons[session.reason as keyof typeof d.reasons] ?? session.reason ?? '') : session.status === 'exited' ? d.exited(session.exitCode ?? null) : d[session.status]}
           </p>
         )}
-        {session?.exception && session.projectId === projectId && paused && <p className="whitespace-pre-wrap rounded bg-danger/10 px-2 py-1 font-mono text-[11px] text-danger">{session.exception}</p>}
+        {session?.exception && session.projectId === projectId && paused && <p className="whitespace-pre-wrap rounded-sm bg-danger/10 px-2 py-1 font-mono text-[11px] text-danger">{session.exception}</p>}
         {error && (
-          <p role="alert" className="flex items-start gap-1 rounded bg-danger/10 px-2 py-1 font-sans text-[11.5px] text-danger">
+          <p role="alert" className="flex items-start gap-1 rounded-sm bg-danger/10 px-2 py-1 font-sans text-[11.5px] text-danger">
             <span className="flex-1">{error === 'no-program' ? d.noProgram : error}</span>
             <button type="button" aria-label={t.common.dismiss} onClick={() => debug.clearError()}>
               <X size={12} />
@@ -205,7 +205,7 @@ export function DebugPanel() {
                     type="button"
                     aria-current={i === frame}
                     onClick={() => debug.selectFrame(i)}
-                    className={cn('flex w-full items-baseline gap-2 rounded px-2 py-px text-left hover:bg-elevated/50', i === frame && 'bg-cyan/[0.08]', !f.path && 'opacity-60')}
+                    className={cn('flex w-full items-baseline gap-2 rounded-sm px-2 py-px text-left hover:bg-elevated/50', i === frame && 'bg-cyan/8', !f.path && 'opacity-60')}
                   >
                     <span className="min-w-0 truncate font-mono text-[11.5px] text-text-primary">{f.name}</span>
                     <span className="ml-auto shrink-0 truncate font-mono text-[10.5px] text-text-muted">
@@ -247,7 +247,7 @@ export function DebugPanel() {
           }}
         >
           <Plus size={11} className="shrink-0 text-text-muted" />
-          <input aria-label={d.addWatch} placeholder={d.addWatch} value={watchInput} onChange={(e) => setWatchInput(e.target.value)} className="min-w-0 flex-1 bg-transparent font-mono text-[11.5px] text-text-primary outline-none placeholder:text-text-muted" />
+          <input aria-label={d.addWatch} placeholder={d.addWatch} value={watchInput} onChange={(e) => setWatchInput(e.target.value)} className="min-w-0 flex-1 bg-transparent font-mono text-[11.5px] text-text-primary outline-hidden placeholder:text-text-muted" />
         </form>
       </Section>
 
@@ -265,7 +265,7 @@ export function DebugPanel() {
         <ul>
           {own.map((b) => (
             <li key={`${b.path}:${b.line}`} className="group flex items-center">
-              <button type="button" onClick={() => void useEditor.getState().openAt(b.path, b.line)} className="flex min-w-0 flex-1 items-center gap-1.5 rounded px-2 py-px text-left hover:bg-elevated/50">
+              <button type="button" onClick={() => void useEditor.getState().openAt(b.path, b.line)} className="flex min-w-0 flex-1 items-center gap-1.5 rounded-sm px-2 py-px text-left hover:bg-elevated/50">
                 <CircleDot size={10} className="shrink-0 text-danger" />
                 <span className="min-w-0 truncate font-mono text-[11.5px] text-text-primary">{b.path.slice(b.path.lastIndexOf('/') + 1)}</span>
                 <span className="ml-auto font-mono text-[10.5px] text-text-muted">{b.line}</span>
@@ -309,7 +309,7 @@ export function DebugConsole() {
           <pre
             key={l.id}
             className={cn(
-              'whitespace-pre-wrap break-words',
+              'whitespace-pre-wrap wrap-break-word',
               l.kind === 'stderr' || l.kind === 'error' ? 'text-danger' : l.kind === 'info' ? 'text-text-muted' : l.kind === 'input' ? 'text-cyan' : 'text-text-primary'
             )}
           >
@@ -327,7 +327,7 @@ export function DebugConsole() {
         }}
       >
         <span className="font-mono text-[11px] text-cyan">›</span>
-        <input aria-label={d.evaluate} placeholder={d.evaluate} value={input} onChange={(e) => setInput(e.target.value)} className="min-w-0 flex-1 bg-transparent font-mono text-[11.5px] text-text-primary outline-none placeholder:text-text-muted" />
+        <input aria-label={d.evaluate} placeholder={d.evaluate} value={input} onChange={(e) => setInput(e.target.value)} className="min-w-0 flex-1 bg-transparent font-mono text-[11.5px] text-text-primary outline-hidden placeholder:text-text-muted" />
       </form>
     </div>
   )

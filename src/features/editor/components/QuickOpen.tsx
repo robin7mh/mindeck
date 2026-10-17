@@ -91,7 +91,7 @@ export function QuickOpen() {
   const empty = mode === 'line' ? (activeTab ? t.palette.lineEmpty : t.palette.noEditor) : mode === 'pick' ? (pick!.onText ? null : t.palette.noMatches) : t.scm.noFiles
 
   return (
-    <div role="dialog" aria-label={label} className="fixed inset-0 z-[60] flex justify-center bg-void/40 pt-[12vh]" onMouseDown={close}>
+    <div role="dialog" aria-label={label} className="fixed inset-0 z-60 flex justify-center bg-void/40 pt-[12vh]" onMouseDown={close}>
       <div className="h-fit w-[min(600px,90vw)] overflow-hidden rounded-lg border border-hud/70 bg-panel/95 shadow-2xl shadow-black/50 backdrop-blur-md" onMouseDown={(e) => e.stopPropagation()}>
         <input
           autoFocus
@@ -118,7 +118,7 @@ export function QuickOpen() {
               setActive((i) => Math.max(0, i - 1))
             } else if (e.key === 'Enter') enter()
           }}
-          className="w-full border-b border-hud/60 bg-transparent px-3 py-2.5 font-sans text-[13.5px] text-text-primary outline-none placeholder:text-text-muted"
+          className="w-full border-b border-hud/60 bg-transparent px-3 py-2.5 font-sans text-[13.5px] text-text-primary outline-hidden placeholder:text-text-muted"
         />
         <ul ref={list} role="listbox" aria-label={label} className="max-h-[50vh] overflow-y-auto p-1">
           {!hits.length && pick?.onText && query.trim() && (

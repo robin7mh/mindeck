@@ -434,12 +434,12 @@ describe('AppShell', () => {
 
     expect(screen.queryByText('TERMINAL')).toBeNull()
     fireEvent.click(screen.getByTitle('Terminal'))
-    expect(screen.getByText('TERMINAL').parentElement!.className).not.toContain('hidden')
+    expect(screen.getByText('TERMINAL').parentElement!).not.toHaveClass('hidden')
     expect(screen.queryByText('MONITOR')).toBeNull()
 
     expect(screen.queryByText(/EDITOR/)).toBeNull()
     fireEvent.click(screen.getByTitle('Editor'))
-    expect(screen.getByText('EDITOR ON').parentElement!.className).not.toContain('hidden')
+    expect(screen.getByText('EDITOR ON').parentElement!).not.toHaveClass('hidden')
     expect(screen.queryByText('MONITOR')).toBeNull()
     expect(screen.getByText('TERMINAL').parentElement!.className).toBe('hidden')
     fireEvent.click(screen.getByTitle('Terminal')) // second visit: both stay mounted
@@ -587,11 +587,11 @@ describe('AppShell with the Browser and Files', () => {
 
     fireEvent.click(screen.getByTitle('Files'))
     fireEvent.click(screen.getByText('FILES')) // Files sends you on (a terminal in a folder, …)
-    expect(screen.getByText('TERMINAL').parentElement!.className).not.toContain('hidden')
+    expect(screen.getByText('TERMINAL').parentElement!).not.toHaveClass('hidden')
 
     expect(screen.queryByText(/BROWSER/)).toBeNull()
     act(() => handlers.reveal()) // a link opened somewhere: show the browser
-    expect(screen.getByText('BROWSER ON').parentElement!.className).not.toContain('hidden')
+    expect(screen.getByText('BROWSER ON').parentElement!).not.toHaveClass('hidden')
     act(() =>
       useAssistant.setState({
         pending: [{ id: 'p1', conversationId: 'c1', agentName: 'Assistant', toolTitle: 'Create note', risk: 'write', summary: 'Create X', reason: '', allowAlways: true } as never]

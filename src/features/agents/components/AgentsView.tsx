@@ -85,7 +85,7 @@ export function AgentsView({ onOpenNote, onOpenSettings }: { onOpenNote: (path: 
           <button
             type="button"
             onClick={() => ag.openDialog()}
-            className="flex w-full items-center justify-center gap-1.5 rounded-md border border-cyan/40 bg-cyan/[0.06] px-2.5 py-1.5 font-sans text-[12px] font-medium text-cyan hover:bg-cyan/[0.12]"
+            className="flex w-full items-center justify-center gap-1.5 rounded-md border border-cyan/40 bg-cyan/6 px-2.5 py-1.5 font-sans text-[12px] font-medium text-cyan hover:bg-cyan/12"
           >
             <Plus size={14} /> {t.agents.newChat}
           </button>
@@ -97,7 +97,7 @@ export function AgentsView({ onOpenNote, onOpenSettings }: { onOpenNote: (path: 
             const active = isActive(e)
             const dot = e.kind === 'session' ? DOT[e.session.status] : e.running ? DOT.working : undefined
             return (
-              <div key={`${e.kind}:${e.id}`} className={cn('group flex items-center gap-2 rounded-md px-2 py-1.5', active ? 'bg-cyan/[0.08]' : 'hover:bg-elevated/50')}>
+              <div key={`${e.kind}:${e.id}`} className={cn('group flex items-center gap-2 rounded-md px-2 py-1.5', active ? 'bg-cyan/8' : 'hover:bg-elevated/50')}>
                 <button type="button" onClick={() => openEntry(e)} className="flex min-w-0 flex-1 items-center gap-2 text-left">
                   <Icon size={13} className={cn('shrink-0', active ? 'text-cyan' : 'text-text-muted')} />
                   <span className="min-w-0 flex-1">
@@ -109,7 +109,7 @@ export function AgentsView({ onOpenNote, onOpenSettings }: { onOpenNote: (path: 
                   {dot && <StatusDot tone={dot.tone} pulse={dot.pulse} />}
                 </button>
                 {confirm === e.id ? (
-                  <button type="button" onClick={() => removeEntry(e)} className="shrink-0 rounded border border-danger/50 px-1.5 font-sans text-[10.5px] text-danger">
+                  <button type="button" onClick={() => removeEntry(e)} className="shrink-0 rounded-sm border border-danger/50 px-1.5 font-sans text-[10.5px] text-danger">
                     {t.agents.delete}
                   </button>
                 ) : (
@@ -144,7 +144,7 @@ export function AgentsView({ onOpenNote, onOpenSettings }: { onOpenNote: (path: 
           <button
             type="button"
             onClick={() => ag.openDialog()}
-            className="flex items-center gap-1.5 rounded-md border border-cyan/50 bg-cyan/[0.1] px-3 py-1.5 font-sans text-[12px] font-medium text-cyan hover:bg-cyan/[0.16]"
+            className="flex items-center gap-1.5 rounded-md border border-cyan/50 bg-cyan/[0.1] px-3 py-1.5 font-sans text-[12px] font-medium text-cyan hover:bg-cyan/16"
           >
             <Plus size={14} /> {t.agents.newChat}
           </button>

@@ -37,7 +37,7 @@ export function ProjectsView({ onNavigate }: { onNavigate: (module: ModuleId) =>
           <button
             type="button"
             onClick={add}
-            className="flex items-center gap-1.5 rounded-md border border-cyan/40 bg-cyan/[0.06] px-2.5 py-1 font-sans text-[12px] font-medium text-cyan transition-colors hover:bg-cyan/[0.12]"
+            className="flex items-center gap-1.5 rounded-md border border-cyan/40 bg-cyan/6 px-2.5 py-1 font-sans text-[12px] font-medium text-cyan transition-colors hover:bg-cyan/12"
           >
             <FolderPlus size={14} strokeWidth={2} />
             {t.projects.add}
@@ -49,7 +49,7 @@ export function ProjectsView({ onNavigate }: { onNavigate: (module: ModuleId) =>
       {/* left: list */}
       <div className="flex w-72 shrink-0 flex-col border-r border-hud/50">
         {error && (
-          <div className="m-2 flex items-start gap-2 rounded-md border border-danger/40 bg-danger/[0.06] px-2.5 py-2">
+          <div className="m-2 flex items-start gap-2 rounded-md border border-danger/40 bg-danger/6 px-2.5 py-2">
             <AlertTriangle size={13} className="mt-0.5 shrink-0 text-danger" />
             <span className="font-mono text-[11px] text-text-secondary">{error}</span>
           </div>

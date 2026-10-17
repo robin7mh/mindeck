@@ -10,7 +10,7 @@ import { useBrowser } from '../store'
 import { displayUrl, initial } from '../url'
 
 const tile =
-  'group flex min-w-0 items-center gap-2.5 rounded-md border border-hud/50 bg-surface/50 px-3 py-2 text-left transition-colors hover:border-cyan/40 hover:bg-cyan/[0.04]'
+  'group flex min-w-0 items-center gap-2.5 rounded-md border border-hud/50 bg-surface/50 px-3 py-2 text-left transition-colors hover:border-cyan/40 hover:bg-cyan/4'
 
 /**
  * The new-tab page, in Mindeck's look: search, the dev servers running right
@@ -35,7 +35,7 @@ export function NewTabPage() {
     <div className="h-full overflow-y-auto">
       <div className="mx-auto flex max-w-3xl flex-col gap-7 px-6 py-10">
         <div className="flex flex-col items-center gap-4">
-          <div className="flex h-12 w-12 items-center justify-center rounded-xl border border-cyan/40 bg-cyan/[0.06] text-cyan shadow-glow-sm">
+          <div className="flex h-12 w-12 items-center justify-center rounded-xl border border-cyan/40 bg-cyan/6 text-cyan shadow-glow-sm">
             <Globe size={22} />
           </div>
           <button
@@ -116,7 +116,7 @@ export function NewTabPage() {
           <div className="flex flex-wrap gap-x-5 gap-y-1.5">
             {t.browser.tipKeys.map(([keys, what]) => (
               <span key={keys} className="flex items-center gap-1.5 font-sans text-[11.5px] text-text-muted">
-                <kbd className="rounded border border-hud/60 bg-elevated/50 px-1.5 py-px font-mono text-[10.5px] text-text-secondary">{keys}</kbd>
+                <kbd className="rounded-sm border border-hud/60 bg-elevated/50 px-1.5 py-px font-mono text-[10.5px] text-text-secondary">{keys}</kbd>
                 {what}
               </span>
             ))}

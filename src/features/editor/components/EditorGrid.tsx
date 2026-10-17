@@ -64,7 +64,7 @@ function GridSash({ sash, stage }: { sash: Sash; stage: RefObject<HTMLDivElement
       onPointerCancel={end}
       onDoubleClick={() => useEditor.getState().evenGrid(sash.path)}
       onKeyDown={onKeyDown}
-      className={cn('group absolute z-20 flex items-center justify-center outline-none', row ? 'cursor-col-resize' : 'cursor-row-resize')}
+      className={cn('group absolute z-20 flex items-center justify-center outline-hidden', row ? 'cursor-col-resize' : 'cursor-row-resize')}
     >
       <span
         className={cn(

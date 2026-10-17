@@ -41,16 +41,16 @@ export function FindBar({ tab }: { tab: BrowserTab }) {
           if (e.key === 'Enter') search(true, !e.shiftKey)
           else if (e.key === 'Escape') close()
         }}
-        className="w-64 rounded-md border border-hud/60 bg-surface/70 px-2 py-1 font-sans text-[12px] text-text-primary outline-none focus:border-cyan/60"
+        className="w-64 rounded-md border border-hud/60 bg-surface/70 px-2 py-1 font-sans text-[12px] text-text-primary outline-hidden focus:border-cyan/60"
       />
       <span className="min-w-[70px] font-mono text-[11px] text-text-muted">{result}</span>
-      <button type="button" aria-label={t.browser.findPrev} onClick={() => search(true, false)} className="rounded p-1 text-text-muted hover:bg-elevated hover:text-text-primary">
+      <button type="button" aria-label={t.browser.findPrev} onClick={() => search(true, false)} className="rounded-sm p-1 text-text-muted hover:bg-elevated hover:text-text-primary">
         <ChevronUp size={14} />
       </button>
-      <button type="button" aria-label={t.browser.findNext} onClick={() => search(true)} className="rounded p-1 text-text-muted hover:bg-elevated hover:text-text-primary">
+      <button type="button" aria-label={t.browser.findNext} onClick={() => search(true)} className="rounded-sm p-1 text-text-muted hover:bg-elevated hover:text-text-primary">
         <ChevronDown size={14} />
       </button>
-      <button type="button" aria-label={t.browser.findClose} onClick={close} className="ml-auto rounded p-1 text-text-muted hover:bg-elevated hover:text-text-primary">
+      <button type="button" aria-label={t.browser.findClose} onClick={close} className="ml-auto rounded-sm p-1 text-text-muted hover:bg-elevated hover:text-text-primary">
         <X size={14} />
       </button>
     </div>
@@ -80,7 +80,7 @@ export function PermissionBar({ tabId }: { tabId?: string }) {
   const what = req.kind === 'external' ? t.browser.permissions.external(req.app ?? '') : t.browser.permissions[req.kind]
   const answer = (allow: boolean) => void run('browser:permission', { id: req.id, allow, remember })
   return (
-    <div role="alert" className={cn(bar, 'border-amber/30 bg-amber/[0.06]')}>
+    <div role="alert" className={cn(bar, 'border-amber/30 bg-amber/6')}>
       <Icon size={14} className="shrink-0 text-amber" />
       <span className="min-w-0 flex-1 truncate font-sans text-[12.5px] text-text-primary">
         <span className="font-mono text-[12px]">{hostOf(req.origin) || req.origin}</span> {what}
@@ -106,7 +106,7 @@ export function AgentBar({ tab }: { tab: BrowserTab }) {
   const activity = tab.agent
   if (!activity && !tab.openedBy) return null
   return (
-    <div className={cn(bar, 'border-purple/30 bg-purple/[0.06]')}>
+    <div className={cn(bar, 'border-purple/30 bg-purple/6')}>
       <Bot size={14} className="shrink-0 text-purple" />
       <span className="min-w-0 flex-1 truncate font-sans text-[12px] text-text-secondary">
         {activity ? (
@@ -135,7 +135,7 @@ export function ApprovalDock() {
   const respond = useAssistant((s) => s.respond)
   if (!pending.length) return null
   return (
-    <div className="flex shrink-0 flex-col gap-1.5 border-b border-amber/30 bg-amber/[0.04] p-2">
+    <div className="flex shrink-0 flex-col gap-1.5 border-b border-amber/30 bg-amber/4 p-2">
       {pending.length > 1 && <span className="px-1 font-sans text-[11px] text-amber">{t.browser.approvals(pending.length)}</span>}
       <div className="grid gap-2 lg:grid-cols-2">
         {pending.slice(0, 2).map((req) => (

@@ -35,13 +35,13 @@ export function Tabs() {
               e.stopPropagation()
               void useFiles.getState().closeTab(tab.id)
             }}
-            className="rounded p-0.5 opacity-0 transition-opacity hover:bg-elevated hover:text-text-primary group-hover:opacity-100"
+            className="rounded-sm p-0.5 opacity-0 transition-opacity hover:bg-elevated hover:text-text-primary group-hover:opacity-100"
           >
             <X size={11} />
           </button>
         </div>
       ))}
-      <button type="button" aria-label={t.files.newTab} title={`${t.files.newTab} (⌘T)`} onClick={() => void useFiles.getState().newTab()} className="rounded p-1 text-text-muted hover:bg-elevated hover:text-text-primary">
+      <button type="button" aria-label={t.files.newTab} title={`${t.files.newTab} (⌘T)`} onClick={() => void useFiles.getState().newTab()} className="rounded-sm p-1 text-text-muted hover:bg-elevated hover:text-text-primary">
         <Plus size={13} />
       </button>
     </div>
@@ -108,7 +108,7 @@ export function ConflictDialog() {
   const button = 'rounded-md border px-3 py-1.5 font-sans text-[12.5px] font-medium transition-colors'
 
   return createPortal(
-    <div className="fixed inset-0 z-[90] flex items-center justify-center bg-void/60 backdrop-blur-sm">
+    <div className="fixed inset-0 z-90 flex items-center justify-center bg-void/60 backdrop-blur-xs">
       <div role="alertdialog" aria-label={t.files.conflictTitle(q.names[at], baseName(q.dest))} className="w-[420px] rounded-lg border border-hud/70 bg-panel p-4 shadow-xl">
         <p className="font-sans text-[14px] font-semibold text-text-primary">{t.files.conflictTitle(q.names[at], baseName(q.dest))}</p>
         <p className="mt-1.5 font-sans text-[12.5px] text-text-secondary">{t.files.conflictHint}</p>

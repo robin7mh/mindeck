@@ -104,8 +104,8 @@ const button = (label: string, onClick: () => void, primary = false) => {
   b.type = 'button'
   b.textContent = label
   b.className = primary
-    ? 'rounded border border-cyan/50 bg-cyan/15 px-2 py-0.5 font-sans text-[11.5px] text-cyan hover:bg-cyan/25'
-    : 'rounded border border-hud px-2 py-0.5 font-sans text-[11.5px] text-text-secondary hover:text-text-primary'
+    ? 'rounded-sm border border-cyan/50 bg-cyan/15 px-2 py-0.5 font-sans text-[11.5px] text-cyan hover:bg-cyan/25'
+    : 'rounded-sm border border-hud px-2 py-0.5 font-sans text-[11.5px] text-text-secondary hover:text-text-primary'
   b.onmousedown = (e) => e.preventDefault()
   b.onclick = onClick
   return b
@@ -236,7 +236,7 @@ export function startInlineEdit(editor: Editor): void {
   root.className = 'flex items-center gap-2 rounded-md border border-cyan/40 bg-elevated px-2 py-1.5 shadow-lg'
   root.style.height = `${WIDGET_HEIGHT - 8}px`
   const input = document.createElement('input')
-  input.className = 'min-w-0 flex-1 bg-transparent font-sans text-[12.5px] text-text-primary outline-none placeholder:text-text-muted'
+  input.className = 'min-w-0 flex-1 bg-transparent font-sans text-[12.5px] text-text-primary outline-hidden placeholder:text-text-muted'
   input.placeholder = empty ? t.placeholderInsert : t.placeholder
   input.setAttribute('aria-label', t.label)
   const note = document.createElement('span')

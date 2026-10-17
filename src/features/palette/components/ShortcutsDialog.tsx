@@ -41,7 +41,7 @@ export function ShortcutsDialog() {
     })
 
   return (
-    <div className="fixed inset-0 z-[80] flex items-start justify-center bg-void/50 px-4 pt-[8vh] backdrop-blur-[2px]" onMouseDown={close}>
+    <div className="fixed inset-0 z-80 flex items-start justify-center bg-void/50 px-4 pt-[8vh] backdrop-blur-[2px]" onMouseDown={close}>
       <div role="dialog" aria-modal="true" aria-label={s.title} onMouseDown={(e) => e.stopPropagation()} className="flex max-h-[80vh] w-[min(760px,100%)]">
         <Panel
           title={s.title}
@@ -63,7 +63,7 @@ export function ShortcutsDialog() {
               placeholder={s.search}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              className="min-w-0 flex-1 bg-transparent py-2.5 font-sans text-[13.5px] text-text-primary outline-none placeholder:text-text-muted"
+              className="min-w-0 flex-1 bg-transparent py-2.5 font-sans text-[13.5px] text-text-primary outline-hidden placeholder:text-text-muted"
             />
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto p-3">
@@ -79,14 +79,14 @@ export function ShortcutsDialog() {
                     </h3>
                     <ul className="space-y-0.5">
                       {mine.map(({ sc, keys }) => (
-                        <li key={sc.id} className="flex items-baseline gap-3 rounded px-1.5 py-1 hover:bg-elevated/40">
+                        <li key={sc.id} className="flex items-baseline gap-3 rounded-sm px-1.5 py-1 hover:bg-elevated/40">
                           <span className="min-w-0 flex-1">
                             <span className="block font-sans text-[12.5px] text-text-primary">{s.items[sc.id]}</span>
                             {sc.yields && <span className="block font-sans text-[11px] text-text-muted">{s.yields(sc.yields.map(contextName).join(', '))}</span>}
                           </span>
                           <span className="flex shrink-0 flex-wrap justify-end gap-1">
                             {keys.map((k) => (
-                              <kbd key={k} className="rounded border border-hud/70 bg-surface/70 px-1.5 py-px font-mono text-[11px] text-text-secondary">
+                              <kbd key={k} className="rounded-sm border border-hud/70 bg-surface/70 px-1.5 py-px font-mono text-[11px] text-text-secondary">
                                 {k}
                               </kbd>
                             ))}

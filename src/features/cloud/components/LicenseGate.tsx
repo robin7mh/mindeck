@@ -18,7 +18,7 @@ function Frame({ children, overlay }: { children: ReactNode; overlay?: boolean }
     <div
       className={cn(
         'flex h-screen w-screen items-center justify-center overflow-hidden p-4',
-        overlay ? 'fixed inset-0 z-[200] bg-void/85 backdrop-blur-sm' : 'relative'
+        overlay ? 'fixed inset-0 z-200 bg-void/85 backdrop-blur-xs' : 'relative'
       )}
     >
       {!overlay && <GlowBackground />}

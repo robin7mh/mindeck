@@ -43,7 +43,7 @@ function hints(tabs: EditorTab[], projectNames: Map<string, string>): Map<string
   )
 }
 
-const iconButton = 'flex h-6 w-6 items-center justify-center rounded text-text-muted transition-colors hover:bg-elevated/60 hover:text-text-primary'
+const iconButton = 'flex h-6 w-6 items-center justify-center rounded-sm text-text-muted transition-colors hover:bg-elevated/60 hover:text-text-primary'
 
 interface Menu {
   id: string
@@ -89,7 +89,7 @@ function TabMenu({ menu, group, onClose }: { menu: Menu; group: string; onClose:
       role="menu"
       aria-label={t.editor.tabActions}
       style={{ left: menu.x, top: menu.y }}
-      className="fixed z-[70] min-w-[200px] rounded-md border border-hud/70 bg-panel/95 p-1 shadow-xl shadow-black/40 backdrop-blur-md"
+      className="fixed z-70 min-w-[200px] rounded-md border border-hud/70 bg-panel/95 p-1 shadow-xl shadow-black/40 backdrop-blur-md"
     >
       {items
         .filter((i) => !i.hidden)
@@ -102,7 +102,7 @@ function TabMenu({ menu, group, onClose }: { menu: Menu; group: string; onClose:
               onClose()
               action()
             }}
-            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left font-sans text-[12.5px] text-text-primary hover:bg-elevated/70"
+            className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left font-sans text-[12.5px] text-text-primary hover:bg-elevated/70"
           >
             <Icon size={13} className="shrink-0 opacity-80" />
             <span className="flex-1">{label}</span>
@@ -196,8 +196,8 @@ export function EditorTabs({ group, projectNames }: { group: string; projectName
               )}
             >
               {active && <span className={cn('absolute inset-x-0 top-0 h-px', focused || !several ? 'bg-cyan' : 'bg-text-muted')} />}
-              {dropAt === i && <span aria-hidden className="absolute inset-y-1 left-0 w-0.5 rounded bg-cyan" />}
-              {dropAt === i + 1 && i === tabs.length - 1 && <span aria-hidden className="absolute inset-y-1 right-0 w-0.5 rounded bg-cyan" />}
+              {dropAt === i && <span aria-hidden className="absolute inset-y-1 left-0 w-0.5 rounded-sm bg-cyan" />}
+              {dropAt === i + 1 && i === tabs.length - 1 && <span aria-hidden className="absolute inset-y-1 right-0 w-0.5 rounded-sm bg-cyan" />}
               <Icon size={13} className={cn('shrink-0', tint)} />
               <span className={cn(t.deleted && 'line-through')}>{t.name}</span>
               {hint.has(t.id) && <span className="font-mono text-[10px] text-text-muted">{hint.get(t.id)}</span>}
@@ -208,7 +208,7 @@ export function EditorTabs({ group, projectNames }: { group: string; projectName
                   e.stopPropagation()
                   requestClose(t.id, group)
                 }}
-                className="relative ml-0.5 flex h-5 w-5 items-center justify-center rounded text-text-muted hover:bg-elevated hover:text-text-primary"
+                className="relative ml-0.5 flex h-5 w-5 items-center justify-center rounded-sm text-text-muted hover:bg-elevated hover:text-text-primary"
               >
                 {t.dirty && <span aria-label={tr.editor.unsaved} className="h-2 w-2 rounded-full bg-text-secondary group-hover:hidden" />}
                 <X size={12} className={cn(t.dirty ? 'hidden group-hover:block' : active ? '' : 'opacity-0 group-hover:opacity-100')} />

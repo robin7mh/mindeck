@@ -153,10 +153,10 @@ export function BrowserView({ active }: { active: boolean }) {
         {/* The loading line sits outside the page area: the web view would cover it. */}
         <div className="relative h-0.5 shrink-0 overflow-hidden">{tab?.loading && <div className="absolute inset-y-0 left-0 w-1/3 animate-loadbar bg-cyan" />}</div>
         {error && (
-          <div role="alert" className="flex shrink-0 items-center gap-2 border-b border-danger/30 bg-danger/[0.06] px-3 py-1.5">
+          <div role="alert" className="flex shrink-0 items-center gap-2 border-b border-danger/30 bg-danger/6 px-3 py-1.5">
             <AlertTriangle size={13} className="shrink-0 text-danger" />
             <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-text-secondary">{error}</span>
-            <button type="button" aria-label={t.common.dismiss} onClick={() => useBrowser.getState().clearError()} className="rounded p-0.5 text-text-muted hover:text-text-primary">
+            <button type="button" aria-label={t.common.dismiss} onClick={() => useBrowser.getState().clearError()} className="rounded-sm p-0.5 text-text-muted hover:text-text-primary">
               <X size={12} />
             </button>
           </div>

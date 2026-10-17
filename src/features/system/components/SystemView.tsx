@@ -59,7 +59,7 @@ export function SystemView() {
             {s && s.cpu.cores.length > 0 && (
               <div className="mt-2 grid grid-cols-8 gap-1" aria-label={t.system.perCore}>
                 {s.cpu.cores.map((c, i) => (
-                  <div key={i} title={t.system.core(i + 1, Math.round(c))} className="flex h-6 items-end overflow-hidden rounded-sm bg-elevated/60">
+                  <div key={i} title={t.system.core(i + 1, Math.round(c))} className="flex h-6 items-end overflow-hidden rounded-xs bg-elevated/60">
                     <div className="w-full bg-cyan/70" style={{ height: `${Math.max(4, Math.min(100, c))}%` }} />
                   </div>
                 ))}

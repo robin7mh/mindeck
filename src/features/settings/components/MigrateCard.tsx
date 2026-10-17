@@ -31,14 +31,14 @@ function Source({ source }: { source: MigrationSource }) {
   }
 
   return (
-    <li className="rounded border border-hud/40 p-2.5">
+    <li className="rounded-sm border border-hud/40 p-2.5">
       <div className="flex flex-wrap items-center gap-2">
         <p className="mr-auto font-sans text-[13px] font-medium text-text-primary">{source.name}</p>
         <button
           type="button"
           disabled={busy}
           onClick={() => void apply()}
-          className="flex items-center gap-1.5 rounded-md border border-cyan/40 bg-cyan/[0.06] px-2.5 py-1 font-sans text-[12px] text-cyan hover:bg-cyan/[0.12] disabled:opacity-50"
+          className="flex items-center gap-1.5 rounded-md border border-cyan/40 bg-cyan/6 px-2.5 py-1 font-sans text-[12px] text-cyan hover:bg-cyan/12 disabled:opacity-50"
         >
           {busy ? <Loader2 size={12} className="animate-spin" /> : <ArrowRightLeft size={12} />} {m.apply}
         </button>

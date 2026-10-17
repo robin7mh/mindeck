@@ -33,7 +33,7 @@ export function DesktopCard() {
   return (
     <Card icon={MonitorCog} title={s.card}>
       {!status.secretsEncrypted && (
-        <div role="alert" className="mb-3 flex items-start gap-2 rounded-md border border-amber/40 bg-amber/[0.06] px-2.5 py-2">
+        <div role="alert" className="mb-3 flex items-start gap-2 rounded-md border border-amber/40 bg-amber/6 px-2.5 py-2">
           <ShieldAlert size={14} className="mt-0.5 shrink-0 text-amber" />
           <div className="min-w-0">
             <p className="font-sans text-[12.5px] font-semibold text-text-primary">{s.keyringTitle}</p>

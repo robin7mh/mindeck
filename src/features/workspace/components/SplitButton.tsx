@@ -88,7 +88,7 @@ export function SplitButton() {
           <button
             type="button"
             onClick={split}
-            className="mt-2.5 flex w-full items-center justify-center gap-1.5 rounded-md border border-cyan/40 bg-cyan/[0.06] px-2.5 py-1 font-sans text-[12px] font-medium text-cyan transition-colors hover:bg-cyan/[0.12]"
+            className="mt-2.5 flex w-full items-center justify-center gap-1.5 rounded-md border border-cyan/40 bg-cyan/6 px-2.5 py-1 font-sans text-[12px] font-medium text-cyan transition-colors hover:bg-cyan/12"
           >
             <Columns2 size={13} /> {w.splitTry(keyLabel('split'))}
           </button>

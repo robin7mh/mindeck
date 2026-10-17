@@ -170,7 +170,7 @@ export function Workspace({ render, keep }: WorkspaceProps) {
               rememberFocus(pane.id, e.target as HTMLElement)
               useWorkspace.getState().focus(pane.id)
             }}
-            className={cn('absolute flex min-h-0 min-w-0 flex-col outline-none', chrome && '[&>*]:rounded-t-none')}
+            className={cn('absolute flex min-h-0 min-w-0 flex-col outline-hidden', chrome && '*:rounded-t-none')}
           >
             <PaneContext.Provider value={focused ? FOCUSED : UNFOCUSED}>
               <ModuleSlot id={id} visible render={render} />

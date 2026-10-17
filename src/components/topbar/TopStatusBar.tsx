@@ -61,7 +61,7 @@ export function TopStatusBar({ since, showClock = true }: { since?: number; show
           </div>
           <TechLabel className="text-text-muted">{t.topbar.commandCenter}</TechLabel>
         </div>
-        <span className="ml-1 hidden items-center gap-1.5 rounded border border-hud/60 bg-surface/60 px-1.5 py-0.5 md:flex">
+        <span className="ml-1 hidden items-center gap-1.5 rounded-sm border border-hud/60 bg-surface/60 px-1.5 py-0.5 md:flex">
           <StatusDot tone="ok" />
           <span className="font-mono text-[10px] text-text-secondary">v{info?.version ?? '0.1.0'}</span>
         </span>

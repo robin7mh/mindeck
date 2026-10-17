@@ -120,7 +120,7 @@ export function NoteList(p: Props) {
             onChange={(e) => setInput(e.target.value)}
             placeholder={t.memory.search}
             spellCheck={false}
-            className="min-w-0 flex-1 bg-transparent font-sans text-[12px] text-text-primary outline-none placeholder:text-text-muted/70"
+            className="min-w-0 flex-1 bg-transparent font-sans text-[12px] text-text-primary outline-hidden placeholder:text-text-muted/70"
           />
           {input && (
             <button type="button" aria-label={t.memory.clearSearch} onClick={() => setInput('')}>
@@ -153,7 +153,7 @@ export function NoteList(p: Props) {
         {...dropProps('')}
         className={cn(
           'min-h-0 flex-1 overflow-y-auto px-2 pb-3 transition-colors',
-          dropTarget === '' && 'bg-cyan/[0.04] outline-dashed outline-1 -outline-offset-4 outline-cyan/40'
+          dropTarget === '' && 'bg-cyan/4 outline-dashed outline-1 -outline-offset-4 outline-cyan/40'
         )}
       >
         {p.query.trim() ? (
@@ -166,7 +166,7 @@ export function NoteList(p: Props) {
                 onClick={() => p.onOpen(h.path)}
                 className={cn(
                   'w-full rounded-md border px-2.5 py-2 text-left transition-colors',
-                  h.path === p.activePath ? 'border-cyan/40 bg-cyan/[0.06]' : 'border-transparent hover:bg-elevated/50'
+                  h.path === p.activePath ? 'border-cyan/40 bg-cyan/6' : 'border-transparent hover:bg-elevated/50'
                 )}
               >
                 <span className="block truncate font-sans text-[12.5px] font-medium text-text-primary">
@@ -191,8 +191,8 @@ export function NoteList(p: Props) {
                     draggable
                     onDragStart={dragFolder(dir)}
                     className={cn(
-                      'group flex items-center gap-1.5 rounded px-1.5 py-1 transition-colors',
-                      dropTarget === dir && 'bg-cyan/[0.08] ring-1 ring-cyan/40'
+                      'group flex items-center gap-1.5 rounded-sm px-1.5 py-1 transition-colors',
+                      dropTarget === dir && 'bg-cyan/8 ring-1 ring-cyan/40'
                     )}
                   >
                     <button type="button" onClick={() => toggle(dir)} className="flex min-w-0 flex-1 items-center gap-1.5 text-left">
@@ -235,7 +235,7 @@ export function NoteList(p: Props) {
                         'relative flex w-full items-center gap-2 rounded-md py-1.5 pr-2 text-left transition-colors',
                         dir ? 'pl-7' : 'pl-2',
                         n.path === p.activePath
-                          ? 'bg-cyan/[0.08] text-text-primary'
+                          ? 'bg-cyan/8 text-text-primary'
                           : 'text-text-secondary hover:bg-elevated/50 hover:text-text-primary'
                       )}
                     >
@@ -266,7 +266,7 @@ function Marked({ text, ranges = [] }: { text: string; ranges?: [number, number]
   for (const [from, to] of ranges) {
     if (from > at) parts.push(text.slice(at, from))
     parts.push(
-      <mark key={from} className="rounded-sm bg-amber/20 px-px text-text-primary">
+      <mark key={from} className="rounded-xs bg-amber/20 px-px text-text-primary">
         {text.slice(from, to)}
       </mark>
     )
@@ -294,7 +294,7 @@ function CreateInput({
   useEffect(() => ref.current?.focus(), [])
   const Icon = kind === 'note' ? FileText : Folder
   return (
-    <div className={cn('flex items-center gap-2 rounded-md border border-cyan/40 bg-cyan/[0.05] py-1 pr-2', indent ? 'pl-7' : 'pl-2')}>
+    <div className={cn('flex items-center gap-2 rounded-md border border-cyan/40 bg-cyan/5 py-1 pr-2', indent ? 'pl-7' : 'pl-2')}>
       <Icon size={13} className="shrink-0 text-cyan" />
       <input
         ref={ref}
@@ -308,7 +308,7 @@ function CreateInput({
         placeholder={kind === 'note' ? t.memory.noteTitle : t.memory.folderName}
         aria-label={kind === 'note' ? t.memory.noteTitle : t.memory.folderName}
         spellCheck={false}
-        className="min-w-0 flex-1 bg-transparent font-sans text-[12.5px] text-text-primary outline-none placeholder:text-text-muted/70"
+        className="min-w-0 flex-1 bg-transparent font-sans text-[12.5px] text-text-primary outline-hidden placeholder:text-text-muted/70"
       />
     </div>
   )

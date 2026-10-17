@@ -77,7 +77,7 @@ export function DividerHandle({
       onPointerCancel={end}
       onDoubleClick={() => set(0.5)}
       onKeyDown={onKeyDown}
-      className={cn('group absolute z-20 flex items-center justify-center outline-none', vertical ? 'cursor-col-resize' : 'cursor-row-resize')}
+      className={cn('group absolute z-20 flex items-center justify-center outline-hidden', vertical ? 'cursor-col-resize' : 'cursor-row-resize')}
     >
       <span
         className={cn(

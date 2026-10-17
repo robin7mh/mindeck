@@ -24,7 +24,7 @@ function SystemThumb({ preview }: { preview: FinderPreview }) {
       </div>
     )
   }
-  return <img src={thumbUrl(preview.entry.path, 512)} alt="" onError={() => setFailed(true)} className="mx-auto max-h-80 max-w-full rounded border border-hud/40 object-contain" />
+  return <img src={thumbUrl(preview.entry.path, 512)} alt="" onError={() => setFailed(true)} className="mx-auto max-h-80 max-w-full rounded-sm border border-hud/40 object-contain" />
 }
 
 function Body({ preview }: { preview: FinderPreview }) {
@@ -40,8 +40,8 @@ function Body({ preview }: { preview: FinderPreview }) {
     if (/^https?:/i.test(a.href)) void useBrowser.getState().show(a.href)
   }
 
-  if (type === 'image') return <img src={fileUrl(entry.path)} alt={entry.name} className="mx-auto max-h-[60vh] max-w-full rounded border border-hud/40 object-contain" />
-  if (type === 'video') return <video src={fileUrl(entry.path)} controls className="w-full rounded border border-hud/40 bg-black" />
+  if (type === 'image') return <img src={fileUrl(entry.path)} alt={entry.name} className="mx-auto max-h-[60vh] max-w-full rounded-sm border border-hud/40 object-contain" />
+  if (type === 'video') return <video src={fileUrl(entry.path)} controls className="w-full rounded-sm border border-hud/40 bg-black" />
   if (type === 'audio') return <audio src={fileUrl(entry.path)} controls className="w-full" />
   if (type === 'dir') {
     return (
@@ -99,7 +99,7 @@ export function PreviewPane({ actions, editable, browsable }: { actions: Preview
           aria-label={t.files.closePreview}
           title={t.files.closePreview}
           onClick={() => useFiles.getState().clearSelection()}
-          className="shrink-0 rounded p-0.5 text-text-muted transition-colors hover:bg-elevated hover:text-text-primary"
+          className="shrink-0 rounded-sm p-0.5 text-text-muted transition-colors hover:bg-elevated hover:text-text-primary"
         >
           <X size={13} />
         </button>

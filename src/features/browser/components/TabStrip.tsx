@@ -92,7 +92,7 @@ export function TabStrip() {
           drag.over === tab.id && 'border-cyan/60',
           group && GROUP_STYLES[group.color].line,
           agentic && !group && 'shadow-[inset_0_2px_0_0_rgb(var(--accent-purple)/0.8)]',
-          tab.profile === 'private' && 'bg-purple/[0.08]'
+          tab.profile === 'private' && 'bg-purple/8'
         )}
       >
         <Favicon tab={tab} />
@@ -108,7 +108,7 @@ export function TabStrip() {
               void run('browser:close', { id: tab.id })
             }}
             className={cn(
-              'shrink-0 rounded p-0.5 text-text-muted transition-opacity hover:bg-elevated hover:text-text-primary',
+              'shrink-0 rounded-sm p-0.5 text-text-muted transition-opacity hover:bg-elevated hover:text-text-primary',
               active ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
             )}
           >

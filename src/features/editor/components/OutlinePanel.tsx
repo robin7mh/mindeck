@@ -47,8 +47,8 @@ export function OutlinePanel() {
           onClick={() => reveal(s)}
           style={{ paddingLeft: 6 + depth * 12 }}
           className={cn(
-            'flex cursor-pointer items-center gap-1.5 truncate rounded py-0.5 pr-2 font-sans text-[12.5px] hover:bg-elevated/50',
-            s.selection === here?.selection ? 'bg-cyan/[0.08] text-text-primary' : 'text-text-secondary'
+            'flex cursor-pointer items-center gap-1.5 truncate rounded-sm py-0.5 pr-2 font-sans text-[12.5px] hover:bg-elevated/50',
+            s.selection === here?.selection ? 'bg-cyan/8 text-text-primary' : 'text-text-secondary'
           )}
         >
           {s.children.length ? (
@@ -82,7 +82,7 @@ export function OutlinePanel() {
           placeholder={t.editor.outlineFilter}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          className="w-full rounded-md border border-hud/60 bg-transparent px-2 py-1 font-sans text-[12.5px] text-text-primary outline-none placeholder:text-text-muted focus:border-cyan/50"
+          className="w-full rounded-md border border-hud/60 bg-transparent px-2 py-1 font-sans text-[12.5px] text-text-primary outline-hidden placeholder:text-text-muted focus:border-cyan/50"
         />
       </div>
       {!id ? (

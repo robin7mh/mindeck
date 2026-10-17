@@ -367,7 +367,7 @@ export function GraphView({ graph, style, folderSlots, activeId, onOpen, onOpenG
       )}
 
       {legend.length > 0 && (
-        <div className="pointer-events-none absolute bottom-3 left-3 space-y-1 rounded-md border border-hud/50 bg-surface/70 px-2.5 py-2 backdrop-blur-sm">
+        <div className="pointer-events-none absolute bottom-3 left-3 space-y-1 rounded-md border border-hud/50 bg-surface/70 px-2.5 py-2 backdrop-blur-xs">
           {legend.map(([folder, slot]) => (
             <div key={folder || '.'} className="flex items-center gap-2">
               <span className="h-2 w-2 rounded-full" style={{ background: slotColor(slot) }} />

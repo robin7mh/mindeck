@@ -148,7 +148,7 @@ export function Omnibox({ tab }: { tab?: BrowserTab }) {
         )}
       >
         {tab?.profile === 'private' && (
-          <span title={t.browserExtras.privateHint} className="flex shrink-0 items-center gap-1 rounded bg-purple/15 px-1.5 py-0.5 font-sans text-[10.5px] text-purple">
+          <span title={t.browserExtras.privateHint} className="flex shrink-0 items-center gap-1 rounded-sm bg-purple/15 px-1.5 py-0.5 font-sans text-[10.5px] text-purple">
             <VenetianMask size={12} aria-hidden /> {t.browserExtras.privateTab}
           </span>
         )}
@@ -198,7 +198,7 @@ export function Omnibox({ tab }: { tab?: BrowserTab }) {
             void suggest(next, grew)
           }}
           onKeyDown={onKeyDown}
-          className="min-w-0 flex-1 bg-transparent font-mono text-[12.5px] text-text-primary outline-none placeholder:font-sans placeholder:text-text-muted"
+          className="min-w-0 flex-1 bg-transparent font-mono text-[12.5px] text-text-primary outline-hidden placeholder:font-sans placeholder:text-text-muted"
         />
         {tab && !editing && <ShieldButton tab={tab} />}
         {/* A private tab leaves no bookmarks behind. */}
@@ -208,7 +208,7 @@ export function Omnibox({ tab }: { tab?: BrowserTab }) {
             aria-label={bookmarked ? t.library.starred : t.library.star}
             title={bookmarked ? t.library.starred : t.library.star}
             onClick={() => void useBrowser.getState().bookmarkActive()}
-            className={cn('shrink-0 rounded p-0.5 transition-colors hover:bg-elevated', bookmarked ? 'text-amber' : 'text-text-muted hover:text-amber')}
+            className={cn('shrink-0 rounded-sm p-0.5 transition-colors hover:bg-elevated', bookmarked ? 'text-amber' : 'text-text-muted hover:text-amber')}
           >
             <Star size={13} className={bookmarked ? 'fill-current' : undefined} />
           </button>

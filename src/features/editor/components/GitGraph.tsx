@@ -84,7 +84,7 @@ function Ref({ name }: { name: string }) {
   return (
     <span
       className={cn(
-        'shrink-0 rounded border px-1 font-mono text-[10px]',
+        'shrink-0 rounded-sm border px-1 font-mono text-[10px]',
         head ? 'border-cyan/50 bg-cyan/10 text-cyan' : tag ? 'border-amber/40 text-amber' : 'border-hud/60 text-text-secondary'
       )}
     >
@@ -118,7 +118,7 @@ export function GitGraph() {
             role="option"
             aria-selected={row.commit.hash === selected}
             onClick={() => void useScm.getState().select(row.commit.hash)}
-            className={cn('flex cursor-pointer items-center gap-2 pr-3 hover:bg-elevated/40', row.commit.hash === selected && 'bg-cyan/[0.08]')}
+            className={cn('flex cursor-pointer items-center gap-2 pr-3 hover:bg-elevated/40', row.commit.hash === selected && 'bg-cyan/8')}
             style={{ height: ROW }}
           >
             <Lanes row={row} width={width} />
@@ -138,7 +138,7 @@ export function GitGraph() {
       {detail && (
         <aside className="flex w-80 shrink-0 flex-col border-l border-hud/60">
           <div className="space-y-1 border-b border-hud/50 p-3">
-            <p className="whitespace-pre-wrap break-words font-sans text-[13px] font-medium text-text-primary">{detail.message}</p>
+            <p className="whitespace-pre-wrap wrap-break-word font-sans text-[13px] font-medium text-text-primary">{detail.message}</p>
             <p className="font-sans text-[11.5px] text-text-secondary">
               {detail.author} · {new Date(detail.date).toLocaleString(intlLocale())}
             </p>
@@ -156,7 +156,7 @@ export function GitGraph() {
                     type="button"
                     title={f.from ? `${f.from} → ${f.path}` : f.path}
                     onClick={() => void useScm.getState().openDiff(f, { kind: 'commit', hash: detail.hash }, `${name} (${detail.hash.slice(0, 7)})`)}
-                    className="flex w-full items-center gap-1.5 rounded px-1.5 py-0.5 text-left hover:bg-elevated/50"
+                    className="flex w-full items-center gap-1.5 rounded-sm px-1.5 py-0.5 text-left hover:bg-elevated/50"
                   >
                     <span className="min-w-0 flex-1 truncate font-sans text-[12px] text-text-primary">{name}</span>
                     <span className="min-w-0 truncate font-mono text-[10px] text-text-muted">{f.path.slice(0, f.path.length - name.length)}</span>

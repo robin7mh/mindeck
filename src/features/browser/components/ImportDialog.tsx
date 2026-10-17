@@ -70,7 +70,7 @@ export function ImportPanel({ onClose, onBusy }: { onClose(): void; onBusy?(busy
           aria-label={t.common.close}
           disabled={running}
           onClick={onClose}
-          className="rounded p-1 text-text-muted hover:bg-elevated hover:text-text-primary disabled:opacity-40"
+          className="rounded-sm p-1 text-text-muted hover:bg-elevated hover:text-text-primary disabled:opacity-40"
         >
           <X size={14} />
         </button>
@@ -174,7 +174,7 @@ export function ImportDialog({ onClose }: { onClose(): void }) {
     <div
       role="dialog"
       aria-label={t.library.importTitle}
-      className="fixed inset-0 z-[60] flex justify-center bg-void/40 pt-[10vh]"
+      className="fixed inset-0 z-60 flex justify-center bg-void/40 pt-[10vh]"
       onMouseDown={() => !busy && onClose()}
     >
       <div

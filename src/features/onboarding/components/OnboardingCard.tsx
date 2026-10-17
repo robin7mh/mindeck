@@ -12,7 +12,7 @@ export function OnboardingCard() {
   return (
     <Card icon={Sparkles} title={o.settingsCard}>
       <p className="font-sans text-[12px] text-text-secondary">{o.settingsHint}</p>
-      <button type="button" onClick={() => useOnboarding.getState().restart()} className={`${quietButton} mt-3 !py-1.5`}>
+      <button type="button" onClick={() => useOnboarding.getState().restart()} className={`${quietButton} mt-3 py-1.5!`}>
         <Sparkles size={12} /> {o.restart}
       </button>
     </Card>

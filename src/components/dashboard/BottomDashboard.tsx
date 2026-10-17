@@ -62,7 +62,7 @@ export function BottomDashboard({
   }
 
   return (
-    <section className="relative flex shrink-0 flex-col border-t border-hud/70 bg-surface/40 backdrop-blur-sm">
+    <section className="relative flex shrink-0 flex-col border-t border-hud/70 bg-surface/40 backdrop-blur-xs">
       <button
         type="button"
         onClick={toggle}

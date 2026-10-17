@@ -64,7 +64,7 @@ function Resizer({ width, onWidth }: { width: number; onWidth: (w: number | null
         onPointerCancel={end}
         onDoubleClick={() => commit(VERTICAL_TABS_WIDTH.default)}
         onKeyDown={onKeyDown}
-        className="group absolute inset-y-0 -right-1 z-20 flex w-2 cursor-col-resize justify-center outline-none"
+        className="group absolute inset-y-0 -right-1 z-20 flex w-2 cursor-col-resize justify-center outline-hidden"
       >
         <span className={cn('h-full w-px transition-colors group-hover:bg-cyan/70 group-focus-visible:bg-cyan', dragging ? 'bg-cyan' : 'bg-transparent')} />
       </div>
@@ -109,7 +109,7 @@ export function VerticalTabs() {
     cn(
       tab.id === state.activeId ? 'bg-elevated text-text-primary' : tab.id === beside ? 'bg-elevated/50 text-text-primary' : 'text-text-secondary hover:bg-elevated/40',
       drag.over === tab.id && 'shadow-[inset_0_2px_0_0_rgb(var(--accent-cyan))]',
-      tab.profile === 'private' && 'bg-purple/[0.08]'
+      tab.profile === 'private' && 'bg-purple/8'
     )
 
   const row = (tab: BrowserTab, group?: BrowserTabGroup) => {
@@ -141,7 +141,7 @@ export function VerticalTabs() {
                 void run('browser:close', { id: tab.id })
               }}
               className={cn(
-                'shrink-0 rounded p-0.5 text-text-muted transition-opacity hover:bg-elevated hover:text-text-primary',
+                'shrink-0 rounded-sm p-0.5 text-text-muted transition-opacity hover:bg-elevated hover:text-text-primary',
                 tab.id === state.activeId ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
               )}
             >

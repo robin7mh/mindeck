@@ -45,7 +45,7 @@ export function NameInput({ initial, label, onCommit, onCancel }: { initial: str
         else if (e.key === 'Escape') finish(false)
       }}
       onBlur={() => finish(true)}
-      className="min-w-0 flex-1 rounded border border-cyan/60 bg-surface px-1 py-0 font-sans text-[12.5px] text-text-primary outline-none"
+      className="min-w-0 flex-1 rounded-sm border border-cyan/60 bg-surface px-1 py-0 font-sans text-[12.5px] text-text-primary outline-hidden"
     />
   )
 }
@@ -97,7 +97,7 @@ function Row({ entry, handlers }: { entry: FinderEntry; handlers: EntryHandlers 
       {...props}
       className={cn(
         'grid h-7 cursor-default grid-cols-[minmax(0,1fr)_150px_90px_120px] items-center gap-3 rounded-md px-2 transition-colors',
-        selected ? 'bg-cyan/[0.12] text-text-primary' : 'text-text-secondary hover:bg-elevated/40',
+        selected ? 'bg-cyan/12 text-text-primary' : 'text-text-secondary hover:bg-elevated/40',
         over && 'ring-1 ring-cyan/60',
         entry.hidden && 'opacity-60'
       )}
@@ -139,7 +139,7 @@ function Tile({ entry, handlers }: { entry: FinderEntry; handlers: EntryHandlers
       title={entry.name}
       className={cn(
         'flex h-[124px] w-[112px] cursor-default flex-col items-center gap-1.5 rounded-lg p-2 transition-colors',
-        selected ? 'bg-cyan/[0.12]' : 'hover:bg-elevated/40',
+        selected ? 'bg-cyan/12' : 'hover:bg-elevated/40',
         over && 'ring-1 ring-cyan/60',
         entry.hidden && 'opacity-60'
       )}
@@ -155,7 +155,7 @@ function Tile({ entry, handlers }: { entry: FinderEntry; handlers: EntryHandlers
           onCancel={() => useFiles.getState().cancelRename()}
         />
       ) : (
-        <span className={cn('line-clamp-2 w-full break-words text-center font-sans text-[11.5px] leading-tight', selected ? 'text-text-primary' : 'text-text-secondary')}>
+        <span className={cn('line-clamp-2 w-full wrap-break-word text-center font-sans text-[11.5px] leading-tight', selected ? 'text-text-primary' : 'text-text-secondary')}>
           {entry.name}
         </span>
       )}
@@ -166,7 +166,7 @@ function Tile({ entry, handlers }: { entry: FinderEntry; handlers: EntryHandlers
 function NewFolder() {
   const t = useT()
   return (
-    <div className="flex h-7 items-center gap-2 rounded-md bg-cyan/[0.08] px-2">
+    <div className="flex h-7 items-center gap-2 rounded-md bg-cyan/8 px-2">
       <Folder size={15} className="shrink-0 text-cyan" />
       <NameInput
         initial={t.files.untitledFolder}
@@ -219,7 +219,7 @@ export function Entries({ entries, handlers, scroller }: { entries: FinderEntry[
   }
   return (
     <div role="grid" aria-label={t.files.title} className="flex flex-col p-1.5">
-      <div role="row" className="sticky top-0 z-10 grid grid-cols-[minmax(0,1fr)_150px_90px_120px] gap-3 border-b border-hud/40 bg-panel/90 px-2 pb-1.5 pt-1 backdrop-blur-sm">
+      <div role="row" className="sticky top-0 z-10 grid grid-cols-[minmax(0,1fr)_150px_90px_120px] gap-3 border-b border-hud/40 bg-panel/90 px-2 pb-1.5 pt-1 backdrop-blur-xs">
         <SortHeader k="name" label={t.files.name} />
         <SortHeader k="modified" label={t.files.modified} />
         <SortHeader k="size" label={t.files.size} className="justify-end" />

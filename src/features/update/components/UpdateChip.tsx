@@ -4,7 +4,7 @@ import { useT } from '@/lib/i18n'
 import { useUpdate } from '../store'
 
 const chip =
-  'flex items-center gap-1.5 rounded-md border border-cyan/50 bg-cyan/[0.10] px-2.5 py-1 font-mono text-[11px] text-cyan transition-colors hover:bg-cyan/[0.18]'
+  'flex items-center gap-1.5 rounded-md border border-cyan/50 bg-cyan/[0.10] px-2.5 py-1 font-mono text-[11px] text-cyan transition-colors hover:bg-cyan/18'
 
 /**
  * Top bar: appears once a downloaded update waits for a restart — or, where

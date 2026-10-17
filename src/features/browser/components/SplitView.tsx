@@ -68,7 +68,7 @@ export function SplitDivider({ split, area, onRatio }: { split: BrowserSplit; ar
         onPointerCancel={end}
         onDoubleClick={() => commit(0.5)}
         onKeyDown={onKeyDown}
-        className={cn('group flex shrink-0 items-center justify-center outline-none', vertical ? 'cursor-row-resize' : 'cursor-col-resize')}
+        className={cn('group flex shrink-0 items-center justify-center outline-hidden', vertical ? 'cursor-row-resize' : 'cursor-col-resize')}
       >
         <span className={cn('rounded-full transition-colors group-hover:bg-cyan/70 group-focus-visible:bg-cyan', dragging ? 'bg-cyan' : 'bg-hud/80', vertical ? 'h-0.5 w-10' : 'h-10 w-0.5')} />
       </div>
@@ -142,7 +142,7 @@ export function SplitTools({ tabId }: { tabId: string }) {
     )
   }
   return (
-    <div role="group" aria-label={t.browserTabs.splitView} className="flex shrink-0 items-center rounded-md border border-cyan/30 bg-cyan/[0.05]">
+    <div role="group" aria-label={t.browserTabs.splitView} className="flex shrink-0 items-center rounded-md border border-cyan/30 bg-cyan/5">
       <button type="button" aria-label={t.browserTabs.swapSides} title={t.browserTabs.swapSides} onClick={() => void run('browser:splitUpdate', { id: split.id, swap: true })} className={tool}>
         <ArrowLeftRight size={14} className={split.vertical ? 'rotate-90' : ''} />
       </button>

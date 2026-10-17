@@ -81,7 +81,7 @@ describe('NoteList', () => {
     expect(folderNames).toEqual(['Ideen', 'Ideen/Sub', 'Leer', 'Loose', 'Zeta'])
     const titles = [...container.querySelectorAll('span.min-w-0.flex-1.truncate')].map((e) => e.textContent)
     expect(titles.slice(0, 2)).toEqual(['Alpha', 'Root'])
-    expect(screen.getByText('A').closest('button')!.className).toContain('bg-cyan/[0.08]')
+    expect(screen.getByText('A').closest('button')!.className).toContain('bg-cyan/8')
     expect(screen.getByText('Root').nextElementSibling).toHaveTextContent('2') // link count
     expect(screen.getByText('Alpha').nextElementSibling).toBeNull()
     expect(screen.getAllByText('Empty — drop notes here')).toHaveLength(2) // Leer, Zeta

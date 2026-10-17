@@ -32,7 +32,7 @@ import { Toggle } from './Toggle'
 import { OnboardingCard } from '@/features/onboarding/components/OnboardingCard'
 
 const input =
-  'rounded-md border border-hud/70 bg-surface/70 px-2.5 py-1.5 font-mono text-[12px] text-text-primary outline-none focus:border-cyan/60'
+  'rounded-md border border-hud/70 bg-surface/70 px-2.5 py-1.5 font-mono text-[12px] text-text-primary outline-hidden focus:border-cyan/60'
 const button =
   'flex items-center justify-center gap-1.5 rounded-md border border-hud/60 px-2.5 py-1.5 font-sans text-[12px] text-text-secondary transition-colors hover:border-cyan/50 hover:text-cyan disabled:opacity-40'
 
@@ -228,9 +228,9 @@ function RemoteCard() {
         </div>
         {manage && <Toggle label={t.settings.pairAsAdmin} hint={t.settings.pairAsAdminHint} checked={adminCode} disabled={s.busy} onChange={setAdminCode} />}
         {s.pairing && (
-          <div className="mt-3 flex flex-col items-center gap-2 rounded-md border border-cyan/40 bg-cyan/[0.04] p-3 sm:flex-row sm:items-start">
+          <div className="mt-3 flex flex-col items-center gap-2 rounded-md border border-cyan/40 bg-cyan/4 p-3 sm:flex-row sm:items-start">
             {s.pairing.reachable && (
-              <div className="w-36 shrink-0 rounded bg-white p-1" aria-label={t.settings.pairingQr} dangerouslySetInnerHTML={{ __html: s.pairing.qr }} />
+              <div className="w-36 shrink-0 rounded-sm bg-white p-1" aria-label={t.settings.pairingQr} dangerouslySetInnerHTML={{ __html: s.pairing.qr }} />
             )}
             <div className="min-w-0 flex-1 space-y-1">
               <p className="font-mono text-[22px] tracking-[0.25em] text-text-primary">{s.pairing.code}</p>
@@ -261,7 +261,7 @@ function RemoteCard() {
           {s.devices.map((d) => {
             const Icon = /android|ios|phone/i.test(d.name) ? Smartphone : Laptop
             return (
-              <li key={d.id} className="flex items-center gap-2 rounded px-1.5 py-1 hover:bg-elevated/40">
+              <li key={d.id} className="flex items-center gap-2 rounded-sm px-1.5 py-1 hover:bg-elevated/40">
                 <Icon size={13} className="shrink-0 text-text-muted" />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate font-sans text-[12.5px] text-text-primary">
@@ -406,7 +406,7 @@ function AboutCard() {
         {rows.map(([k, v]) => (
           <div key={k} className="flex gap-3">
             <dt className="w-20 shrink-0 font-mono text-[11px] uppercase tracking-wider text-text-muted">{k}</dt>
-            <dd className="min-w-0 break-words font-mono text-[12px] text-text-secondary">{v}</dd>
+            <dd className="min-w-0 wrap-break-word font-mono text-[12px] text-text-secondary">{v}</dd>
           </div>
         ))}
       </dl>
@@ -427,7 +427,7 @@ export function SettingsView() {
   return (
     <Panel title={t.settings.title} corners flush className="min-h-0 flex-1" bodyClassName="min-h-0 overflow-y-auto">
       {(error || aiError) && (
-        <div className="flex items-start gap-2 border-b border-danger/30 bg-danger/[0.06] px-3 py-2">
+        <div className="flex items-start gap-2 border-b border-danger/30 bg-danger/6 px-3 py-2">
           <AlertTriangle size={13} className="mt-0.5 shrink-0 text-danger" />
           <span className="min-w-0 flex-1 font-mono text-[11px] text-text-secondary">{error ?? aiError}</span>
           <button
