@@ -1,6 +1,7 @@
 # Keeps the pinned versions current: GitHub Actions are pinned by commit SHA
 # (with the version as a comment), the Docker base images by digest — Dependabot
-# proposes the new SHA/digest with the version it belongs to.
+# proposes the new SHA/digest with the version it belongs to. npm packages come
+# in groups, so a toolchain moves together (and security fixes come at once).
 version: 2
 updates:
   - package-ecosystem: github-actions
@@ -14,3 +15,16 @@ updates:
     directories: [/, /remote]
     schedule:
       interval: monthly
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 10
+    groups:
+      # The build and test toolchain: these majors depend on each other.
+      toolchain:
+        patterns: ['vite', 'electron-vite', '@vitejs/*', 'vitest', '@vitest/*', 'tailwindcss', '@tailwindcss/*', 'postcss', 'electron-builder', 'typescript', 'eslint', 'typescript-eslint', 'eslint-plugin-*', '@playwright/test']
+      types:
+        patterns: ['@types/*']
+      minor-and-patch:
+        update-types: ['minor', 'patch']
