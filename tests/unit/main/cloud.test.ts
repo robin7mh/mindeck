@@ -1216,11 +1216,19 @@ describe('CloudService: signing keys', () => {
     const fresh = (await t.svc.followerLease(follower.svc.installId()))!
     expect(await follower.svc.adopt(fresh.token, fresh.account, fresh.revokedKids)).toMatchObject({ state: 'active' })
 
+    // Another key revoked later (one it never used): what a trusted key signed still holds.
+    t.cloud.s.revoked = [pair.k.kid, 'retired-key-0001']
+    t.advance(SIX_HOURS)
+    await t.svc.refresh()
+    expect(await saved(t.dir)).toMatchObject({ revokedKids: [pair.k.kid, 'retired-key-0001'] })
+    expect(t.svc.status()).toMatchObject({ state: 'active', error: null })
+    expect(kidOf((await t.svc.followerLease('remote-2'))!.token)).toBe(pair.next.kid)
+
     // The cloud forgets the revocation (a restore, a mistake): the core does not.
     t.cloud.s.revoked = []
     t.advance(SIX_HOURS)
     await t.svc.refresh()
-    expect(await saved(t.dir)).toMatchObject({ revokedKids: [pair.k.kid] })
+    expect(await saved(t.dir)).toMatchObject({ revokedKids: [pair.k.kid, 'retired-key-0001'] })
     expect(t.cloud.last('/v1/license/heartbeat')!.keys).toBe(pair.next.kid)
 
     // Offline, after a restart: the old certificate (put back into the store) holds no more; the new one does.
