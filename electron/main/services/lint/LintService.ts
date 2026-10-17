@@ -1,10 +1,10 @@
-import { spawn, type ChildProcess } from 'node:child_process'
 import { realpath } from 'node:fs/promises'
 import { sep } from 'node:path'
 import { createInterface } from 'node:readline'
 import { isTypeScriptFile } from '@shared/types/languages'
 import type { LintDiagnostic, LintResult } from '@shared/types/lint'
 import { confine } from '../../lib/confine'
+import { spawnNode, type NodeLauncher, type NodeProcess } from '../../lib/nodeProcess'
 import { shellEnv } from '../terminal/TerminalService'
 
 function coded(code: string, message: string): Error {
@@ -92,8 +92,10 @@ export interface LintOptions {
   prettier: string
   /** Whether the project is trusted (WorkspaceTrust); restricted when not, or without this. */
   trusted?: (projectId: string) => boolean
-  /** Start the worker in a project (tests run it with plain Node). */
-  spawn?: (root: string, trusted: boolean) => ChildProcess
+  /** How the worker runs as a Node program (Platform.node). */
+  node?: NodeLauncher
+  /** Start the worker in a project (default: WORKER with `node`). */
+  spawn?: (root: string, trusted: boolean) => NodeProcess
   /** A worker nobody asked for this long stops. */
   idleMs?: number
   timeoutMs?: number
@@ -101,7 +103,7 @@ export interface LintOptions {
 
 /** The worker of one project: requests by id, stops when idle. */
 class Worker {
-  private proc?: ChildProcess
+  private proc?: NodeProcess
   private seq = 0
   private pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> }>()
   private idle?: ReturnType<typeof setTimeout>
@@ -135,7 +137,7 @@ class Worker {
     this.proc = undefined
   }
 
-  private start(): ChildProcess {
+  private start(): NodeProcess {
     const proc = this.opts.spawn(this.root, this.trusted)
     createInterface({ input: proc.stdout! }).on('line', (line) => {
       let msg: { id: number; ok: boolean; result?: unknown; error?: string }
@@ -181,11 +183,13 @@ export class LintService {
     this.opts = {
       idleMs: 10 * 60_000,
       timeoutMs: 60_000,
+      // The project's ESLint / Prettier plugins may bring native addons (unrs-resolver, @swc/core …).
       spawn: (root, trusted) =>
-        spawn(process.execPath, ['-e', WORKER], {
+        (opts.node ?? spawnNode)(['-e', WORKER], {
           cwd: root,
-          env: { ...shellEnv(), ELECTRON_RUN_AS_NODE: '1', MINDECK_ROOT: root, MINDECK_PRETTIER: opts.prettier, ...(trusted ? { MINDECK_TRUSTED: '1' } : {}) },
-          stdio: ['pipe', 'pipe', 'pipe']
+          env: { ...shellEnv(), MINDECK_ROOT: root, MINDECK_PRETTIER: opts.prettier, ...(trusted ? { MINDECK_TRUSTED: '1' } : {}) },
+          name: 'ESLint / Prettier',
+          unsignedLibraries: true
         }),
       ...opts
     }
@@ -255,7 +259,7 @@ export class LintService {
   }
 }
 
-/** Mindeck's own Prettier, outside the app archive (the worker is a separate Node). */
+/** Mindeck's own Prettier, outside the app archive (the worker is a Node program of its own). */
 export function bundledPrettier(resolve: (id: string) => string = require.resolve): string {
   return resolve('prettier').replace(`app.asar${sep}`, `app.asar.unpacked${sep}`)
 }

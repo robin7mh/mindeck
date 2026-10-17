@@ -453,6 +453,7 @@ export const REQUEST_SCHEMAS: Schemas = {
   'cloud:resendVerification': none,
   'cloud:forgotPassword': z.object({ email }),
   'cloud:checkout': none,
+  'cloud:installId': none,
   'cloud:adopt': z.object({ token: z.string().min(10).max(10_000), account: z.object({ email: z.string().max(320), name: z.string().max(200).nullable() }) }),
   'cloud:syncStatus': none,
   'cloud:syncPush': z.object({ appearance: z.unknown().optional(), locale: z.enum(['de', 'en']).optional(), force: z.boolean().optional() }),

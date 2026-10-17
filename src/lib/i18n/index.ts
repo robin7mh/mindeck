@@ -65,6 +65,8 @@ setErrorLocalizer((code, message) => {
   if (code === 'offline') return t.offline
   if (code === 'no-bridge') return t.noBridge
   if (code === 'bad-response') return t.badResponse(/\((\d+)\)/.exec(message)?.[1] ?? '?')
+  // The core's per-device limit (BE-SEC-18), the AI provider's, or too many failed pairings.
+  if (code === 'rate-limited') return t.rateLimited(/in (\d+) s\b/.exec(message)?.[1])
   return undefined
 })
 

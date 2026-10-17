@@ -4,7 +4,7 @@
 // React Native app can import this file as-is.
 
 import type { IpcResult } from './contract'
-import type { PairResult } from '@shared/types/server'
+import type { Device, PairResult } from '@shared/types/server'
 
 export type LinkState = 'connecting' | 'online' | 'offline'
 
@@ -14,9 +14,11 @@ export interface Transport {
   /** Subscribe to a push event. Returns an unsubscribe function. */
   on(channel: string, cb: (payload: unknown) => void): () => void
   /**
-   * Called each time the push channel is back after an outage: events from
-   * the gap are lost (the core keeps no replay), so whoever mirrors core state
-   * reloads it. Absent where events cannot drop (the desktop bridge).
+   * Called when events were lost: the push channel is back after an outage
+   * and the core could not replay the gap (`resync-required`, or a core that
+   * keeps no replay), so whoever mirrors core state reloads it. A gap the
+   * core replays needs no resync. Absent where events cannot drop (the
+   * desktop bridge).
    */
   onResync?(cb: () => void): () => void
 }
@@ -52,7 +54,12 @@ type SocketCtor = new (url: string, protocols?: string[]) => SocketLike
 export interface RemoteTransportOptions {
   /** Core base URL, e.g. `http://192.168.1.20:7420` ('' = same origin). */
   baseUrl: string
-  token: string
+  /**
+   * The device token (Bearer). Absent: the web UI on the core's own address,
+   * where the browser's HttpOnly cookie carries it (`pairBrowser`) — no
+   * script in the page ever holds it.
+   */
+  token?: string
   fetch?: FetchLike
   WebSocket?: SocketCtor
   /** The core rejected the token (revoked / unknown) — clear it and re-pair. */
@@ -70,10 +77,15 @@ export interface RemoteTransport extends Transport {
 
 const trimSlash = (url: string) => url.replace(/\/+$/, '')
 
-/** ws(s)://host/api/events derived from the HTTP base URL. */
-export function eventsUrl(baseUrl: string, origin?: string): string {
+/**
+ * ws(s)://host/api/events derived from the HTTP base URL. A reconnecting
+ * client adds where it stopped (`?stream=<id>&since=<seq>`, from the core's
+ * `hello` and the events' `seq`): the core replays what it missed.
+ */
+export function eventsUrl(baseUrl: string, origin?: string, resume?: { stream: string; since: number }): string {
   const base = trimSlash(baseUrl) || trimSlash(origin ?? '')
-  return `${base.replace(/^http/, 'ws')}/api/events`
+  const query = resume ? `?stream=${encodeURIComponent(resume.stream)}&since=${resume.since}` : ''
+  return `${base.replace(/^http/, 'ws')}/api/events${query}`
 }
 
 /** The events socket's subprotocol — the core answers with it. */
@@ -81,9 +93,9 @@ export const EVENTS_PROTOCOL = 'mindeck'
 /** The device token travels as a second offered subprotocol: never in the URL (and so never in a log). */
 export const TOKEN_PROTOCOL_PREFIX = 'mindeck.bearer.'
 
-/** What a client offers when it opens the events socket. */
-export function eventsProtocols(token: string): string[] {
-  return [EVENTS_PROTOCOL, `${TOKEN_PROTOCOL_PREFIX}${token}`]
+/** What a client offers when it opens the events socket (without a token: the browser sends its cookie). */
+export function eventsProtocols(token?: string): string[] {
+  return token ? [EVENTS_PROTOCOL, `${TOKEN_PROTOCOL_PREFIX}${token}`] : [EVENTS_PROTOCOL]
 }
 
 /**
@@ -105,6 +117,15 @@ export function createRemoteTransport(opts: RemoteTransportOptions): RemoteTrans
   let unauthorized = false
   /** The socket went down (or never came up) since the last open: events may be missing. */
   let dropped = false
+  /** Where the core's numbered events stand for this client (its `hello`, then each event's `seq`). */
+  let stream: string | null = null
+  let lastSeq = 0
+  /** Back after an outage, resumed: the core replays — unless its hello shows it can't (an older core). */
+  let awaitingHello = false
+
+  const resync = () => {
+    for (const cb of [...resyncs]) cb()
+  }
 
   const setLink = (state: LinkState) => opts.onLinkState?.(state)
   const listenerCount = () => [...listeners.values()].reduce((n, s) => n + s.size, 0)
@@ -119,7 +140,8 @@ export function createRemoteTransport(opts: RemoteTransportOptions): RemoteTrans
     if (closed || socket || unauthorized) return
     setLink('connecting')
     const origin = (globalThis as { location?: { origin?: string } }).location?.origin
-    const ws = new Socket(eventsUrl(base, origin), eventsProtocols(opts.token))
+    const resuming = stream !== null
+    const ws = new Socket(eventsUrl(base, origin, resuming ? { stream: stream!, since: lastSeq } : undefined), eventsProtocols(opts.token))
     socket = ws
     let opened = false
     ws.onopen = () => {
@@ -128,16 +150,36 @@ export function createRemoteTransport(opts: RemoteTransportOptions): RemoteTrans
       setLink('online')
       if (!dropped) return
       dropped = false
-      for (const cb of [...resyncs]) cb()
+      // Resumed: the core sends what was missed (or says resync-required). Nothing to resume from: reload now.
+      if (resuming) awaitingHello = true
+      else resync()
     }
     ws.onmessage = (ev) => {
-      let msg: { channel?: string; payload?: unknown }
+      let msg: { channel?: string; payload?: unknown; seq?: unknown }
       try {
         msg = JSON.parse(String(ev.data))
       } catch {
         return
       }
+      const p = (msg.payload ?? {}) as { stream?: unknown; seq?: unknown }
+      const numbered = typeof p.stream === 'string' && typeof p.seq === 'number'
+      let gap = false
+      if (msg.channel === 'hello') {
+        // A new numbering (first connection, a restarted core): start from where it stands.
+        if (numbered && p.stream !== stream) [stream, lastSeq] = [p.stream as string, p.seq as number]
+        // A core without replay: whatever happened in the gap is lost.
+        if (!numbered && awaitingHello) gap = true
+        awaitingHello = false
+      } else if (msg.channel === 'resync-required') {
+        if (numbered) [stream, lastSeq] = [p.stream as string, p.seq as number]
+        gap = true
+      } else if (typeof msg.seq === 'number') {
+        if (msg.seq <= lastSeq) return // seen already
+        gap = msg.seq > lastSeq + 1
+        lastSeq = msg.seq
+      }
       for (const cb of [...(listeners.get(String(msg.channel)) ?? [])]) cb(msg.payload)
+      if (gap) resync()
     }
     ws.onerror = () => {}
     ws.onclose = (ev) => {
@@ -160,7 +202,7 @@ export function createRemoteTransport(opts: RemoteTransportOptions): RemoteTrans
 
   const request = (payload: unknown) => ({
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${opts.token}` },
+    headers: { 'Content-Type': 'application/json', ...(opts.token ? { Authorization: `Bearer ${opts.token}` } : {}) },
     body: JSON.stringify(payload ?? null)
   })
 
@@ -263,20 +305,42 @@ export async function probeCore(
   }
 }
 
-/** Redeem a pairing code for this device's token. Throws with the core's message. */
-export async function pairDevice(
-  baseUrl: string,
-  code: string,
-  name: string,
-  fetchImpl: FetchLike = globalThis.fetch as unknown as FetchLike
-): Promise<PairResult> {
-  const res = await fetchImpl(`${trimSlash(baseUrl)}/api/pair`, {
+/** A POST to the core's own endpoints: its data, or a throw with the core's message and code. */
+async function post<T>(fetchImpl: FetchLike, url: string, payload: unknown, headers: Record<string, string> = {}): Promise<T> {
+  const res = await fetchImpl(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ code, name })
+    headers: { 'Content-Type': 'application/json', ...headers },
+    body: JSON.stringify(payload)
   })
-  const body = (await res.json().catch(() => null)) as IpcResult<PairResult> | null
+  const body = (await res.json().catch(() => null)) as IpcResult<T> | null
   if (!body) throw Object.assign(new Error(`Unexpected response (${res.status})`), { code: 'bad-response' })
   if (!body.ok) throw Object.assign(new Error(body.error.message), { code: body.error.code })
   return body.data
+}
+
+/** Redeem a pairing code for this device's token. Throws with the core's message. */
+export function pairDevice(baseUrl: string, code: string, name: string, fetchImpl: FetchLike = globalThis.fetch as unknown as FetchLike): Promise<PairResult> {
+  return post<PairResult>(fetchImpl, `${trimSlash(baseUrl)}/api/pair`, { code, name })
+}
+
+/** What the web UI learns when it pairs: its device — the token stays in the core's HttpOnly cookie. */
+export type BrowserPairResult = Omit<PairResult, 'token'>
+
+/**
+ * The web UI on the core's own address redeems a pairing code: the core
+ * keeps the token in an HttpOnly cookie for `/api` — for good (`remember`)
+ * or until the browser closes. Throws with the core's message.
+ */
+export function pairBrowser(baseUrl: string, code: string, name: string, remember: boolean, fetchImpl: FetchLike = globalThis.fetch as unknown as FetchLike): Promise<BrowserPairResult> {
+  return post<BrowserPairResult>(fetchImpl, `${trimSlash(baseUrl)}/api/pair`, { code, name, cookie: true, remember })
+}
+
+/** A token the web UI kept in web storage (before the cookie): handed to the core once, which puts it into the cookie. */
+export function adoptBrowserSession(baseUrl: string, token: string, remember: boolean, fetchImpl: FetchLike = globalThis.fetch as unknown as FetchLike): Promise<{ device: Device }> {
+  return post<{ device: Device }>(fetchImpl, `${trimSlash(baseUrl)}/api/session`, { remember }, { Authorization: `Bearer ${token}` })
+}
+
+/** Sign the web UI out: the core removes this browser's device (its cookie's, or `token`'s) and deletes the cookie. */
+export async function endBrowserSession(baseUrl: string, token?: string, fetchImpl: FetchLike = globalThis.fetch as unknown as FetchLike): Promise<void> {
+  await post<unknown>(fetchImpl, `${trimSlash(baseUrl)}/api/logout`, {}, token ? { Authorization: `Bearer ${token}` } : {})
 }

@@ -50,6 +50,8 @@ function launch(home: string, extra: Record<string, string>, switches: string[])
   delete env.ELECTRON_RENDERER_URL // always the built renderer, never a dev server
   delete env.ELECTRON_RUN_AS_NODE
   return electron.launch({
+    // MINDECK_E2E_ELECTRON: another Electron binary — one with a release's fuses (RunAsNode off), say.
+    ...(process.env.MINDECK_E2E_ELECTRON ? { executablePath: process.env.MINDECK_E2E_ELECTRON } : {}),
     // --no-sandbox: CI runners and containers have no usable Chromium sandbox.
     // --lang: on macOS Electron takes the system language, not LANG.
     // --user-data-dir: the window's own storage (layout, setup, …) is this test's too.

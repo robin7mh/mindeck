@@ -392,8 +392,8 @@ describe('VaultService — watcher', () => {
     const { v, root } = await setup()
     await writeFile(join(root, 'Willkommen.md'), 'x'.repeat(5 * 1024 * 1024 + 10))
     fire('Willkommen.md')
-    await tick(FLUSH)
-    expect((await v.list()).some((n) => n.path === 'Willkommen.md')).toBe(false)
+    // Reading 5 MB back can outlast one flush window on a busy machine: wait for the index, not the clock.
+    await vi.waitFor(async () => expect((await v.list()).some((n) => n.path === 'Willkommen.md')).toBe(false), { timeout: 5000 })
   })
 
   it('does a full rescan when the OS gives no filename', async () => {

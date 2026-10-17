@@ -380,5 +380,8 @@ describe('extensions · managing', () => {
     expect(fetch).not.toHaveBeenCalled()
     await vi.advanceTimersByTimeAsync(60 * 60 * 1000 + 1)
     expect(fetch).not.toHaveBeenCalled() // nothing to ask about
+    // That check saves its time: let the write land (checks run one after another) before the folder goes.
+    await service.checkUpdates()
+    service.dispose()
   })
 })

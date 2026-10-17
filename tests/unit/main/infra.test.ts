@@ -477,11 +477,11 @@ describe('ipc handler modules bind every channel to its service', () => {
         ['mongo:collections', { id: 'c', db: 'd' }, 'collections', ['c', 'd']],
         ['mongo:createCollection', { id: 'c', db: 'd', name: 'n' }, 'createCollection', ['c', 'd', 'n']],
         ['mongo:dropCollection', { id: 'c', db: 'd', name: 'n' }, 'dropCollection', ['c', 'd', 'n']],
-        ['mongo:find', { id: 'c', db: 'd', collection: 'u', query: { limit: 5 } }, 'find', ['c', 'd', 'u', { limit: 5 }]],
+        ['mongo:find', { id: 'c', db: 'd', collection: 'u', query: { limit: 5 } }, 'find', ['c', 'd', 'u', { limit: 5 }, { serverJs: true }]],
         ['mongo:insert', { id: 'c', db: 'd', collection: 'u', document: '{}' }, 'insert', ['c', 'd', 'u', '{}']],
         ['mongo:replace', { id: 'c', db: 'd', collection: 'u', docId: '1', document: '{}' }, 'replace', ['c', 'd', 'u', '1', '{}']],
         ['mongo:delete', { id: 'c', db: 'd', collection: 'u', docId: '1' }, 'delete', ['c', 'd', 'u', '1']],
-        ['mongo:aggregate', { id: 'c', db: 'd', collection: 'u', pipeline: '[]' }, 'aggregate', ['c', 'd', 'u', '[]']],
+        ['mongo:aggregate', { id: 'c', db: 'd', collection: 'u', pipeline: '[]' }, 'aggregate', ['c', 'd', 'u', '[]', { serverJs: true }]],
         ['mongo:indexes', { id: 'c', db: 'd', collection: 'u' }, 'indexes', ['c', 'd', 'u']]
       ]
     ],

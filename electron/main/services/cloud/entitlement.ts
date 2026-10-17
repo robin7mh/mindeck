@@ -18,6 +18,12 @@ export interface EntitlementClaims {
   dev?: string
   /** A lifetime license's offline certificate: valid without the cloud for good (until refunded). */
   perpetual?: boolean
+  /**
+   * A follower lease (`POST /v1/license/follower-lease`): issued to a desktop
+   * for one core it runs elsewhere (Remote-SSH, Dev Container) — `dev` is
+   * that core's install id, `exp` short. It holds on that core only.
+   */
+  lease?: 'follower'
   iat: number
   exp: number
 }

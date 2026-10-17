@@ -4,17 +4,20 @@ import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
 import { describe, expect, it, vi } from 'vitest'
 import { tempDir, tick } from './helpers'
+import { detect, goResults, goTests, jestResults, jsTests, junitResults, localBin, pyTests, TestService, tidyMessage, type TestOptions } from '../../../electron/main/services/tests/TestService'
+import type { TestRunState } from '@shared/types/tests'
 
-// Folders that can't be read, also when the tests run as root (chmod doesn't stop root).
-const unreadable = vi.hoisted(() => new Set<string>())
+// Pass-through fs that refuses to list one folder — the same everywhere, root (CI containers, where a
+// chmod 000 changes nothing) or not.
+const fsDeny = vi.hoisted(() => ({ dir: undefined as string | undefined }))
 vi.mock('node:fs/promises', async (importOriginal) => {
   const real = await importOriginal<typeof import('node:fs/promises')>()
   const readdir = ((path: string, ...rest: never[]) =>
-    unreadable.has(String(path)) ? Promise.reject(Object.assign(new Error(`EACCES: permission denied, scandir '${path}'`), { code: 'EACCES' })) : (real.readdir as (...a: unknown[]) => Promise<unknown>)(path, ...rest)) as typeof real.readdir
+    path === fsDeny.dir
+      ? Promise.reject(Object.assign(new Error(`EACCES: permission denied, scandir '${path}'`), { code: 'EACCES' }))
+      : (real.readdir as (...a: unknown[]) => unknown)(path, ...rest)) as typeof real.readdir
   return { ...real, readdir }
 })
-import { detect, goResults, goTests, jestResults, jsTests, junitResults, localBin, pyTests, TestService, tidyMessage, type TestOptions } from '../../../electron/main/services/tests/TestService'
-import type { TestRunState } from '@shared/types/tests'
 
 describe('finding tests without running them', () => {
   it('JS / TS: describe / it / test, nested, with .only / .skip / .each and template names', async () => {
@@ -305,7 +308,7 @@ describe('TestService', () => {
     await writeFile(join(root, 'go.mod'), 'module m\n')
     await mkdir(join(root, 'locked'))
     await writeFile(join(root, 'locked/a_test.go'), 'func TestA(t *testing.T) {}\n')
-    unreadable.add(join(root, 'locked'))
+    fsDeny.dir = join(root, 'locked')
     await mkdir(join(root, 'many'))
     await Promise.all(Array.from({ length: 3001 }, (_, i) => writeFile(join(root, 'many', `t${i}_test.go`), `func TestN${i}(t *testing.T) {}\n`)))
     try {
@@ -313,7 +316,7 @@ describe('TestService', () => {
       expect(items).toHaveLength(3000)
       expect(items.every((i) => i.path.startsWith('many/'))).toBe(true)
     } finally {
-      unreadable.clear()
+      fsDeny.dir = undefined
     }
   })
 

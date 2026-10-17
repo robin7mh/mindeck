@@ -2,7 +2,7 @@ import { generateKeyPairSync, sign, type KeyObject } from 'node:crypto'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { CloudService, deriveState, holdsOffline, OFFLINE_SECRET, PAUSE_GRACE_MS, SESSION_SECRET, type CloudServiceOptions } from '../../../electron/main/services/cloud/CloudService'
+import { CloudService, deriveState, FOLLOWER_HANDOVER_MS, holdsOffline, OFFLINE_SECRET, PAUSE_GRACE_MS, SESSION_SECRET, type CloudServiceOptions } from '../../../electron/main/services/cloud/CloudService'
 import { parsePublicKey, verifyEntitlement, type EntitlementClaims } from '../../../electron/main/services/cloud/entitlement'
 import { bakedCloud, cloudConfig, cloudDefines, DEV_CLOUD_URL, isReleaseBuild } from '../../../electron/main/services/cloud/config'
 import { SecretStore } from '../../../electron/main/services/ai/SecretStore'
@@ -47,6 +47,10 @@ function fakeCloud(clock: { now: number }) {
     dev: undefined as string | undefined,
     certDev: undefined as string | undefined,
     fail: {} as Record<string, { status: number; body?: unknown }>,
+    /** Follower leases (POST /v1/license/follower-lease): how long, for whom, how marked; 'none' answers without one. */
+    leaseTtl: 3600,
+    leaseDev: undefined as string | undefined,
+    leaseKind: 'follower' as 'follower' | 'plain' | 'forged' | 'none',
     ai: {
       available: true,
       credit: { period: 'trial', allowanceCents: 30, usedCents: 2, remainingCents: 28, renewsAt: null },
@@ -84,6 +88,12 @@ function fakeCloud(clock: { now: number }) {
           nextHeartbeatSeconds: 60,
           ...(s.cert ? { offlineCertificate: signToken(JSON.stringify(perpetual), certSigner) } : {})
         })
+      }
+      case '/v1/license/follower-lease': {
+        if (s.leaseKind === 'none') return json({ entitlement: null })
+        const iat = Math.floor(clock.now / 1000)
+        const claims = { sub: 'u1', email: 'robin@mindeck.test', plan: s.plan, active: s.active, reason: s.reason, rem: 1, dev: s.leaseDev ?? body!.installId, ...(s.leaseKind === 'plain' ? {} : { lease: 'follower' }), iat, exp: iat + s.leaseTtl }
+        return json({ entitlement: { token: signToken(JSON.stringify(claims), s.leaseKind === 'forged' ? keys().privateKey : k.privateKey) } })
       }
       case '/v1/billing/checkout':
         return json({ url: 'https://checkout.stripe.test/1' })
@@ -765,6 +775,137 @@ describe('CloudService', () => {
     await expect(offline.svc.adopt(token, account)).rejects.toMatchObject({ code: 'bad-entitlement' })
     // A core that signs in itself doesn't adopt.
     await expect(leader.svc.adopt(token, account)).rejects.toMatchObject({ code: 'not-follower' })
+  })
+
+  it('desktop: asks Mindeck Cloud for a follower lease bound to the remote core, keeps it until half of it passed (BE-SEC-09)', async () => {
+    const t = await setup()
+    expect(await t.svc.followerLease('remote-1')).toBeNull() // signed out: no license to lease from
+    await t.signIn()
+    const lease = await t.svc.followerLease('remote-1')
+    expect(lease).toEqual({ token: expect.stringMatching(/^mindeck1\./), account: { email: 'robin@mindeck.test', name: null } })
+    expect(t.cloud.last('/v1/license/follower-lease')).toMatchObject({ method: 'POST', auth: 'Bearer ws_secret', body: { installId: 'remote-1', appVersion: '0.2.0' } })
+    expect(verifyEntitlement(lease!.token, parsePublicKey(t.cloud.k.pem))).toMatchObject({ dev: 'remote-1', lease: 'follower' })
+    const asked = () => t.cloud.s.calls.filter((c) => c.path === '/v1/license/follower-lease').length
+    // Kept for half its time (the trial lease of the desktop is renewed meanwhile).
+    t.cloud.s.ttl = 86_400
+    await t.svc.refresh()
+    t.advance(1700)
+    expect((await t.svc.followerLease('remote-1'))!.token).toBe(lease!.token)
+    expect(asked()).toBe(1)
+    t.advance(200)
+    expect((await t.svc.followerLease('remote-1'))!.token).not.toBe(lease!.token)
+    expect(asked()).toBe(2)
+    // Another core: its own lease.
+    await t.svc.followerLease('remote-2')
+    expect(t.cloud.last('/v1/license/follower-lease')!.body).toMatchObject({ installId: 'remote-2' })
+
+    // The cloud unreachable: a lease still held goes on; none held: none.
+    t.advance(2000)
+    t.cloud.s.down = true
+    const held = await t.svc.followerLease('remote-1')
+    expect(held).not.toBeNull()
+    t.advance(2000) // that one ran out too
+    expect(await t.svc.followerLease('remote-1')).toBeNull()
+    t.cloud.s.down = false
+    await t.svc.refresh()
+
+    // What the cloud sends must be a lease for that core: else ignored.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    for (const [kind, dev] of [['plain', undefined], ['forged', undefined], ['follower', 'remote-9'], ['none', undefined]] as const) {
+      t.cloud.s.leaseKind = kind
+      t.cloud.s.leaseDev = dev
+      expect(await t.svc.followerLease('remote-3'), kind).toBeNull()
+    }
+    expect(warn).toHaveBeenCalledWith('[cloud] ignoring a follower lease that is not valid for that core')
+    t.cloud.s.leaseKind = 'follower'
+    t.cloud.s.leaseDev = undefined
+    t.cloud.s.leaseTtl = -1
+    expect(await t.svc.followerLease('remote-3')).toBeNull() // ran out already
+    t.cloud.s.leaseTtl = 3600
+    t.cloud.s.active = false
+    t.cloud.s.reason = 'trial_expired'
+    expect(await t.svc.followerLease('remote-3')).toBeNull() // inactive
+    t.cloud.s.active = true
+    t.cloud.s.reason = 'ok'
+    warn.mockRestore()
+
+    // A cloud without leases (404): not asked again for an hour — the desktop hands over its own then.
+    t.cloud.s.fail['/v1/license/follower-lease'] = { status: 404, body: { error: { code: 'not_found', message: 'Not found' } } }
+    expect(await t.svc.followerLease('remote-4')).toBeNull()
+    const before = asked()
+    t.advance(30 * 60)
+    expect(await t.svc.followerLease('remote-4')).toBeNull()
+    expect(asked()).toBe(before)
+    delete t.cloud.s.fail['/v1/license/follower-lease']
+    t.advance(31 * 60)
+    await t.svc.refresh()
+    expect(await t.svc.followerLease('remote-4')).not.toBeNull()
+    // Another failure (5xx) is no "no leases": asked again next time.
+    t.cloud.s.fail['/v1/license/follower-lease'] = { status: 503 }
+    expect(await t.svc.followerLease('remote-5')).toBeNull()
+    delete t.cloud.s.fail['/v1/license/follower-lease']
+    expect(await t.svc.followerLease('remote-5')).not.toBeNull()
+    // A follower leases nothing on.
+    expect(await (await setup({ follower: true })).svc.followerLease('x')).toBeNull()
+  })
+
+  it('a follower takes a lease only for itself, and the desktop’s own entitlement only for a day — never again once it had a lease (BE-SEC-09)', async () => {
+    const leader = await setup()
+    leader.cloud.s.plan = 'lifetime'
+    leader.cloud.s.ttl = 14 * 86_400 // a lifetime lease holds for weeks
+    await leader.signIn()
+    const own = leader.svc.entitlement()!
+    const follower = await setup({ follower: true, publicKey: leader.cloud.k.pem })
+    follower.clock.now = leader.clock.now
+    const installId = follower.svc.installId()
+    expect(installId).toMatch(/^[0-9a-f-]{36}$/)
+
+    // Transition: the desktop's own entitlement — a day from the hand-over at most.
+    expect(await follower.svc.adopt(own.token, own.account)).toMatchObject({ state: 'active', validUntil: new Date(follower.clock.now + FOLLOWER_HANDOVER_MS).toISOString().replace(/\.\d+Z$/, '.000Z') })
+    follower.advance(FOLLOWER_HANDOVER_MS / 1000 + 1)
+    expect(follower.svc.status()).toMatchObject({ allowed: false, state: 'offline' }) // the desktop stopped handing it over
+    leader.clock.now = follower.clock.now
+    await leader.svc.refresh()
+    const again = leader.svc.entitlement()!
+    expect(await follower.svc.adopt(again.token, again.account)).toMatchObject({ state: 'active' }) // handed over again: another day
+    // Restarted: the same day still counts, not the entitlement's weeks.
+    const restarted = await setup({ follower: true, publicKey: leader.cloud.k.pem, dir: follower.dir })
+    restarted.clock.now = follower.clock.now + FOLLOWER_HANDOVER_MS - 1000
+    expect(restarted.svc.status()).toMatchObject({ state: 'active' })
+    restarted.advance(2)
+    expect(restarted.svc.status()).toMatchObject({ allowed: false })
+
+    // A lease for another core is refused; one for this core is taken — and from then on only leases.
+    leader.clock.now = follower.clock.now
+    const other = (await leader.svc.followerLease('another-core'))!
+    await expect(follower.svc.adopt(other.token, other.account)).rejects.toMatchObject({ code: 'bad-entitlement', message: expect.stringContaining('another core') })
+    const mine = (await leader.svc.followerLease(installId))!
+    expect(await follower.svc.adopt(mine.token, mine.account)).toMatchObject({ state: 'active', validUntil: expect.any(String) })
+    expect(Date.parse(follower.svc.status().validUntil!)).toBe((Math.floor(follower.clock.now / 1000) + 3600) * 1000)
+    await expect(follower.svc.adopt(again.token, again.account)).rejects.toMatchObject({ code: 'lease-required' })
+    // Restarted on its lease: still its own; copied to another core (another install id) it holds nothing.
+    const back = await setup({ follower: true, publicKey: leader.cloud.k.pem, dir: follower.dir })
+    back.clock.now = follower.clock.now
+    expect(back.svc.status()).toMatchObject({ state: 'active' })
+    const saved = JSON.parse(await readFile(join(follower.dir, 'cloud.json'), 'utf8'))
+    expect(saved).toMatchObject({ leased: true, installId })
+    const copy = await tempDir()
+    await writeFile(join(copy, 'cloud.json'), JSON.stringify({ ...saved, installId: 'someone-else' }))
+    const copied = await setup({ follower: true, publicKey: leader.cloud.k.pem, dir: copy })
+    copied.clock.now = follower.clock.now
+    expect(copied.svc.status()).toMatchObject({ allowed: false })
+    // A saved entitlement from before leases and hand-over times: held for nothing until the desktop hands one over.
+    const legacy = await tempDir()
+    await writeFile(join(legacy, 'cloud.json'), JSON.stringify({ ...saved, leased: undefined, adoptedAt: undefined, entitlement: again.token, installId: 'x' }))
+    const old = await setup({ follower: true, publicKey: leader.cloud.k.pem, dir: legacy })
+    old.clock.now = follower.clock.now
+    expect(old.svc.status()).toMatchObject({ allowed: false })
+    // A leased core whose saved entitlement is the desktop's own (written by hand): nothing.
+    const mixed = await tempDir()
+    await writeFile(join(mixed, 'cloud.json'), JSON.stringify({ ...saved, entitlement: again.token }))
+    const odd = await setup({ follower: true, publicKey: leader.cloud.k.pem, dir: mixed })
+    odd.clock.now = follower.clock.now
+    expect(odd.svc.status()).toMatchObject({ allowed: false })
   })
 
   it('remembers the account across restarts — a lifetime license even without the cloud', async () => {

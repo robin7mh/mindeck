@@ -1,4 +1,5 @@
-import { spawn, type ChildProcess } from 'node:child_process'
+import { spawnNode, type NodeLauncher, type NodeProcess } from '../../lib/nodeProcess'
+import { shellEnv } from '../terminal/TerminalService'
 
 function coded(code: string, message: string): Error {
   return Object.assign(new Error(message), { code })
@@ -26,7 +27,7 @@ interface DiagRun {
 }
 
 /** The process a TsServer talks to — stdio pipes, killable (a fake in tests). */
-export type TsProcess = Pick<ChildProcess, 'stdin' | 'stdout' | 'kill' | 'on'>
+export type TsProcess = Pick<NodeProcess, 'stdin' | 'stdout' | 'kill' | 'on'>
 
 /** Longest wait for an answer before a request fails (a hung server never blocks the editor). */
 const REQUEST_TIMEOUT_MS = 30_000
@@ -53,13 +54,11 @@ export class TsServer {
     proc.on('error', () => this.exited())
   }
 
-  /** Start `tsserver.js` with this app's Node (Electron runs as Node for it). */
-  static start(tsserver: string, cwd: string, onExit?: () => void): TsServer {
-    const proc = spawn(process.execPath, [tsserver, '--disableAutomaticTypingAcquisition'], {
-      cwd,
-      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
-      stdio: ['pipe', 'pipe', 'ignore']
-    })
+  /** Start `tsserver.js` as a Node program of this app's (the desktop's: a utility process). */
+  static start(tsserver: string, cwd: string, onExit?: () => void, node: NodeLauncher = spawnNode): TsServer {
+    // A trusted project's tsserver loads its tsconfig plugins — the project's code, native addons included.
+    const proc = node([tsserver, '--disableAutomaticTypingAcquisition'], { cwd, env: shellEnv(), name: 'TypeScript', unsignedLibraries: true })
+    proc.stderr!.resume()
     return new TsServer(proc, onExit)
   }
 

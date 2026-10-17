@@ -413,7 +413,7 @@ describe('⌘K: edit with AI', () => {
     }
     press('Enter')
     await settle()
-    expect(note()).toBe('Failed: rate limited')
+    expect(note()).toBe('Failed: Too many requests — please try again in a moment.')
     expect(buttons()).toEqual([])
     // Reject while asking just closes.
     rejectInlineEdit(ed(e))

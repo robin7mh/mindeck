@@ -76,8 +76,9 @@ certificate (they need to pair again after a renewal).
 
 Headers over HTTPS: the usual `nosniff`, `no-referrer`, `DENY` framing and CSP; `Strict-Transport-
 Security` only with an own certificate from an authority — with a self-signed one HSTS would turn
-the warning (that a person may pass after comparing the fingerprint) into a dead end. The core sets
-no cookies; tokens travel only in headers (`Authorization`, the WebSocket subprotocol).
+the warning (that a person may pass after comparing the fingerprint) into a dead end. Apps send their
+token in headers (`Authorization`, the WebSocket subprotocol); the only cookie is the web UI's own
+(*The web UI's browser session* in §1), `Secure` over HTTPS.
 
 **The mobile app** trusts only the system's certificate authorities (React Native's `fetch` and
 `WebSocket`); pinning a self-signed certificate needs a native module. Until the app pins
@@ -126,6 +127,41 @@ in ten minutes from one address (IPv6: one `/64`) answer `429`. A pairing reques
 A token that is not used for 90 days expires: the core forgets the device, which then gets
 `401 unauthorized` and has to pair again.
 
+### The web UI's browser session (cookie)
+
+The web UI the core serves itself (same origin) never holds its token in a script or in web storage.
+It pairs with `"cookie": true` and the core keeps the token in an HttpOnly cookie for `/api`:
+
+```http
+POST /api/pair
+Content-Type: application/json
+Origin: https://192.168.1.20:7420
+
+{ "code": "K7QM-2XPA", "name": "Firefox · macOS", "cookie": true, "remember": true }
+```
+
+→ `{ ok: true, data: { device, fingerprint?, spkiFingerprint? } }` (no `token`) and
+`Set-Cookie: mindeck_<port>=<token>; Path=/api; HttpOnly; SameSite=Strict[; Secure]; Max-Age=34560000`.
+`remember: false` ("Stay paired on this browser" off) makes it a session cookie that ends with the
+browser. The name carries the core's port: browsers share cookies across the ports of one host, and
+two cores on one computer must not overwrite each other's. Calls and the events socket then send no
+token at all — the browser sends the cookie.
+
+- **CSRF.** The cookie counts only for requests the browser marks as the web UI's own:
+  `Sec-Fetch-Site: same-origin`, or — browsers without Fetch Metadata — an `Origin` that names the
+  address asked (`Host`, or behind a proxy on the same computer `X-Forwarded-Host`); calls must also be
+  `POST` with `Content-Type: application/json`. Anything else answers `403 cross-origin` / `415
+  bad-content-type` — so does a WebSocket from another page (`403`). A `Bearer` header always wins
+  over the cookie and needs none of this (apps).
+- **Revoked or expired.** A cookie whose token the core no longer knows answers `401 unauthorized`
+  and is deleted (`Max-Age=0`) — calls and the socket alike.
+- **Signing out:** `POST /api/logout` removes the calling device (cookie or Bearer) on the core,
+  closes its sockets (`4401`) and deletes the cookie; it answers `{ ok: true }` either way.
+- **A token from before.** Web UIs that kept their token in `localStorage`/`sessionStorage` hand it over
+  once: `POST /api/session` with `Authorization: Bearer <token>` and `{ "remember": bool }` sets the
+  cookie for it (`{ ok: true, data: { device } }`), then they delete their copy. The desktop's remote
+  windows sign in the same way.
+
 `GET /api/health` → `{ ok, name: "Mindeck", mode: "desktop" | "server" }` (public) tells whether a
 URL really is a Mindeck core; with a device's `Authorization: Bearer …` it adds `version`.
 
@@ -152,6 +188,20 @@ host-not-allowed` (see *Names*). Errors of the core's operating system (`ENOENT`
 unexpected failures reach devices as `Something went wrong on the Mindeck core (ref 1a2b3c4d)` —
 the details, under that reference, are in the core's log.
 
+**Rate limits.** Calls that cost the user money or quota are counted per device (a token bucket per
+group: a burst, then a steady rate). Over the limit a call answers `429` with `Retry-After: <s>` and
+`{ ok: false, error: { code: "rate-limited", message: "Too many ai calls from this device — try again in 12 s" } }`.
+
+| group | channels | default |
+|---|---|---|
+| `ai` | `ai:send`, `agents:create`, `agents:send`, `agents:resume` | 20 at once, 20 / min |
+| `inline` | `ai:inlineComplete`, `ai:inlineEdit` | 40 at once, 60 / min |
+| `github` | `github:*` | 60 at once, 60 / min |
+| `cloud` | `cloud:*` except `cloud:status` and `cloud:adopt` | 10 at once, 10 / min |
+
+`MINDECK_RATE_LIMITS` changes them: `ai=10,github=120:60,cloud=off` (`<group>=<per minute>[:<burst>]`,
+`off` switches a group off). The desktop window is never limited.
+
 **Remote rules.** Without remote shells a paired device reaches only the *shared folders*: the ones
 set at the desktop (Settings → Remote access → *Shared folders*) or, headless, in
 `MINDECK_REMOTE_ROOTS` (default `/projects`, the Docker mount), plus the projects added at the
@@ -159,7 +209,9 @@ desktop. `fs:dirs`, `projects:add` and `memory:setVault` stay inside them (the v
 around a project's folder: its notes would be project files), `projects:list` shows only the
 projects a device may use, and every call naming a project (`projectId`, or `id` for
 `projects:*`) is checked. Databases (`mongo:*`) are not in any shared folder: reading them needs an
-admin device or remote shells, changing them remote shells. Always — with
+admin device or remote shells, changing them remote shells; a device's filter, sort, projection or
+pipeline never runs JavaScript on the database server (`$where`, `$function`, `$accumulator`,
+`$eval`, BSON `Code` — at any depth: `remote-forbidden`). Always — with
 remote shells, too — off-limits: the home folder itself and the folders above it, hidden folders,
 system folders, Mindeck's own data folder, and keys and credentials by name (`.ssh`, `.aws`,
 `.gnupg`, `.git`, `.env*`, `.npmrc`, `.netrc`, `*.pem`, `*.key`, `id_*`, Terraform state,
@@ -183,7 +235,8 @@ Error codes worth handling in the UI:
 | `remote-forbidden` | outside the shared folders, or a key / credential / system path |
 | `no-key` | the assistant has no Anthropic API key yet (Settings → AI) |
 | `busy` | the conversation is still running |
-| `not-found`, `not-pending`, `bad-key`, `rate-limited`, `ai-unavailable` | as named |
+| `rate-limited` | too many calls from this device (see *Rate limits*; `Retry-After` says when), too many failed pairings, or the AI provider's own limit |
+| `not-found`, `not-pending`, `bad-key`, `ai-unavailable` | as named |
 
 ## 3. Push events
 
@@ -196,10 +249,33 @@ proxy and access logs. The core answers with the `mindeck` protocol only
 (`new WebSocket(url, eventsProtocols(token))` in `transport.ts`; React Native's `WebSocket` takes
 the same second argument). The old `?token=mindeck_…` query is no longer accepted.
 
-Messages are JSON `{ "channel": string, "payload": … }`. The first one is
-`{ channel: "hello", payload: { deviceId, role } }`. A revoked device is closed with code `4401`.
+Messages are JSON `{ "channel": string, "payload": …, "seq": number }`. The first one is
+`{ channel: "hello", payload: { deviceId, role, stream, seq } }`. A revoked device is closed with code `4401`.
 While at least one client is connected the core samples system telemetry (`system:tick`, ~1.5 s);
 remote clients do not need `system:subscribe`.
+
+**Sequence numbers and replay.** The core numbers each device's events: `seq` counts exactly the
+events this device may see (its shared folders, its own search results and inline edits), `1, 2, 3 …`
+without gaps, within a *stream* — `hello` names the stream (`stream`, an id) and where it stands
+(`seq`, the last number given out). `system:tick` is a snapshot the next one replaces: it carries no
+`seq` and is never replayed. For a reconnect the core keeps a device's events for 5 minutes (at most
+5000 events and 2 MB per device, and the streams of 32 devices that went away); a client that lost the
+socket names where it stopped — never a token, the numbers are no secret:
+
+```
+GET /api/events?stream=<hello.stream>&since=<last seq it saw>
+```
+
+After `hello` the core sends what was missed, in order and with their `seq`, then goes on live. When
+it can't — the gap is no longer kept, the stream is another one (the core restarted), `since` makes
+no sense, or what devices may see changed in between (shared folders, remote shells) — it sends
+`{ channel: "resync-required", payload: { stream, seq } }` instead: reload what you mirror (pending
+approvals, conversations, agent sessions, terminals) and go on from that `seq`. The core sends it to
+connected clients, too, when it had to drop events under load. A client that sees a `seq` skip
+numbers treats it the same way; one with a `seq` it saw already drops it. Clients that don't send
+`stream`/`since` get the same messages as before (the extra `seq` field aside) and no replay —
+`createRemoteTransport` in `transport.ts` does all of this and calls `onResync` only when a reload is
+needed.
 
 | channel | payload | when |
 |---|---|---|
@@ -226,10 +302,10 @@ an admin device. Types: see `contract.ts`.
 - **Projects:** `projects:list` (the ones the device may use) · `projects:add { path }` (inside the shared folders) · `projects:remove` · `projects:refresh` · *(only with remote shells:)* `projects:pull` (`git pull --ff-only`) · `context:get` · `context:reindex` · `fs:dirs { path? }` (folder browser on the core's machine; for devices: the shared folders, listed in `roots`, no `path` = the first) · `projects:pickFolder` / `projects:openInEditor` / `projects:githubDesktop` / `projects:openInGitHubDesktop` / `projects:openFile` (*desktop*)
 - **Editor (project files):** `files:list { projectId, dir? }` → `FileEntry[]` · `files:read { projectId, path }` → `FileContent` (`unsupported: "binary" | "too-large"` instead of text) · `files:stat { projectId, paths }` · `files:write { projectId, path, content, expectedMtime? }` (only with remote shells; fails with `conflict` when the file changed since `expectedMtime`)
 - **Agent cockpit:** `agents:detect` · `agents:list` · `agents:get { id }` → session + messages · `agents:changes { id }` · `agents:branch { id }` → own working folder: pushed, pull request (via `gh`), merged, uncommitted files · `agents:diff { id, path }` · *(only with remote shells:)* `agents:create { kind, projectId, isolated?, prompt? }` · `agents:send { id, text }` · `agents:interrupt` · `agents:stop` · `agents:resume` · `agents:remove` · `agents:accept` · `agents:discard` · `agents:rename { id, title }` · `agents:shell { id }` → `{ terminalId }` (a shell in the session's folder, attach with `terminal:*`) · *(desktop only:)* `agents:openInEditor { id }` (VS Code on the session's folder). Push: `agents:changed { session? , removed? }`, `agents:message { sessionId, message }`; approvals come as `permission:request` like the assistant's
-- **Mindeck account (license):** `cloud:status` → `{ enforced, allowed, state, account, license, validUntil, online, webUrl, error }` · *(admin:)* `cloud:login { email, password }` · `cloud:register { email, password, name?, locale }` · `cloud:logout` · `cloud:adopt` · `cloud:refresh` · `cloud:resendVerification` · `cloud:forgotPassword { email }` · `cloud:checkout` → `{ url }` (Stripe Checkout). Push: `cloud:status`. On a licensed core every other channel answers `license-required` until `allowed` — sign in first.
+- **Mindeck account (license):** `cloud:status` → `{ enforced, allowed, state, account, license, validUntil, online, webUrl, error }` · *(admin:)* `cloud:login { email, password }` · `cloud:register { email, password, name?, locale }` · `cloud:logout` · `cloud:adopt { token, account }` · `cloud:installId` → `{ installId }` (both for follower cores, §6) · `cloud:refresh` · `cloud:resendVerification` · `cloud:forgotPassword { email }` · `cloud:checkout` → `{ url }` (Stripe Checkout). Push: `cloud:status`. On a licensed core every other channel answers `license-required` until `allowed` — sign in first.
 - **Memory (vault):** `memory:status` · `memory:list` · `memory:read` · `memory:search` · `memory:graph` · `memory:folders` · `memory:create` · `memory:write` · `memory:writeBody` · `memory:rename` · `memory:move` · `memory:moveFolder` · `memory:createFolder` · `memory:link` · `memory:unlink` · `memory:trash` · `memory:createVault` · `memory:setGraphStyle` · *(admin:)* `memory:setVault { path }` · `memory:setDailyNotes` · `memory:pickVault` / `memory:reveal` (*desktop*)
 - **System:** `system:snapshot` · `system:user`
-- **Assistant:** `ai:status` · *(admin:)* `ai:setKey { key }` · `ai:clearKey` · `ai:configure { model?, effort? }` · `ai:agents` · `ai:tools` · `ai:conversations` · `ai:conversation { id }` · `ai:send { text, conversationId?, agentId?, projectId? }` → `{ conversationId, messageId }` (the answer streams via push events) · `ai:cancel { conversationId }` · `ai:deleteConversation` · `ai:runs` · *(only with remote shells:)* `ai:inlineComplete` · `ai:inlineEdit`
+- **Assistant:** `ai:status` · *(admin:)* `ai:setKey { key }` · `ai:clearKey` · `ai:configure { model?, effort? }` · `ai:agents` · `ai:tools` · `ai:conversations` · `ai:conversation { id }` (while a run is going: as it stands — streamed text, tool calls waiting for approval — so a client reconnecting after missed push events can catch up) · `ai:send { text, conversationId?, agentId?, projectId? }` → `{ conversationId, messageId }` (the answer streams via push events) · `ai:cancel { conversationId }` · `ai:deleteConversation` · `ai:runs` · *(only with remote shells:)* `ai:inlineComplete` · `ai:inlineEdit`
 - **Permissions:** `permission:pending` · `permission:respond { id, decision: "once" | "always" | "deny" }` (see the remote rules in §2) · `permission:grants` → `PermissionGrant[]` (`{ agentId, toolName, projectId?, createdAt }`: an "Always allow" holds for one agent, one tool and one project — no `projectId` = outside projects, `"*"` = every project, kept from before grants were per project) · *(admin:)* `permission:revoke { agentId, toolName, projectId? }`
 - **Activity:** `events:recent { limit?, conversationId? }`
 - **Push and settings sync:** `agents:pushSettings` · `cloud:syncStatus` · *(admin:)* `agents:setPushSettings { enabled }` · `cloud:syncPush` · `cloud:syncPull`
@@ -260,8 +336,70 @@ const core = createRemoteTransport({
 })
 const res = await core.invoke('ai:send', { text: 'What is on my plate today?', agentId: 'assistant' })
 const off = core.on('ai:delta', ({ messageId, text }) => appendText(messageId, text))
+core.onResync?.(() => reloadEverything()) // events were lost (the core could not replay the gap)
 core.on('permission:request', (req) => showApprovalSheet(req)) // → core.invoke('permission:respond', …)
 ```
 
 The web UI in `src/` is the reference implementation of every flow (session/pairing in
 `src/features/session`, the assistant in `src/features/agents`).
+
+## 6. Cloud-Vertrag: follower leases (Mindeck Cloud)
+
+A core the desktop app starts on another machine — Remote-SSH, Dev Containers — runs as a
+*follower*: it never signs in itself, the desktop hands it a license. That hand-over must not be a
+copy of the desktop's own entitlement (which any server could replay, BE-SEC-09): Mindeck Cloud
+issues the desktop a short **follower lease** bound to that one core.
+
+**Endpoint (mindeck-cloud):**
+
+```http
+POST /v1/license/follower-lease
+Authorization: Bearer <the desktop's session token — the same as for /v1/license/heartbeat>
+Content-Type: application/json
+
+{ "installId": "<the follower core's install id>", "appVersion": "0.3.0" }
+```
+
+```json
+{ "entitlement": { "token": "mindeck1.<base64url JSON>.<base64url Ed25519>" } }
+```
+
+- **Token:** the format and key of every entitlement (`mindeck1.<claims>.<signature>`, Ed25519 over
+  `mindeck1.<claims>`, `electron/main/services/cloud/entitlement.ts` ↔ `mindeck-cloud/src/lib/entitlement.ts`).
+- **Claims:** those of the heartbeat's entitlement for this account (`sub`, `email`, `plan`, `active`,
+  `reason`, `rem`, `iat`, `exp`) plus `"dev": "<installId from the request>"` and `"lease": "follower"`;
+  never `perpetual`. `exp` short: **1 hour** recommended, 24 hours at most. The desktop asks again
+  once half of it has passed (and hands the lease over every minute while the window is open).
+- **When:** only for a session whose account may use Mindeck now (trial time left, a lifetime
+  license); otherwise `{ "entitlement": null }` (or the same `active: false` lease the heartbeat would
+  give). A lease counts no trial time of its own — the desktop's heartbeat counts it while remote
+  windows are open.
+- **Limits (cloud side, recommended):** a rate limit per account (e.g. 60 an hour) and a cap on
+  distinct `installId`s per account and day (e.g. 10) — a lease bound to a core is still one per core.
+- **Errors:** `401` = the session is gone (the desktop signs out, as for every call). `404` = the
+  cloud offers no leases yet — see the transition. Anything else (`429`, `5xx`, a lease that does not
+  verify, is not `lease: "follower"` or names another `dev`) is ignored for this round: the desktop
+  keeps a lease it still holds, else falls back to the transition.
+
+**Core side (mindeck, implemented):**
+
+- `cloud:installId` (*admin*, license-free) → `{ installId }`: the follower's install id
+  (`cloud.json`), what the desktop puts into the request.
+- `cloud:adopt { token, account }` (*admin*) on a follower accepts, after the signature: an active,
+  unexpired entitlement that is not an offline certificate, and then
+  1. a **lease for this core** (`lease: "follower"`, `dev` = its install id) — as signed. From then on
+     the core remembers that it ran on a lease (`leased` in `cloud.json`) and takes leases only:
+     the desktop's own entitlement answers `lease-required`;
+  2. a lease for another core: `bad-entitlement`;
+  3. **transition** — the desktop's own entitlement, while the cloud issues no leases (`404`): it
+     holds until `exp`, but never longer than **24 hours after the desktop last handed it over**
+     (`adoptedAt` in `cloud.json`; also across restarts).
+- The desktop (`RemoteService.handLicense`, every minute): asks the remote core for its
+  `cloud:installId`, then the cloud for a lease (`CloudService.followerLease`); without one (a `404`
+  is remembered for an hour, an older remote core has no `cloud:installId`) it hands over its own
+  entitlement as before.
+
+**What mindeck-cloud has to do:** offer the endpoint above with these claims and limits. Nothing
+else changes: as soon as it answers `200`, desktops hand over leases and remote cores switch to
+leases only.
+

@@ -181,9 +181,9 @@ interface Answer {
 }
 
 /** HTTPS that verifies the server against its own (self-signed) certificate — what a client does after TOFU. */
-function httpsCall(port: number, ca: string, path: string, init: { method?: string; body?: string } = {}): Promise<Answer> {
+function httpsCall(port: number, ca: string, path: string, init: { method?: string; body?: string; headers?: Record<string, string> } = {}): Promise<Answer> {
   return new Promise((resolve, reject) => {
-    const req = httpsRequest({ host: '127.0.0.1', port, path, method: init.method ?? 'GET', ca, agent: false }, (res) => {
+    const req = httpsRequest({ host: '127.0.0.1', port, path, method: init.method ?? 'GET', ca, agent: false, headers: init.headers }, (res) => {
       const peer = (res.socket as TLSSocket).getPeerX509Certificate() as X509Certificate
       let body = ''
       res.on('data', (c) => (body += c))
@@ -275,6 +275,20 @@ describe('HttpServer over TLS', () => {
     })
     expect(hello).toMatchObject({ channel: 'hello' })
     ws.close()
+  })
+
+  it('the web UI’s cookie is Secure over HTTPS — also the one that deletes it (FE-SEC-03)', async () => {
+    const { tls, port, auth } = await startTls()
+    const own = { 'Content-Type': 'application/json', Origin: `https://127.0.0.1:${port}`, Host: `127.0.0.1:${port}` }
+    const { code } = await auth.createPairingCode()
+    const paired = await httpsCall(port, tls.cert, '/api/pair', { method: 'POST', headers: own, body: JSON.stringify({ code, name: 'Browser', cookie: true }) })
+    expect(JSON.parse(paired.body).data).toEqual({ device: expect.objectContaining({ name: 'Browser' }), fingerprint: tls.fingerprint, spkiFingerprint: tls.spkiFingerprint })
+    const cookie = String(paired.headers['set-cookie'])
+    expect(cookie).toMatch(new RegExp(`^mindeck_${port}=mindeck_[^;]+; Path=/api; HttpOnly; SameSite=Strict; Secure; Max-Age=34560000$`))
+    const jar = cookie.split(';')[0]
+    expect(JSON.parse((await httpsCall(port, tls.cert, '/api/rpc/projects:list', { method: 'POST', headers: { ...own, Cookie: jar }, body: 'null' })).body)).toEqual({ ok: true, data: [] })
+    const out = await httpsCall(port, tls.cert, '/api/logout', { method: 'POST', headers: { ...own, Cookie: jar }, body: '{}' })
+    expect(String(out.headers['set-cookie'])).toBe(`mindeck_${port}=; Path=/api; HttpOnly; SameSite=Strict; Secure; Max-Age=0`)
   })
 
   it('this computer keeps plain HTTP; the network is sent to HTTPS or refused', async () => {

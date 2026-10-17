@@ -375,6 +375,48 @@ describe('EditorView', () => {
     vi.useRealTimers()
   })
 
+  it('disk and git polling follow the window: hidden pauses, unfocused slows down, coming back looks once', async () => {
+    vi.useFakeTimers()
+    installBridge({ 'projects:list': () => [project('p')], 'files:list': () => [] })
+    useProjects.setState({ projects: [project('p')] })
+    const checkDisk = vi.fn(async () => {})
+    useEditor.setState({ checkDisk })
+    const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(true)
+    const visibility = () => fireEvent(document, new Event('visibilitychange'))
+    const { unmount } = render(view(true))
+    act(() => {
+      vi.advanceTimersByTime(9000)
+    })
+    visibility() // still hidden
+    expect(checkDisk).not.toHaveBeenCalled()
+
+    hidden.mockReturnValue(false)
+    visibility() // shown again: right away…
+    fireEvent.focus(window) // …once, though the focus comes with it
+    expect(checkDisk).toHaveBeenCalledTimes(1)
+
+    fireEvent.blur(window) // on screen, without the focus: every 15 s instead of every 3 s
+    act(() => {
+      vi.advanceTimersByTime(12_000)
+    })
+    expect(checkDisk).toHaveBeenCalledTimes(1)
+    act(() => {
+      vi.advanceTimersByTime(3000)
+    })
+    expect(checkDisk).toHaveBeenCalledTimes(2)
+    fireEvent.focus(window) // in front again: now, and every 3 s
+    act(() => {
+      vi.advanceTimersByTime(3000)
+    })
+    expect(checkDisk).toHaveBeenCalledTimes(4)
+
+    unmount()
+    visibility()
+    fireEvent.focus(window)
+    expect(checkDisk).toHaveBeenCalledTimes(4)
+    vi.useRealTimers()
+  })
+
   it('⌘W / Ctrl+W closes the editor’s tab (asking when it has edits) — without one the key is the workspace’s', async () => {
     installBridge({ 'projects:list': () => [project('p')], 'files:list': () => [] })
     useProjects.setState({ projects: [project('p')] })

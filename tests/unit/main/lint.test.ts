@@ -1,10 +1,11 @@
 import { EventEmitter } from 'node:events'
-import { mkdir, readdir, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, realpath, writeFile } from 'node:fs/promises'
 import { join, sep } from 'node:path'
 import { PassThrough } from 'node:stream'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { tempDir } from './helpers'
-import { bundledPrettier, LintService } from '../../../electron/main/services/lint/LintService'
+import { spawnNode, type NodeLauncher } from '../../../electron/main/lib/nodeProcess'
+import { bundledPrettier, LintService, WORKER } from '../../../electron/main/services/lint/LintService'
 
 /** A stand-in ESLint (flat-config API) — bad words are errors, `var` has a fix, files under ignored/ are ignored. */
 const ESLINT = `
@@ -135,6 +136,17 @@ describe('ESLint and Prettier from the project', () => {
     expect(await svc.format('p', 'a.js', 'x', { prettier: true, options: { semi: true } })).toBe('bundled:{"semi":true}:X')
     expect((await readdir(root)).filter((f) => f.startsWith('pwned'))).toEqual([])
   }, 20_000)
+
+  it('runs the worker with the platform’s Node (a utility process on the desktop): no ELECTRON_RUN_AS_NODE, native addons allowed', async () => {
+    const calls: Parameters<NodeLauncher>[] = []
+    const node: NodeLauncher = (args, opts) => (calls.push([args, opts]), spawnNode(args, opts))
+    const { svc, root } = await setup({ 'node_modules/prettier/index.js': PRETTIER('project') }, { node })
+    expect(await svc.format('p', 'a.js', 'x')).toBe('project:{}:X')
+    const [[args, opts]] = calls
+    expect(args).toEqual(['-e', WORKER])
+    expect(opts).toMatchObject({ cwd: await realpath(root), name: 'ESLint / Prettier', unsignedLibraries: true, env: { MINDECK_ROOT: await realpath(root), MINDECK_TRUSTED: '1' } })
+    expect(opts.env).not.toHaveProperty('ELECTRON_RUN_AS_NODE')
+  })
 
   it('without a trust check, a project counts as not trusted', async () => {
     const started: boolean[] = []

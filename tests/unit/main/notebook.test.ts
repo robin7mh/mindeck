@@ -1,4 +1,4 @@
-import { EventEmitter } from 'node:events'
+import { EventEmitter, once } from 'node:events'
 import { mkdir, realpath, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
@@ -29,10 +29,14 @@ class FakeProc extends EventEmitter {
 }
 
 const tick = () => new Promise((r) => setTimeout(r, 5))
-/** The n-th Python started (file system work comes first, beyond fake timers). */
+/** Says when a harness started another Python. */
+const spawned = new EventEmitter()
+/**
+ * The n-th Python started. File system work comes first (beyond fake timers, and as slow as the
+ * machine is busy): wait for the start itself, not a number of turns.
+ */
 async function proc(procs: FakeProc[], n: number): Promise<FakeProc> {
-  // By the clock, not by turns: under load the start takes more turns of the event loop.
-  for (const until = Date.now() + 10_000; !procs[n] && Date.now() < until; ) await new Promise((r) => setImmediate(r))
+  while (!procs[n]) await once(spawned, 'spawn')
   return procs[n]
 }
 
@@ -48,6 +52,7 @@ function harness(root: string | undefined, behave: (command: string, args: strin
       calls.push({ command, args, cwd })
       const proc = new FakeProc()
       procs.push(proc)
+      spawned.emit('spawn')
       setTimeout(() => behave(command, args, proc))
       return proc as never
     }

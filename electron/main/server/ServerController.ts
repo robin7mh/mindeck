@@ -15,6 +15,7 @@ import type { AuthService } from '../services/auth/AuthService'
 import type { SettingsService } from '../services/settings/SettingsService'
 import type { Certificates, TlsCredentials } from './Certificates'
 import { HttpServer, allowedHostsFromEnv } from './HttpServer'
+import { rateLimitsFromEnv } from './RateLimit'
 
 /** How often a running HTTPS server checks that its certificate still fits (end, addresses). */
 const RENEW_CHECK_MS = 12 * 60 * 60_000
@@ -110,7 +111,8 @@ export class ServerController {
       remoteTerminal: () => this.config.remoteTerminal,
       onClients: this.opts.onClients,
       scope: this.opts.scope,
-      allowedHosts: allowedHostsFromEnv()
+      allowedHosts: allowedHostsFromEnv(),
+      rateLimits: rateLimitsFromEnv()
     })
     try {
       // No plain fallback: a certificate that cannot be made or read keeps the server off.
@@ -161,7 +163,10 @@ export class ServerController {
     }
     const next = { ...this.config, ...patch }
     const restart = (['enabled', 'lan', 'tls', 'port'] as const).some((k) => next[k] !== this.config[k])
+    // What devices may see changes: events kept for their reconnect were sorted by the old rules.
+    const rescope = next.remoteTerminal !== this.config.remoteTerminal || next.remoteRoots.join('\n') !== this.config.remoteRoots.join('\n')
     this.config = next
+    if (rescope) this.http?.resetReplay()
     await this.opts.settings.update({ server: next })
     if (restart) {
       await this.stop()

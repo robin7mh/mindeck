@@ -39,7 +39,8 @@ const electron = vi.hoisted(() => ({
   encryption: true,
   backend: 'gnome_libsecret',
   clipboardWrites: [] as unknown[],
-  trashItem: vi.fn(async (_path: string) => {})
+  trashItem: vi.fn(async (_path: string) => {}),
+  fork: vi.fn((..._args: unknown[]) => ({ stdout: null, stderr: null, postMessage() {}, kill: () => true, on() {} }))
 }))
 vi.mock('electron', () => ({
   app: { getApplicationNameForProtocol: electron.appForProtocol },
@@ -48,6 +49,7 @@ vi.mock('electron', () => ({
     constructor(public data: Record<string, string>) {}
   },
   dialog: { showOpenDialog: electron.showOpenDialog },
+  utilityProcess: { fork: electron.fork },
   shell: { openPath: electron.openPath, openExternal: electron.openExternal, showItemInFolder: electron.reveal, trashItem: electron.trashItem },
   safeStorage: {
     isEncryptionAvailable: () => electron.encryption,
@@ -269,6 +271,17 @@ describe('ProjectService', () => {
     await electronPlatform.trashItem('/Users/me/old.txt', '/Users/me')
     expect(electron.trashItem).toHaveBeenCalledWith('/Users/me/old.txt')
     expect(electron.reveal).toHaveBeenCalledWith('/Users/me/report.pdf')
+  })
+
+  it('runs Node programs in utility processes on the desktop — Mindeck’s binary never runs as Node', () => {
+    electronPlatform.node!(['/ts/tsserver.js'], { cwd: '/p', env: { A: '1' }, name: 'TypeScript' })
+    expect(electron.fork).toHaveBeenCalledWith(expect.stringMatching(/[/\\]nodeHost\.js$/), ['/ts/tsserver.js'], {
+      cwd: '/p',
+      env: { A: '1' },
+      stdio: 'pipe',
+      serviceName: 'TypeScript',
+      allowLoadingUnsignedLibraries: false
+    })
   })
 
   it('refuses the picker and opening files on a headless host', async () => {

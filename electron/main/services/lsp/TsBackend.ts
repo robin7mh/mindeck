@@ -16,6 +16,7 @@ import type {
   LspTextEdit
 } from '@shared/types/lsp'
 import { confine } from '../../lib/confine'
+import type { NodeLauncher } from '../../lib/nodeProcess'
 import { TsServer, type TsDiagnostic } from './TsServer'
 
 function coded(code: string, message: string): Error {
@@ -73,6 +74,8 @@ export interface TsOptions {
   /** tsserver.js for a project root; default: a trusted project's own, else Mindeck's. */
   locate?: (root: string, trusted: boolean) => string | undefined
   start?: (tsserver: string, root: string, onExit: () => void) => TsServer
+  /** How tsserver runs as a Node program (Platform.node). */
+  node?: NodeLauncher
 }
 
 /**
@@ -282,7 +285,7 @@ export class TsBackend {
       this.sessions.get(oldest)!.server.dispose()
       this.sessions.delete(oldest)
     }
-    const start = this.opts.start ?? ((ts, cwd, onExit) => TsServer.start(ts, cwd, onExit))
+    const start = this.opts.start ?? ((ts, cwd, onExit) => TsServer.start(ts, cwd, onExit, this.opts.node))
     const server = start(tsserver, root, () => {
       if (this.sessions.get(projectId)?.server === server) this.sessions.delete(projectId)
     })

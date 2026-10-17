@@ -474,14 +474,34 @@ describe('starting debug adapters: LLDB, PHP, Java, Kotlin', () => {
     }
   })
 
-  it('PHP: Xdebug’s adapter on Mindeck’s own Node; php gets Xdebug pointed at the adapter’s port', async () => {
+  it('PHP: Xdebug’s adapter as a Node program (no ELECTRON_RUN_AS_NODE); php gets Xdebug pointed at the adapter’s port', async () => {
     const proc = new FakeProc()
-    const calls: Parameters<Spawn>[] = []
-    const { launch } = await startAdapter('php', { ...base, program: '/r/index.php', debugger: '/tools/php-debug/extension/out/phpDebug.js' }, (...a) => (calls.push(a), proc as never))
-    expect(calls[0]).toEqual([process.execPath, ['/tools/php-debug/extension/out/phpDebug.js'], '/r', { ELECTRON_RUN_AS_NODE: '1' }])
+    const node = vi.fn(() => proc as never)
+    const run = vi.fn()
+    const { launch } = await startAdapter('php', { ...base, program: '/r/index.php', debugger: '/tools/php-debug/extension/out/phpDebug.js', node }, run)
+    expect(run).not.toHaveBeenCalled()
+    const [args, opts] = (node.mock.calls[0] as unknown as [string[], { cwd: string; env: Record<string, string>; name: string }])
+    expect(args).toEqual(['/tools/php-debug/extension/out/phpDebug.js'])
+    expect(opts).toMatchObject({ cwd: '/r', name: 'PHP Debug' })
+    // php comes from the user's PATH (their login shell's), as in their terminal.
+    expect(opts.env.PATH).toContain(process.env.PATH)
+    expect(opts.env).not.toHaveProperty('ELECTRON_RUN_AS_NODE')
     expect(launch.arguments).toMatchObject({ type: 'php', program: '/r/index.php', port: 0, runtimeArgs: ['-dxdebug.mode=debug', '-dxdebug.start_with_request=yes', '-dxdebug.client_port=${port}'] })
     launch.kill()
     expect(proc.killed).toBe(1)
+  })
+
+  it('PHP without a platform launcher (the headless core): the adapter runs on this Node, speaking over stdio', async () => {
+    const dir = await tempDir()
+    const adapter = join(dir, 'phpDebug.js')
+    await writeFile(adapter, "process.stdin.on('data', (d) => process.stdout.write('echo:' + d))")
+    const { transport, launch } = await startAdapter('php', { ...base, root: dir, program: join(dir, 'index.php'), debugger: adapter })
+    const got = new Promise<string>((r) => transport.onData((d) => r(d.toString())))
+    transport.write(Buffer.from('ping'))
+    expect(await got).toBe('echo:ping')
+    const closed = new Promise<void>((r) => transport.onClose(() => r()))
+    launch.kill()
+    await closed
   })
 
   it('Java: jdtls resolves the main class and classpath, then opens the DAP port', async () => {

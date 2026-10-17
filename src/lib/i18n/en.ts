@@ -23,7 +23,8 @@ export const en = {
   transport: {
     offline: 'The Mindeck core is not reachable.',
     badResponse: (status: string) => `Unexpected answer from the Mindeck core (${status})`,
-    noBridge: 'Not connected to a Mindeck core'
+    noBridge: 'Not connected to a Mindeck core',
+    rateLimited: (seconds?: string) => `Too many requests — please try again ${seconds ? `in ${seconds} s` : 'in a moment'}.`
   },
 
   nav: {
@@ -288,7 +289,7 @@ export const en = {
     code: 'Pairing code',
     deviceName: 'Device name',
     remember: 'Stay paired on this browser',
-    rememberHint: 'Turn off on a shared computer: the pairing then ends with this tab, and you pair again next time.',
+    rememberHint: 'Turn off on a shared computer: the pairing then ends when the browser closes, and you pair again next time.',
     submit: 'Pair device',
     noLongerPaired: 'This device is no longer paired',
     noCore: 'No Mindeck core answered at this address',
@@ -563,7 +564,7 @@ agents: {
       'ai-credit-exhausted': 'Your AI credit is used up. It renews at the start of next month — or add your own API key in Settings to go on now.',
       'ai-credit-exhausted-trial': 'The AI credit of the trial is used up. With a license you get new credit every month — or add your own API key in Settings.',
       'license-required': 'The AI needs an active trial or license.',
-      'ai-unavailable': 'The AI is not available right now — please try again later.',
+      'ai-unavailable': 'The AI is not available right now — please try again in a moment.',
       'rate-limited': 'The AI is busy — please try again in a moment.',
       session_expired: 'Please sign in to your Mindeck account again.',
       'transcript-damaged': 'The earlier messages of this session could not be read — the file was set aside in the agents data folder. The session itself can go on.'

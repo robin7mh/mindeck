@@ -447,6 +447,8 @@ export interface IpcChannels {
   /** Settings Sync through the account (Profile): status, save to the account (force: over a newer copy), load from it. */
   /** A follower core (Remote-SSH, Dev Container) takes the desktop's entitlement over. */
   'cloud:adopt': { request: { token: string; account: CloudAccount }; response: CloudStatus }
+  /** A follower core's install id: the desktop asks Mindeck Cloud for a lease bound to it (BE-SEC-09). */
+  'cloud:installId': { request: void; response: { installId: string } }
   'cloud:syncStatus': { request: void; response: SyncStatus }
   'cloud:syncPush': { request: SyncUi & { force?: boolean }; response: SyncStatus }
   'cloud:syncPull': { request: void; response: SyncUi }
@@ -863,6 +865,7 @@ export const CHANNEL_ACCESS: Record<IpcChannel, ChannelAccess> = {
   'cloud:forgotPassword': 'admin',
   'cloud:checkout': 'any',
   'cloud:adopt': 'admin',
+  'cloud:installId': 'admin',
   'cloud:syncStatus': 'any',
   // Overwriting the account's settings copy (or this core's settings from it): admins only.
   'cloud:syncPush': 'admin',

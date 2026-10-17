@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { connect } from 'node:net'
+import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -78,7 +79,7 @@ declare module 'node:events' {
 }
 
 /** The remote core's HTTP API through the tunnel. */
-function api(opts: { tokenOk?: boolean; pair?: 'ok' | 'refuse'; adopt?: 'ok' | 'fail' | 'garbage'; addFails?: boolean } = {}) {
+function api(opts: { tokenOk?: boolean; pair?: 'ok' | 'refuse'; adopt?: 'ok' | 'fail' | 'garbage'; installId?: string | 'old-core'; addFails?: boolean } = {}) {
   const calls: { url: string; body: unknown; auth?: string }[] = []
   const fetch = vi.fn(async (url: string, init: { body: string; headers: Record<string, string> }) => {
     const body = JSON.parse(init.body)
@@ -87,6 +88,9 @@ function api(opts: { tokenOk?: boolean; pair?: 'ok' | 'refuse'; adopt?: 'ok' | '
     if (url.endsWith('/api/pair')) return opts.pair === 'refuse' ? reply({ ok: false, error: { message: 'Code expired' } }) : reply({ ok: true, data: { token: 'tok-new', device: { id: 'dev-new' } } })
     if (url.endsWith('/api/rpc/app:info')) return reply(opts.tokenOk ? { ok: true, data: {} } : { ok: false, error: { message: 'unauthorized' } })
     if (url.endsWith('/api/rpc/projects:add') && opts.addFails) return reply({ ok: false, error: { message: 'Folder not found' } })
+    if (url.endsWith('/api/rpc/cloud:installId')) {
+      return reply(opts.installId === 'old-core' ? { ok: false, error: { code: 'unknown-channel', message: 'Unknown channel: cloud:installId' } } : { ok: true, data: opts.installId ? { installId: opts.installId } : {} })
+    }
     if (url.endsWith('/api/rpc/cloud:adopt')) {
       if (opts.adopt === 'garbage') return { status: 502, json: async () => Promise.reject(new Error('not json')) }
       return reply(opts.adopt === 'fail' ? { ok: false, error: { message: 'bad-entitlement' } } : { ok: true, data: {} })
@@ -99,7 +103,18 @@ function api(opts: { tokenOk?: boolean; pair?: 'ok' | 'refuse'; adopt?: 'ok' | '
 const services: RemoteService[] = []
 afterEach(() => services.splice(0).forEach((s) => s.dispose()))
 
-async function setup(o: { machine?: ReturnType<typeof machine>; api?: ReturnType<typeof api>; saved?: string; entitlement?: boolean; window?: boolean; licensed?: boolean } = {}) {
+async function setup(
+  o: {
+    machine?: ReturnType<typeof machine>
+    api?: ReturnType<typeof api>
+    saved?: string
+    entitlement?: boolean
+    window?: boolean
+    licensed?: boolean
+    followerLease?: RemoteOptions['followerLease']
+    node?: RemoteOptions['node']
+  } = {}
+) {
   const dir = await tempDir('mindeck-remote-')
   const bundle = join(dir, 'pkg.tar.gz')
   await writeFile(bundle, 'TARBALL')
@@ -115,6 +130,7 @@ async function setup(o: { machine?: ReturnType<typeof machine>; api?: ReturnType
     bundle: vi.fn(async () => bundle),
     secrets: { get: async (k) => secrets.get(k), set: async (k, v) => void (v === null ? secrets.delete(k) : secrets.set(k, v)) },
     entitlement: () => (o.entitlement === false ? null : { token: 'ent', account: { email: 'r@mindeck.test', name: null } }),
+    followerLease: o.followerLease,
     openWindow:
       o.window === false
         ? undefined
@@ -127,7 +143,7 @@ async function setup(o: { machine?: ReturnType<typeof machine>; api?: ReturnType
           },
     publish: (list) => published.push(list),
     sshConfig: join(dir, 'ssh_config'),
-    devcontainer: (root) => ['devcontainer', ['up', '--workspace-folder', root], { X: '1' }],
+    ...(o.node ? { node: o.node } : { devcontainer: async (root: string) => m.start('devcontainer', ['up', '--workspace-folder', root], { X: '1' }) }),
     start: m.start,
     fetch: a.fetch as never,
     licenseMs: 20,
@@ -173,7 +189,22 @@ Match host x
       'cd "$HOME/.mindeck-server/1.2.3" && MINDECK_HOME="$HOME/.mindeck" MINDECK_PORT=4000 MINDECK_REMOTE_TERMINAL=1 MINDECK_EXIT_WITH_STDIN=1 MINDECK_LICENSE=follower NODE_ENV=production exec ./node out/server/index.cjs'
     )
     expect(coreCommand('1.2.3', 4000, false)).not.toContain('follower')
-    expect(defaultDevcontainer('/p')).toEqual([process.execPath, [expect.stringMatching(/@devcontainers[/\\]cli[/\\]devcontainer\.js$/), 'up', '--workspace-folder', '/p'], { ELECTRON_RUN_AS_NODE: '1' }])
+  })
+
+  it('runs the Dev Containers CLI as a Node program — no ELECTRON_RUN_AS_NODE — with the user’s PATH (docker)', async () => {
+    const proc = new FakeProc('devcontainer')
+    const node = vi.fn(() => proc as never)
+    expect(await defaultDevcontainer(node, async () => ({ PATH: '/opt/homebrew/bin:/usr/bin' }))('/p')).toBe(proc)
+    expect(node).toHaveBeenCalledWith([expect.stringMatching(/@devcontainers[/\\]cli[/\\]devcontainer\.js$/), 'up', '--workspace-folder', '/p'], {
+      cwd: homedir(),
+      env: { PATH: '/opt/homebrew/bin:/usr/bin' },
+      name: 'Dev Containers'
+    })
+    // By default the login shell's PATH (userEnv).
+    await defaultDevcontainer(node)('/q')
+    const env = (node.mock.calls[1] as unknown as [string[], { env: Record<string, string> }])[1].env
+    expect(env.PATH).toContain(process.env.PATH)
+    expect(env).not.toHaveProperty('ELECTRON_RUN_AS_NODE')
   })
 })
 
@@ -213,6 +244,30 @@ describe('Remote-SSH', () => {
     await tick()
     expect(t.svc.list()[0].state).toBe('closed')
     expect(core.killed).toBe(true)
+  })
+
+  it('hands over a follower lease for that core when Mindeck Cloud issues one, else the desktop’s entitlement (BE-SEC-09)', async () => {
+    const account = { email: 'r@mindeck.test', name: null }
+    const followerLease = vi.fn(async (installId: string) => (installId === 'remote-install' ? { token: 'lease-for-remote', account } : null))
+    const leased = await setup({ api: api({ installId: 'remote-install' }), followerLease })
+    await leased.svc.ssh('box')
+    expect(followerLease).toHaveBeenCalledWith('remote-install')
+    expect(leased.a.calls.find((x) => x.url.endsWith('cloud:installId'))).toMatchObject({ auth: 'Bearer tok-new' })
+    expect(leased.a.calls.find((x) => x.url.endsWith('cloud:adopt'))!.body).toEqual({ token: 'lease-for-remote', account })
+    // No lease (the cloud issues none yet): the desktop's own entitlement, for the transition.
+    const plain = await setup({ api: api({ installId: 'other-install' }), followerLease })
+    await plain.svc.ssh('box')
+    expect(plain.a.calls.find((x) => x.url.endsWith('cloud:adopt'))!.body).toMatchObject({ token: 'ent' })
+    // A remote core that can't say its install id, or a lease request that fails: the same.
+    for (const [remote, lease] of [
+      [api({ installId: 'old-core' }), followerLease],
+      [api(), followerLease],
+      [api({ installId: 'remote-install' }), vi.fn(async () => Promise.reject(new Error('cloud down')))]
+    ] as const) {
+      const t = await setup({ api: remote, followerLease: lease })
+      await t.svc.ssh('box')
+      expect(t.a.calls.find((x) => x.url.endsWith('cloud:adopt'))!.body).toMatchObject({ token: 'ent' })
+    }
   })
 
   it('again: nothing to install, the saved pairing works, no license to hand over; a window that won’t open', async () => {
@@ -358,6 +413,14 @@ describe('Dev Containers', () => {
 
     await t.svc.disconnect(c.id)
     expect(t.svc.list()[0].state).toBe('closed')
+  })
+
+  it('runs the bundled Dev Containers CLI with the platform’s Node (a utility process on the desktop)', async () => {
+    const m = machine()
+    const node = vi.fn((args: string[]) => m.start('node', args) as never)
+    const t = await setup({ machine: m, node })
+    await t.svc.container(await project())
+    expect(node.mock.calls[0][0]).toEqual([expect.stringMatching(/devcontainer\.js$/), 'up', '--workspace-folder', expect.stringMatching(/my-app$/)])
   })
 
   it('a container that won’t come up says why', async () => {

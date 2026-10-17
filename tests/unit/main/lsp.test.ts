@@ -6,6 +6,7 @@ import { afterAll, describe, expect, it } from 'vitest'
 import { tempDir } from './helpers'
 import { bundledTsserver, findTsserver, LspService } from '../../../electron/main/services/lsp/LspService'
 import { TsServer, type TsProcess } from '../../../electron/main/services/lsp/TsServer'
+import { spawnNode, type NodeLauncher } from '../../../electron/main/lib/nodeProcess'
 
 const A = `export interface User {\n  /** The display name. */\n  name: string\n}\n\n/**\n * Says hello.\n * @param user who to greet\n */\nexport function greet(user: User, loud = false): string {\n  return loud ? user.name.toUpperCase() : user.name\n}\n`
 const B = `import { greet } from './a'\n\nconst who = { name: 'Ada' }\ngreet(who, )\nconst n: number = greet(who)\n`
@@ -160,6 +161,18 @@ describe('LspService (real tsserver)', () => {
     expect(await lsp.diagnostics('p', ['src/b.ts'])).toEqual({})
     // Opening an open file again just updates it.
     expect(await lsp.open('p', 'src/a.ts', `${A}\n`)).toMatchObject({ available: true })
+  })
+
+  it('tsserver runs with the platform’s Node (a utility process on the desktop): no ELECTRON_RUN_AS_NODE', { timeout: 60_000 }, async () => {
+    const root = await project()
+    const calls: Parameters<NodeLauncher>[] = []
+    const lsp = make(root, { node: (args, opts) => (calls.push([args, opts]), spawnNode(args, opts)) })
+    expect(await lsp.open('p', 'src/b.ts', B)).toEqual({ available: true, language: 'typescript' })
+    expect((await lsp.hover('p', 'src/b.ts', 4, 2))?.display).toContain('greet(')
+    const [[args, opts]] = calls
+    expect(args).toEqual([bundledTsserver(), '--disableAutomaticTypingAcquisition'])
+    expect(opts).toMatchObject({ cwd: root, name: 'TypeScript', unsignedLibraries: true })
+    expect(opts.env).not.toHaveProperty('ELECTRON_RUN_AS_NODE')
   })
 
   it('without TypeScript, before any open, for unknown projects', async () => {

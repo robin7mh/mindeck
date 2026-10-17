@@ -8,7 +8,9 @@ import { basename, join } from 'node:path'
 import type { RemoteConnection, SshHost } from '@shared/types/remote'
 import type { CloudAccount } from '@shared/types/cloud'
 import type { PairResult } from '@shared/types/server'
+import { spawnNode, type NodeLauncher, type NodeProcess } from '../../lib/nodeProcess'
 import { spawnInShell } from '../debug/adapters'
+import { userEnv } from '../tools/ToolsService'
 
 function coded(code: string, message: string): Error {
   return Object.assign(new Error(message), { code })
@@ -26,14 +28,18 @@ export interface RemoteOptions {
   /** The server package for an architecture (a .tar.gz). */
   bundle: (arch: 'x64' | 'arm64') => Promise<string>
   secrets: { get(name: string): Promise<string | undefined>; set(name: string, value: string | null): Promise<void> }
-  /** The desktop's current entitlement, handed to the remote core (it runs on this license). */
+  /** The desktop's current entitlement, handed to the remote core (it runs on this license) while the cloud issues no follower leases. */
   entitlement: () => { token: string; account: CloudAccount } | null
+  /** A follower lease from Mindeck Cloud for the remote core with this install id — null when there is none (BE-SEC-09). */
+  followerLease?: (installId: string) => Promise<{ token: string; account: CloudAccount } | null>
   openWindow?: (opts: { title: string; url: string; token: string; deviceId: string }) => { closed: Promise<void>; close: () => void }
   publish: (connections: RemoteConnection[]) => void
   /** The ssh config with the hosts (default ~/.ssh/config). */
   sshConfig?: string
-  /** The Dev Containers CLI (`devcontainer up`): command, arguments, environment. */
-  devcontainer?: (root: string) => [string, string[], Record<string, string>?]
+  /** How the Dev Containers CLI runs as a Node program (Platform.node). */
+  node?: NodeLauncher
+  /** Start the Dev Containers CLI's `devcontainer up` for a project (default: defaultDevcontainer). */
+  devcontainer?: (root: string) => Promise<NodeProcess>
   start?: Start
   fetch?: typeof fetch
   /** How often the entitlement is handed over again. */
@@ -127,7 +133,7 @@ export class RemoteService {
     this.opts = {
       start: (command, args, env) => spawnInShell(command, args, homedir(), env),
       fetch: globalThis.fetch,
-      devcontainer: defaultDevcontainer,
+      devcontainer: defaultDevcontainer(opts.node ?? spawnNode),
       licenseMs: 60_000,
       timeoutMs: 60_000,
       hostsFile: opts.sshConfig ?? join(homedir(), '.ssh', 'config'),
@@ -172,8 +178,7 @@ export class RemoteService {
     if (!this.hasContainer(root)) throw coded('no-devcontainer', 'This project has no .devcontainer/devcontainer.json')
     const name = basename(root)
     return this.connect(`container:${root}`, 'container', `Container: ${name}`, async (live) => {
-      const [cli, args, env] = this.opts.devcontainer(root)
-      const up = await this.collect(this.start(cli, args, env), 10 * 60_000)
+      const up = await this.collect(await this.opts.devcontainer(root), 10 * 60_000)
       const result = up.stdout
         .split('\n')
         .reverse()
@@ -306,14 +311,27 @@ export class RemoteService {
     return paired
   }
 
-  /** The remote core runs on this desktop's license (it can't sign in itself). */
+  /**
+   * The remote core runs on this desktop's license (it can't sign in itself):
+   * on a lease Mindeck Cloud issues for that core alone — or, while the cloud
+   * issues none (or the remote core can't say its install id), on this
+   * desktop's own entitlement, which the core then takes for a day at most.
+   */
   private async handLicense(url: string, token: string): Promise<void> {
     const entitlement = this.opts.entitlement()
     if (!entitlement) return
-    await this.rpc(url, token, 'cloud:adopt', entitlement).catch((err: Error) => {
+    const lease = await this.leaseFor(url, token)
+    await this.rpc(url, token, 'cloud:adopt', lease ?? entitlement).catch((err: Error) => {
       // Its package verifies with the key built into it — the same as this app's.
       throw coded('remote-license', `The remote Mindeck can't verify this license (${err.message}) — its server package must come from the same release`)
     })
+  }
+
+  private async leaseFor(url: string, token: string): Promise<{ token: string; account: CloudAccount } | null> {
+    if (!this.opts.followerLease) return null
+    const remote = (await this.rpc(url, token, 'cloud:installId').catch(() => null)) as { installId?: unknown } | null
+    if (typeof remote?.installId !== 'string' || !remote.installId) return null
+    return this.opts.followerLease(remote.installId).catch(() => null)
   }
 
   private async rpc(url: string, token: string, channel: string, payload?: unknown): Promise<unknown> {
@@ -338,7 +356,7 @@ export class RemoteService {
   }
 
   /** Run to the end: exit code and output. */
-  private collect(proc: ChildProcess, timeoutMs = this.opts.timeoutMs): Promise<{ code: number; stdout: string; stderr: string }> {
+  private collect(proc: NodeProcess, timeoutMs = this.opts.timeoutMs): Promise<{ code: number; stdout: string; stderr: string }> {
     return new Promise((resolve) => {
       let stdout = ''
       let stderr = ''
@@ -403,7 +421,8 @@ const lastLine = (text: string): string | undefined =>
     .filter(Boolean)
     .pop()
 
-/** The Dev Containers CLI that ships with Mindeck, run by Mindeck's own Node (Electron as Node). */
-export function defaultDevcontainer(root: string): [string, string[], Record<string, string>] {
-  return [process.execPath, [require.resolve('@devcontainers/cli/devcontainer.js'), 'up', '--workspace-folder', root], { ELECTRON_RUN_AS_NODE: '1' }]
+/** The Dev Containers CLI that ships with Mindeck, run as a Node program; it finds docker on the user's PATH. */
+export function defaultDevcontainer(node: NodeLauncher, env: () => Promise<Record<string, string>> = userEnv): (root: string) => Promise<NodeProcess> {
+  return async (root) =>
+    node([require.resolve('@devcontainers/cli/devcontainer.js'), 'up', '--workspace-folder', root], { cwd: homedir(), env: await env(), name: 'Dev Containers' })
 }

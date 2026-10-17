@@ -30,6 +30,14 @@ const LIFETIME_REFRESH_MS = 15 * 60_000
  * but renews nothing (a 5xx, an empty answer) — not for good.
  */
 export const PAUSE_GRACE_MS = 2 * 60 * 60_000
+/**
+ * A follower takes the desktop's own entitlement over only while Mindeck
+ * Cloud issues no follower leases — and for this long after the desktop last
+ * handed it over, however long the entitlement itself would hold.
+ */
+export const FOLLOWER_HANDOVER_MS = 24 * 60 * 60_000
+/** A cloud without follower leases (404) is asked again after this long. */
+const LEASE_RETRY_MS = 60 * 60_000
 
 export interface CloudServiceOptions {
   baseUrl: string
@@ -62,6 +70,10 @@ interface Persisted {
   entitlement: string | null
   publicKey: string | null
   webUrl: string | null
+  /** Follower: when the desktop last handed over its own entitlement (not a lease) — it holds FOLLOWER_HANDOVER_MS from then at most. */
+  adoptedAt?: number
+  /** Follower: it ran on a lease of its own once — from then on it takes leases only (the cloud issues them). */
+  leased?: boolean
 }
 
 interface ApiUser {
@@ -87,9 +99,12 @@ interface Meta {
   entitlementPublicKey: string
   webUrl: string
 }
+interface FollowerLeaseResponse {
+  entitlement: { token: string } | null
+}
 
-function coded(code: string, message: string): Error {
-  return Object.assign(new Error(message), { code })
+function coded(code: string, message: string, status?: number): Error {
+  return Object.assign(new Error(message), { code }, status === undefined ? {} : { status })
 }
 
 const toAccount = (u: ApiUser): CloudAccount => ({ email: u.email, name: u.name })
@@ -164,6 +179,10 @@ export class CloudService {
   private beating: Promise<void> | null = null
   private timer?: ReturnType<typeof setInterval>
   private lastEmitted = ''
+  /** Desktop: the follower leases it got, per follower install id (renewed when half of one has passed). */
+  private readonly leases = new Map<string, { token: string; claims: EntitlementClaims }>()
+  /** Desktop: Mindeck Cloud said it issues no follower leases (404) — not asked again before this. */
+  private noLeasesUntil = 0
   private readonly fetch: typeof fetch
   private readonly now: () => number
 
@@ -181,8 +200,10 @@ export class CloudService {
     }
     this.key = this.publicKey()
     this.claims = this.data.entitlement && this.key ? verifyEntitlement(this.data.entitlement, this.key) : null
+    // A follower's last entitlement holds as it did when it was handed over (a lease for this core, or briefly the desktop's).
+    if (this.opts.follower) this.claims = this.followerClaims(this.claims)
     // Saved before the device was remembered: the last lease names it (a lifetime license offline still starts).
-    this.data.deviceId ??= this.claims?.dev
+    else this.data.deviceId ??= this.claims?.dev
     const cert = this.data.account ? await this.opts.secrets.get(OFFLINE_SECRET) : undefined
     this.offline = cert ? this.verifyOffline(cert) : null
     // A follower only ever hears from the desktop (cloud:adopt).
@@ -303,12 +324,52 @@ export class CloudService {
     return entitlement && account && this.claims?.active && this.claims.exp * 1000 > this.now() ? { token: entitlement, account } : null
   }
 
+  /** This install's id — a follower's is what its leases are bound to (`dev`). */
+  installId(): string {
+    return this.data.installId
+  }
+
   /**
-   * Follower: take the desktop's entitlement over. It must verify with Mindeck
-   * Cloud's key and be what the desktop hands over — its current lease: active
-   * and not run out (not an old one copied from a cloud.json), and never a
-   * lifetime license's offline certificate, which is bound to the device it
-   * was issued to (`dev`) and would hold here for good.
+   * Desktop: a follower lease for the core with install id `installId`
+   * (Remote-SSH, Dev Container) — signed by Mindeck Cloud for that core alone,
+   * short, and asked for again once half of it has passed. Null while this
+   * desktop holds no valid license, while the cloud issues no leases (404:
+   * asked again after an hour) or can't be reached without a lease still in
+   * hand: the desktop then hands over its own entitlement (the transition).
+   */
+  async followerLease(installId: string): Promise<{ token: string; account: CloudAccount } | null> {
+    const own = this.entitlement()
+    if (!own || this.opts.follower) return null
+    const now = this.now()
+    const kept = this.leases.get(installId)
+    const held = kept && kept.claims.exp * 1000 > now ? { token: kept.token, account: own.account } : null
+    if (held && now < ((kept!.claims.iat + kept!.claims.exp) / 2) * 1000) return held
+    if (now < this.noLeasesUntil) return held
+    try {
+      const res = await this.call<FollowerLeaseResponse>('POST', '/v1/license/follower-lease', { installId, appVersion: this.opts.version })
+      const token = res.entitlement?.token
+      const claims = token && this.key ? verifyEntitlement(token, this.key) : null
+      if (!claims || claims.lease !== 'follower' || claims.dev !== installId || !claims.active || claims.exp * 1000 <= now) {
+        console.warn('[cloud] ignoring a follower lease that is not valid for that core')
+        return held
+      }
+      this.leases.set(installId, { token: token!, claims })
+      return { token: token!, account: own.account }
+    } catch (err) {
+      if ((err as { status?: number }).status === 404) this.noLeasesUntil = now + LEASE_RETRY_MS
+      return held
+    }
+  }
+
+  /**
+   * Follower: take an entitlement over from the desktop. It must verify with
+   * Mindeck Cloud's key, be active and not run out (not an old one copied from
+   * a cloud.json), and never be a lifetime license's offline certificate,
+   * which is bound to the device it was issued to and would hold here for
+   * good. A follower lease must be this core's (`dev` = its install id); the
+   * desktop's own entitlement — while the cloud issues no leases — holds for
+   * FOLLOWER_HANDOVER_MS after the desktop last handed it over, and not at all
+   * once this core ran on a lease.
    */
   async adopt(token: string, account: CloudAccount): Promise<CloudStatus> {
     if (!this.opts.follower) throw coded('not-follower', 'This core signs in itself')
@@ -317,12 +378,28 @@ export class CloudService {
     if (!claims) throw coded('bad-entitlement', 'This entitlement cannot be verified')
     if (claims.perpetual) throw coded('bad-entitlement', 'An offline certificate holds only on the device it was issued to')
     if (!claims.active || claims.exp * 1000 <= this.now()) throw coded('bad-entitlement', 'This entitlement is not valid (any more)')
-    this.claims = claims
-    this.data = { ...this.data, account, entitlement: token, license: null }
+    const lease = claims.lease === 'follower'
+    if (lease && claims.dev !== this.data.installId) throw coded('bad-entitlement', 'This follower lease is for another core')
+    if (!lease && this.data.leased) throw coded('lease-required', 'This core runs on follower leases from Mindeck Cloud only')
+    this.data = { ...this.data, account, entitlement: token, license: null, ...(lease ? { leased: true } : { adoptedAt: this.now() }) }
+    this.claims = this.followerClaims(claims)
     this.error = null
     await this.save()
     this.emit()
     return this.status()
+  }
+
+  /**
+   * What an entitlement handed over is worth on this follower: a lease for
+   * this core as signed; the desktop's own (no lease) until FOLLOWER_HANDOVER_MS
+   * after it was handed over at most, and nothing once this core ran on a
+   * lease. Null: it doesn't hold here.
+   */
+  private followerClaims(claims: EntitlementClaims | null): EntitlementClaims | null {
+    if (!claims) return null
+    if (claims.lease === 'follower') return claims.dev === this.data.installId ? claims : null
+    if (this.data.leased) return null
+    return { ...claims, exp: Math.min(claims.exp, Math.floor(((this.data.adoptedAt ?? 0) + FOLLOWER_HANDOVER_MS) / 1000)) }
   }
 
   /** Signed in to a Mindeck account (the session may still turn out expired). */
@@ -517,7 +594,7 @@ export class CloudService {
       code = res.status === 401 ? 'session_expired' : code
       await this.forget(code)
     }
-    throw coded(code, data.error?.message ?? res.statusText)
+    throw coded(code, data.error?.message ?? res.statusText, res.status)
   }
 
   private emit(): void {

@@ -39,8 +39,9 @@ export default defineConfig({
       // ESM-only packages are bundled: the CommonJS main bundle can't require() them.
       externalizeDeps: { exclude: ['@agentclientprotocol/sdk'] },
       outDir: 'out/main',
-      // object entry => deterministic `index` output name (matches package.json "main")
-      lib: { entry: { index: resolve(__dirname, 'electron/main.ts') } }
+      // object entry => deterministic `index` output name (matches package.json "main").
+      // nodeHost: the entry of the utility processes Node programs run in (lib/nodeProcess.ts).
+      lib: { entry: { index: resolve(__dirname, 'electron/main.ts'), nodeHost: resolve(__dirname, 'electron/nodeHost.ts') } }
     }
   },
   preload: {

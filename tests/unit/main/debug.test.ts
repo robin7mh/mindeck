@@ -213,7 +213,8 @@ describe('DebugService edge cases', () => {
       { name: 'g', value: '(getter)', type: 'accessor' },
       { name: 'v', value: '1', type: 'number' }
     ])
-    proc.stderr.write('ne\nWaiting for the debugger to disconnect...\nDebugger ending on ws://x/2\n')
+    // Node's inspector chatter, whichever order it ends in, stays out of the program's output.
+    proc.stderr.write('ne\nDebugger ending on ws://x/2\nWaiting for the debugger to disconnect...\n')
     await new Promise((r) => setTimeout(r, 10))
     expect(cdp.closed).toBe(1)
     proc.stderr.write('tail without newline')

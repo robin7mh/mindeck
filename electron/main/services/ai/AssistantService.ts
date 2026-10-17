@@ -45,6 +45,8 @@ export interface AssistantDeps {
 interface ActiveRun {
   controller: AbortController
   done: Promise<void>
+  /** The conversation as the run has it — ahead of the saved copy (streamed text, a tool waiting for approval). */
+  conv?: StoredConversation
 }
 
 const errorCode = (err: unknown) => String((err as { code?: string })?.code ?? 'error')
@@ -84,11 +86,15 @@ export class AssistantService {
     return (await this.deps.store.list()).map((c) => ({ ...c, running: this.active.has(c.id) }))
   }
 
+  /**
+   * One conversation — while it runs, as it stands right now, so a client that missed push events
+   * (a reconnecting web UI or phone) gets the streamed text and the approvals waiting in it.
+   */
   async conversation(id: string): Promise<Conversation> {
-    const c = await this.deps.store.get(id)
+    const c = this.active.get(id)?.conv ?? (await this.deps.store.get(id))
     if (!c) throw aiError('not-found', 'Conversation not found')
     const { transcript: _t, ...rest } = c
-    return { ...rest, running: this.active.has(id) }
+    return { ...structuredClone(rest), running: this.active.has(id) }
   }
 
   runs(limit?: number): Promise<AgentRun[]> {
@@ -161,6 +167,7 @@ export class AssistantService {
       outputTokens: 0
     }
     const controller = entry.controller
+    entry.conv = conv
     this.active.set(conv.id, entry)
     this.deps.publish('ai:conversationsChanged', { reason: req.conversationId ? 'updated' : 'created', id: conv.id })
     this.deps.publish('ai:message', { conversationId: conv.id, message: user, running: true })

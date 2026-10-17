@@ -225,6 +225,7 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
   const lsp = new LspService({
     resolveRoot: (id) => projects.getProjectPath(id),
     trusted: (id) => trust.project(id),
+    node: platform.node,
     servers: { tools: devTools, onDiagnostics: hub.publish.bind(hub, 'lsp:diagnostics') }
   })
   // Trusted (or restricted again): TypeScript switches to the project's own (or Mindeck's), other servers restart.
@@ -233,7 +234,8 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
     resolveRoot: (id) => projects.getProjectPath(id),
     publish: (channel, payload) => hub.publish(channel, payload as never),
     tools: devTools,
-    lsp
+    lsp,
+    node: platform.node
   })
   // A headless core has no desktop to give roles: its first paired device is admin.
   const auth = new AuthService(paths.devicesFile, undefined, opts.mode === 'server')
@@ -479,6 +481,7 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
   router.register('cloud:forgotPassword', (req) => cloud.forgotPassword(req))
   router.register('cloud:checkout', () => cloud.checkout())
   router.register('cloud:adopt', ({ token, account }) => cloud.adopt(token, account))
+  router.register('cloud:installId', () => ({ installId: cloud.installId() }))
   // Settings Sync: the account keeps one copy of the editor settings, snippets, look and language.
   const sync = new SyncService({ cloud, settings, snippetsFile: join(paths.dataDir, 'snippets.json') })
   router.register('cloud:syncStatus', () => sync.status())
@@ -492,16 +495,18 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
     bundle: bundleSource({ version: opts.version, dir: join(paths.dataDir, 'remote'), devDir: join(__dirname, '..', 'remote'), sha256: bakedBundleHashes() }),
     secrets,
     entitlement: cloud.entitlement.bind(cloud),
+    followerLease: cloud.followerLease.bind(cloud),
     openWindow: opts.platform.openRemoteWindow,
     publish: (list) => {
       hub.publish('remote:changed', list)
       cloud.setRemoteSessions(list.filter((c) => c.state === 'ready').length)
     },
-    sshConfig: process.env.MINDECK_SSH_CONFIG || undefined
+    sshConfig: process.env.MINDECK_SSH_CONFIG || undefined,
+    node: platform.node
   })
   registerRemoteIpc(router, remote, (id) => projects.getProjectPath(id))
   // ESLint and Prettier: the project's own, in a worker per project.
-  const lint = new LintService({ resolveRoot: (id) => projects.getProjectPath(id), trusted: (id) => trust.project(id), prettier: bundledPrettier() })
+  const lint = new LintService({ resolveRoot: (id) => projects.getProjectPath(id), trusted: (id) => trust.project(id), prettier: bundledPrettier(), node: platform.node })
   registerLintIpc(router, lint)
   // The test explorer: the project's runners, Mindeck's debugger.
   const notebooks = new NotebookService({ resolveRoot: (id) => projects.getProjectPath(id), trusted: (id) => trust.project(id), publish: hub.publish.bind(hub, 'notebook:event') })

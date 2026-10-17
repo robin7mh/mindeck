@@ -1,7 +1,8 @@
-import { app, BrowserWindow, clipboard, ClipboardItem, dialog, nativeTheme, safeStorage, session, shell } from 'electron'
+import { app, BrowserWindow, clipboard, ClipboardItem, dialog, nativeTheme, safeStorage, session, shell, utilityProcess } from 'electron'
 import { rm } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { utilityNode } from '../lib/nodeProcess'
 import type { Cipher } from '../services/ai/SecretStore'
 import { fileClipboard } from './fileClipboard'
 import { guardSession } from './sessionGuard'
@@ -12,11 +13,14 @@ import type { Platform } from './types'
  * The remote core's web UI gets a profile of its own: the Mindeck UI's
  * session serves `mindeck-file://` (any local file), which a page from
  * another machine must never reach. It lives in memory only: the page holds
- * the remote core's device token (shells on that host) in its localStorage,
- * which must not stay in a profile on disk — and each tunnel gets a new port
- * (a new origin) anyway.
+ * the remote core's device token (shells on that host) in a cookie, which
+ * must not stay in a profile on disk — and each tunnel gets a new port (a
+ * new origin) anyway. One per window: cookies go by host, not by port, so
+ * two remote cores behind `127.0.0.1` tunnels would otherwise be sent each
+ * other's.
  */
 export const REMOTE_PARTITION = 'mindeck-remote'
+let remoteWindows = 0
 
 /** Where earlier versions kept that profile on disk (`persist:mindeck-remote`), tokens included. */
 const legacyRemoteProfile = () => join(app.getPath('userData'), 'Partitions', 'mindeck-remote')
@@ -53,9 +57,13 @@ export const electronPlatform: Platform = {
   trashItem: osTrash,
   restorableTrash: desktopTrash({ platform: process.platform, env: process.env, home: homedir(), trashItem: osTrash }),
   fileClipboard: fileClipboard(clipboard, (data) => new ClipboardItem(data), process.platform),
+  // Next to the main bundle: out/main/nodeHost.js (electron.vite.config.ts).
+  node: utilityNode((modulePath, args, options) => utilityProcess.fork(modulePath, args, options), join(__dirname, 'nodeHost.js')),
   openRemoteWindow({ title, url, token, deviceId }) {
     // Another machine's page asks for nothing: no microphone, camera, location, screen — nor this machine's clipboard.
-    guardSession(session.fromPartition(REMOTE_PARTITION), () => false)
+    remoteWindows += 1
+    const partition = `${REMOTE_PARTITION}-${remoteWindows}`
+    guardSession(session.fromPartition(partition), () => false)
     void rm(legacyRemoteProfile(), { recursive: true, force: true }).catch(() => {})
     const win = new BrowserWindow({
       width: 1440,
@@ -66,7 +74,7 @@ export const electronPlatform: Platform = {
       backgroundColor: nativeTheme.shouldUseDarkColors ? '#04060b' : '#eef2f7',
       autoHideMenuBar: true,
       // The remote core's own web UI: no bridge into this machine, nor its files.
-      webPreferences: { partition: REMOTE_PARTITION, sandbox: true, contextIsolation: true, nodeIntegration: false }
+      webPreferences: { partition, sandbox: true, contextIsolation: true, nodeIntegration: false }
     })
     win.on('page-title-updated', (e) => e.preventDefault())
     // Another machine's page: it opens web links in the system browser — no other scheme, and the window stays on its core.
@@ -81,7 +89,7 @@ export const electronPlatform: Platform = {
       if (safeExternal(link)) void shell.openExternal(link)
     })
     const closed = new Promise<void>((resolve) => win.on('closed', () => resolve()))
-    // Signed in as this desktop's paired device before the UI first loads.
+    // Signed in as this desktop's paired device before the UI first loads (the page hands the token to the core for its cookie).
     void (async () => {
       await win.loadURL(`${url}/api/health`)
       await win.webContents.executeJavaScript(`localStorage.setItem('mindeck.token', ${JSON.stringify(token)}); localStorage.setItem('mindeck.deviceId', ${JSON.stringify(deviceId)})`)
