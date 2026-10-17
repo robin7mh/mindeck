@@ -6,11 +6,11 @@ import { createServer, type Server } from 'node:net'
 import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
 import type { RemoteConnection, SshHost } from '@shared/types/remote'
-import type { CloudAccount } from '@shared/types/cloud'
 import type { PairResult } from '@shared/types/server'
 import { spawnNode, type NodeLauncher, type NodeProcess } from '../../lib/nodeProcess'
 import { spawnInShell } from '../debug/adapters'
 import { userEnv } from '../tools/ToolsService'
+import type { Handover } from '../cloud/CloudService'
 
 function coded(code: string, message: string): Error {
   return Object.assign(new Error(message), { code })
@@ -29,9 +29,9 @@ export interface RemoteOptions {
   bundle: (arch: 'x64' | 'arm64') => Promise<string>
   secrets: { get(name: string): Promise<string | undefined>; set(name: string, value: string | null): Promise<void> }
   /** The desktop's current entitlement, handed to the remote core (it runs on this license) while the cloud issues no follower leases. */
-  entitlement: () => { token: string; account: CloudAccount } | null
+  entitlement: () => Handover | null
   /** A follower lease from Mindeck Cloud for the remote core with this install id — null when there is none (BE-SEC-09). */
-  followerLease?: (installId: string) => Promise<{ token: string; account: CloudAccount } | null>
+  followerLease?: (installId: string) => Promise<Handover | null>
   openWindow?: (opts: { title: string; url: string; token: string; deviceId: string }) => { closed: Promise<void>; close: () => void }
   publish: (connections: RemoteConnection[]) => void
   /** The ssh config with the hosts (default ~/.ssh/config). */
@@ -327,7 +327,7 @@ export class RemoteService {
     })
   }
 
-  private async leaseFor(url: string, token: string): Promise<{ token: string; account: CloudAccount } | null> {
+  private async leaseFor(url: string, token: string): Promise<Handover | null> {
     if (!this.opts.followerLease) return null
     const remote = (await this.rpc(url, token, 'cloud:installId').catch(() => null)) as { installId?: unknown } | null
     if (typeof remote?.installId !== 'string' || !remote.installId) return null

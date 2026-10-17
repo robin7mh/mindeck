@@ -480,7 +480,7 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
   router.register('cloud:resendVerification', () => cloud.resendVerification())
   router.register('cloud:forgotPassword', (req) => cloud.forgotPassword(req))
   router.register('cloud:checkout', () => cloud.checkout())
-  router.register('cloud:adopt', ({ token, account }) => cloud.adopt(token, account))
+  router.register('cloud:adopt', ({ token, account, revokedKids }) => cloud.adopt(token, account, revokedKids))
   router.register('cloud:installId', () => ({ installId: cloud.installId() }))
   // Settings Sync: the account keeps one copy of the editor settings, snippets, look and language.
   const sync = new SyncService({ cloud, settings, snippetsFile: join(paths.dataDir, 'snippets.json') })

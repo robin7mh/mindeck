@@ -1,10 +1,10 @@
-import { generateKeyPairSync, sign, type KeyObject } from 'node:crypto'
+import { createHash, generateKeyPairSync, sign, type KeyObject } from 'node:crypto'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { CloudService, deriveState, FOLLOWER_HANDOVER_MS, holdsOffline, OFFLINE_SECRET, PAUSE_GRACE_MS, SESSION_SECRET, type CloudServiceOptions } from '../../../electron/main/services/cloud/CloudService'
-import { parsePublicKey, verifyEntitlement, type EntitlementClaims } from '../../../electron/main/services/cloud/entitlement'
-import { bakedCloud, cloudConfig, cloudDefines, DEV_CLOUD_URL, isReleaseBuild } from '../../../electron/main/services/cloud/config'
+import { CloudService, deriveState, FOLLOWER_HANDOVER_MS, holdsOffline, KEYS_HEADER, LEGACY_CERT_SECONDS, OFFLINE_SECRET, PAUSE_GRACE_MS, SESSION_SECRET, type CloudServiceOptions } from '../../../electron/main/services/cloud/CloudService'
+import { announcedKids, keyId, parsePublicKey, parsePublicKeys, trustedKeys, verifyEntitlement, verifyRevocations, type EntitlementClaims } from '../../../electron/main/services/cloud/entitlement'
+import { bakedCloud, cloudConfig, cloudDefines, cloudKeyDefine, DEV_CLOUD_URL, isReleaseBuild } from '../../../electron/main/services/cloud/config'
 import { SecretStore } from '../../../electron/main/services/ai/SecretStore'
 import { Router } from '../../../electron/ipc/router'
 import { isLicenseFree } from '@shared/types/cloud'
@@ -12,14 +12,32 @@ import { tempDir } from './helpers'
 
 // --- a fake Mindeck Cloud that signs real entitlements -------------------------
 
+type KeyPair = ReturnType<typeof keys>
+
 function keys() {
   const { privateKey, publicKey } = generateKeyPairSync('ed25519')
-  return { privateKey, pem: publicKey.export({ type: 'spki', format: 'pem' }).toString(), der: publicKey.export({ type: 'spki', format: 'der' }).toString('base64') }
+  return {
+    privateKey,
+    publicKey,
+    pem: publicKey.export({ type: 'spki', format: 'pem' }).toString(),
+    der: publicKey.export({ type: 'spki', format: 'der' }).toString('base64'),
+    kid: keyId(publicKey)
+  }
 }
 
-function signToken(payload: string, privateKey: KeyObject): string {
+function signToken(payload: string, privateKey: KeyObject, prefix = 'mindeck1'): string {
   const body = Buffer.from(payload).toString('base64url')
-  return `mindeck1.${body}.${sign(null, Buffer.from(`mindeck1.${body}`), privateKey).toString('base64url')}`
+  return `${prefix}.${body}.${sign(null, Buffer.from(`${prefix}.${body}`), privateKey).toString('base64url')}`
+}
+
+/** Signed as Mindeck Cloud signs (`signEntitlement`): the signing key's id added to the claims. */
+function signClaims(claims: object, key: KeyPair): string {
+  return signToken(JSON.stringify({ ...claims, kid: key.kid }), key.privateKey)
+}
+
+/** The cloud's signed revocation list (`GET /v1/license/revocations`). */
+function signRevocations(revokedKids: string[], key: KeyPair, nowSeconds: number, over: Record<string, unknown> = {}): string {
+  return signToken(JSON.stringify({ kid: key.kid, iat: nowSeconds, exp: nowSeconds + 7 * 86_400, revokedKids, ...over }), key.privateKey, 'mindeck-rl1')
 }
 
 const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json' } })
@@ -29,11 +47,27 @@ interface Call {
   path: string
   body: Record<string, unknown> | undefined
   auth: string | undefined
+  /** The `Mindeck-Keys` header: the key ids the core trusts. */
+  keys: string | undefined
 }
 
-function fakeCloud(clock: { now: number }) {
-  const k = keys()
+function fakeCloud(clock: { now: number }, k: KeyPair = keys()) {
+  // k: the legacy key — the oldest still in use, `entitlementPublicKey` of /v1/meta.
   const s = {
+    /** The account's id (`user.id` on sign-in; an older cloud: undefined) and the `sub` of what it signs. */
+    userId: 'u1' as string | undefined,
+    sub: 'u1' as string | undefined,
+    /** Claims the offline certificate gets on top (another account's `sub`, another plan …). */
+    certOver: {} as Record<string, unknown>,
+    /** After a rotation: the active key — it signs for cores that announce it (`Mindeck-Keys`), the legacy key for the others. */
+    next: null as KeyPair | null,
+    /** Tokens as clouds before key ids signed them: without `kid`. */
+    noKid: false,
+    /** Key ids it revoked; how it answers GET /v1/license/revocations. */
+    revoked: [] as string[],
+    revocations: 'good' as 'good' | 'forged' | 'expired' | 'missing' | 'garbled' | 'self',
+    /** /v1/meta as clouds before key ids answered it (no `entitlementKeys`/`revokedKeyIds`). */
+    oldMeta: false,
     plan: 'trial' as 'trial' | 'lifetime',
     active: true,
     reason: 'ok' as EntitlementClaims['reason'],
@@ -63,37 +97,58 @@ function fakeCloud(clock: { now: number }) {
     const path = new URL(String(url)).pathname
     const headers = (init?.headers ?? {}) as Record<string, string>
     const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : undefined
-    s.calls.push({ method: init?.method ?? 'GET', path, body, auth: headers.authorization })
+    s.calls.push({ method: init?.method ?? 'GET', path, body, auth: headers.authorization, keys: headers[KEYS_HEADER] })
+    // As KeyRing.signerFor: the active key for a core that names it, else the legacy key.
+    const signer = s.next && (headers[KEYS_HEADER] ?? '').split(',').includes(s.next.kid) ? s.next : k
+    const issue = (claims: object, key: KeyPair = signer) => (s.noKid ? signToken(JSON.stringify(claims), key.privateKey) : signClaims(claims, key))
     if (s.down) throw new TypeError('fetch failed')
     const fail = s.fail[path]
     if (fail) return fail.body === undefined ? new Response('oops', { status: fail.status, statusText: 'Broken' }) : json(fail.body, fail.status)
     switch (path) {
       case '/v1/meta':
-        return json({ entitlementPublicKey: k.pem, webUrl: 'https://mindeck.test' })
+        return json({
+          entitlementPublicKey: k.pem,
+          webUrl: 'https://mindeck.test',
+          ...(s.oldMeta ? {} : { entitlementKeys: [...(s.next ? [{ kid: s.next.kid, publicKey: s.next.pem, active: true }] : []), { kid: k.kid, publicKey: k.pem, active: !s.next }], revokedKeyIds: s.revoked })
+        })
       case '/v1/auth/login':
       case '/v1/auth/register':
-        return json({ user: { email: body!.email, name: body!.name ?? null }, license: license(), session: { token: 'ws_secret' } })
+        return json({ user: { ...(s.userId ? { id: s.userId } : {}), email: body!.email, name: body!.name ?? null }, license: license(), session: { token: 'ws_secret' } })
       case '/v1/me':
-        return json({ user: { email: 'robin@mindeck.test', name: 'Robin' }, license: license() })
+        return json({ user: { id: 'u1', email: 'robin@mindeck.test', name: 'Robin' }, license: license() })
+      case '/v1/license/revocations': {
+        const now = Math.floor(clock.now / 1000)
+        const forger = keys()
+        const doc = {
+          good: signRevocations(s.revoked, signer, now),
+          // signed by a key the core doesn't know, though it names the cloud's
+          forged: signRevocations(s.revoked, forger, now, { kid: signer.kid }),
+          expired: signRevocations(s.revoked, signer, now, { exp: now - 1 }),
+          missing: undefined,
+          garbled: signRevocations(s.revoked, signer, now, { revokedKids: [1, 2] }),
+          // a list naming no key, as an entitlement would: no fallback to the legacy key
+          self: signToken(JSON.stringify({ iat: now, exp: now + 60, revokedKids: s.revoked }), signer.privateKey, 'mindeck-rl1')
+        }[s.revocations]
+        return json({ revokedKids: s.revoked, ...(doc ? { revocations: doc } : {}) })
+      }
       case '/v1/license/heartbeat': {
         if (s.lease === 'broken') return json({})
         const iat = Math.floor(clock.now / 1000)
-        const claims = { sub: 'u1', email: 'robin@mindeck.test', plan: s.plan, active: s.active, reason: s.reason, rem: 1, ...(s.dev ? { dev: s.dev } : {}), iat, exp: iat + s.ttl }
-        const token = s.lease === 'forged' ? signToken(JSON.stringify(claims), keys().privateKey) : signToken(JSON.stringify(claims), k.privateKey)
-        const perpetual = { ...claims, ...(s.certDev ? { dev: s.certDev } : {}), perpetual: s.cert !== 'temporary', exp: iat + 100 * 365 * 86_400 }
-        const certSigner = s.cert === 'forged' ? keys().privateKey : k.privateKey
+        const claims = { sub: s.sub, email: 'robin@mindeck.test', plan: s.plan, active: s.active, reason: s.reason, rem: 1, ...(s.dev ? { dev: s.dev } : {}), iat, exp: iat + s.ttl }
+        const token = s.lease === 'forged' ? issue(claims, keys()) : issue(claims)
+        const perpetual = { ...claims, ...(s.certDev ? { dev: s.certDev } : {}), perpetual: s.cert !== 'temporary', exp: iat + 100 * 365 * 86_400, ...s.certOver }
         return json({
           license: license(),
           entitlement: s.lease ? { token } : null,
           nextHeartbeatSeconds: 60,
-          ...(s.cert ? { offlineCertificate: signToken(JSON.stringify(perpetual), certSigner) } : {})
+          ...(s.cert ? { offlineCertificate: s.cert === 'forged' ? issue(perpetual, keys()) : issue(perpetual) } : {})
         })
       }
       case '/v1/license/follower-lease': {
         if (s.leaseKind === 'none') return json({ entitlement: null })
         const iat = Math.floor(clock.now / 1000)
         const claims = { sub: 'u1', email: 'robin@mindeck.test', plan: s.plan, active: s.active, reason: s.reason, rem: 1, dev: s.leaseDev ?? body!.installId, ...(s.leaseKind === 'plain' ? {} : { lease: 'follower' }), iat, exp: iat + s.leaseTtl }
-        return json({ entitlement: { token: signToken(JSON.stringify(claims), s.leaseKind === 'forged' ? keys().privateKey : k.privateKey) } })
+        return json({ entitlement: { token: s.leaseKind === 'forged' ? issue(claims, keys()) : issue(claims) } })
       }
       case '/v1/billing/checkout':
         return json({ url: 'https://checkout.stripe.test/1' })
@@ -114,11 +169,27 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
+interface KeyPairs {
+  /** The cloud's legacy key. */
+  k: KeyPair
+  /** The next key (a rotation: `cloud.s.next`). */
+  next: KeyPair
+}
+
 async function setup(
-  opts: Partial<CloudServiceOptions> & { dir?: string; secrets?: SecretStore; offline?: boolean } = {}
+  opts: Partial<CloudServiceOptions> & {
+    dir?: string
+    secrets?: SecretStore
+    offline?: boolean
+    /** The same keys across several cores and restarts. */
+    pair?: KeyPairs
+    /** MINDECK_CLOUD_KEY of this build, from the keys. */
+    builtIn?: (pair: KeyPairs) => string
+  } = {}
 ) {
   const clock = { now: Date.parse('2026-10-10T10:00:00Z') }
-  const cloud = fakeCloud(clock)
+  const pair = opts.pair ?? { k: keys(), next: keys() }
+  const cloud = fakeCloud(clock, pair.k)
   cloud.s.down = !!opts.offline
   const dir = opts.dir ?? (await tempDir())
   const secrets = opts.secrets ?? new SecretStore(join(dir, 'secrets.json'))
@@ -137,6 +208,7 @@ async function setup(
     onStatus,
     fetch: cloud.fetch as unknown as typeof fetch,
     now: () => clock.now,
+    ...(opts.builtIn ? { publicKey: opts.builtIn(pair) } : {}),
     ...opts
   })
   services.push(svc)
@@ -149,6 +221,8 @@ async function setup(
     dir,
     secrets,
     onStatus,
+    pair,
+    next: pair.next,
     advance: (seconds: number) => void (clock.now += seconds * 1000),
     setUserActive: (v: boolean) => void (userActive = v),
     signIn: () => svc.login({ email: 'robin@mindeck.test', password: 'pw' })
@@ -174,6 +248,7 @@ describe('deriveState', () => {
     expect(deriveState({ ...base, signedIn: false, claims: null })).toBe('signed_out')
     expect(deriveState({ ...base, claims: claims({ active: false, reason: 'email_unverified' }) })).toBe('email_unverified')
     expect(deriveState({ ...base, claims: claims({ active: false, reason: 'trial_expired' }) })).toBe('trial_expired')
+    expect(deriveState({ ...base, claims: claims({ plan: 'lifetime', active: false, reason: 'license_suspended' }) })).toBe('license_suspended')
     expect(deriveState({ ...base, claims: claims() })).toBe('active')
     expect(deriveState({ ...base, now: 200_000, claims: claims() })).toBe('paused')
     expect(deriveState({ ...base, now: 200_000, online: false, claims: claims() })).toBe('offline')
@@ -202,6 +277,8 @@ describe('deriveState', () => {
     expect(holdsOffline(claims({ perpetual: false, exp: 4_000_000_000 }), 0)).toBe(false)
     expect(holdsOffline(claims({ perpetual: true, active: false, exp: 4_000_000_000 }), 0)).toBe(false)
     expect(holdsOffline(claims({ perpetual: true, exp: 1 }), 2000)).toBe(false)
+    expect(holdsOffline(claims({ perpetual: true, exp: 4_000_000_000 }), 0)).toBe(false) // a trial's: never
+    expect(holdsOffline(cert, 0)).toBe(true)
     expect(deriveState({ ...base, online: false, offline: claims({ perpetual: true, exp: 1 }) })).toBe('offline')
   })
 })
@@ -216,13 +293,82 @@ describe('entitlement tokens', () => {
 
   it('accepts only genuine tokens', () => {
     const k = keys()
-    const key = parsePublicKey(k.pem)
+    const key = trustedKeys([parsePublicKey(k.pem)])!
     const good = signToken(JSON.stringify({ sub: 'u', exp: 1 }), k.privateKey)
     expect(verifyEntitlement(good, key)).toMatchObject({ sub: 'u', exp: 1 })
     expect(verifyEntitlement(signToken('{"sub":"u"}', keys().privateKey), key)).toBeNull()
     expect(verifyEntitlement('mindeck1.only-two', key)).toBeNull()
     expect(verifyEntitlement(good.replace('mindeck1.', 'mindeck2.'), key)).toBeNull()
     expect(verifyEntitlement(signToken('not json', k.privateKey), key)).toBeNull()
+    expect(verifyEntitlement(signToken('null', k.privateKey), key)).toBeNull()
+    expect(verifyEntitlement(signToken('5', k.privateKey), key)).toBeNull()
+  })
+
+  it('computes key ids exactly as Mindeck Cloud does (first 16 characters of base64url SHA-256 of the SPKI DER)', () => {
+    // RFC 8032 test vector 1; the id from mindeck-cloud's keyId() for the same key.
+    const der = 'MCowBQYDK2VwAyEA11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo='
+    expect(keyId(parsePublicKey(der))).toBe('BuP9j9opu2CrWVV9')
+    const k = keys()
+    expect(keyId(parsePublicKey(k.pem))).toBe(createHash('sha256').update(Buffer.from(k.der, 'base64')).digest('base64url').slice(0, 16))
+  })
+
+  it('reads MINDECK_CLOUD_KEY as a list — PEM or base64 DER, by comma or line, the original key first', () => {
+    const [a, b, c] = [keys(), keys(), keys()]
+    const kids = (raw: string) => parsePublicKeys(raw).map(keyId)
+    expect(kids(a.pem)).toEqual([a.kid])
+    expect(kids(`${a.der},${b.der}`)).toEqual([a.kid, b.kid])
+    expect(kids(`${a.pem}${b.der}\n${c.pem}`)).toEqual([a.kid, b.kid, c.kid])
+    expect(kids(` ${a.pem.replace(/\n/g, '\\n')} ,\n ${b.der} `)).toEqual([a.kid, b.kid])
+    expect(kids('')).toEqual([])
+    expect(trustedKeys([])).toBeNull()
+    expect(() => parsePublicKeys(`${a.der},not-a-key`)).toThrow()
+    const rsa = generateKeyPairSync('rsa', { modulusLength: 1024 }).publicKey.export({ type: 'spki', format: 'pem' }).toString()
+    expect(() => parsePublicKeys(`${a.der},${rsa}`)).toThrow('Ed25519')
+  })
+
+  it('picks the key by the token’s kid — never tries the others; a token without kid: the original key only (rotation, CL-SEC-06)', () => {
+    const [old, next, stranger] = [keys(), keys(), keys()]
+    const ring = trustedKeys([old.publicKey, next.publicKey])!
+    expect(ring.legacyKid).toBe(old.kid)
+    const claims = { sub: 'u', exp: 1 }
+    expect(verifyEntitlement(signClaims(claims, old), ring)).toMatchObject({ kid: old.kid })
+    expect(verifyEntitlement(signClaims(claims, next), ring)).toMatchObject({ kid: next.kid })
+    // From before key ids: the legacy key, and only it.
+    expect(verifyEntitlement(signToken(JSON.stringify(claims), old.privateKey), ring)).toMatchObject({ sub: 'u' })
+    expect(verifyEntitlement(signToken(JSON.stringify(claims), next.privateKey), ring)).toBeNull()
+    // A kid that names another trusted key than the one that signed, an unknown kid, a kid that is no string.
+    expect(verifyEntitlement(signToken(JSON.stringify({ ...claims, kid: next.kid }), old.privateKey), ring)).toBeNull()
+    expect(verifyEntitlement(signClaims(claims, stranger), ring)).toBeNull()
+    expect(verifyEntitlement(signToken(JSON.stringify({ ...claims, kid: 7 }), old.privateKey), ring)).toBeNull()
+    // Revoked: its tokens, and — if it is the legacy key — every token without kid.
+    expect(verifyEntitlement(signClaims(claims, next), ring, new Set([next.kid]))).toBeNull()
+    expect(verifyEntitlement(signClaims(claims, old), ring, new Set([next.kid]))).not.toBeNull()
+    expect(verifyEntitlement(signToken(JSON.stringify(claims), old.privateKey), ring, new Set([old.kid]))).toBeNull()
+    expect(announcedKids(ring, new Set())).toEqual([old.kid, next.kid])
+    expect(announcedKids(ring, new Set([old.kid]))).toEqual([next.kid])
+  })
+
+  it('accepts a revocation list only when signed by a trusted key it names, unexpired, listing key ids', () => {
+    const [old, next, stranger] = [keys(), keys(), keys()]
+    const ring = trustedKeys([old.publicKey, next.publicKey])!
+    const now = 1_000_000
+    const none = new Set<string>()
+    expect(verifyRevocations(signRevocations([old.kid], next, now), ring, none, now)).toEqual([old.kid])
+    expect(verifyRevocations(signRevocations([], old, now), ring, none, now)).toEqual([])
+    // forged, by an unknown key, by a revoked key, without kid (no legacy fallback for lists)
+    expect(verifyRevocations(signRevocations([next.kid], stranger, now, { kid: old.kid }), ring, none, now)).toBeNull()
+    expect(verifyRevocations(signRevocations([next.kid], stranger, now), ring, none, now)).toBeNull()
+    expect(verifyRevocations(signRevocations([next.kid], old, now), ring, new Set([old.kid]), now)).toBeNull()
+    expect(verifyRevocations(signToken(JSON.stringify({ exp: now + 60, revokedKids: [] }), old.privateKey, 'mindeck-rl1'), ring, none, now)).toBeNull()
+    // run out, no exp, no list, not a list of strings
+    expect(verifyRevocations(signRevocations([], old, now, { exp: now }), ring, none, now)).toBeNull()
+    expect(verifyRevocations(signRevocations([], old, now, { exp: 'later' }), ring, none, now)).toBeNull()
+    expect(verifyRevocations(signRevocations([], old, now, { revokedKids: 'all' }), ring, none, now)).toBeNull()
+    expect(verifyRevocations(signRevocations([], old, now, { revokedKids: [null] }), ring, none, now)).toBeNull()
+    // never an entitlement for a list, nor a list for an entitlement
+    const entitlement = signClaims({ sub: 'u', exp: now + 60, revokedKids: [] }, old)
+    expect(verifyRevocations(entitlement, ring, none, now)).toBeNull()
+    expect(verifyEntitlement(signRevocations([], old, now), ring)).toBeNull()
   })
 })
 
@@ -260,15 +406,26 @@ describe('cloud config', () => {
     expect(isReleaseBuild()).toBe(false)
     expect(isReleaseBuild({ url: 'https://api.mindeck.test', key: 'K' })).toBe(true)
     expect(cloudDefines({})).toEqual({ __MINDECK_CLOUD_URL__: '""', __MINDECK_CLOUD_KEY__: '""', __MINDECK_FOLLOWER__: '""' })
-    expect(cloudDefines({ MINDECK_CLOUD_URL: 'https://api.mindeck.test', MINDECK_CLOUD_KEY: 'K' })).toEqual({
+    const key = keys().der
+    expect(cloudDefines({ MINDECK_CLOUD_URL: 'https://api.mindeck.test', MINDECK_CLOUD_KEY: key })).toEqual({
       __MINDECK_CLOUD_URL__: '"https://api.mindeck.test"',
-      __MINDECK_CLOUD_KEY__: '"K"',
+      __MINDECK_CLOUD_KEY__: JSON.stringify(key),
       __MINDECK_FOLLOWER__: '""'
     })
     // The server package for Remote-SSH / Dev Containers (remote/Dockerfile).
     expect(cloudDefines({ MINDECK_FOLLOWER_BUILD: '1' }).__MINDECK_FOLLOWER__).toBe('"1"')
     expect(() => cloudDefines({ MINDECK_CLOUD_URL: 'https://api.mindeck.test' })).toThrow('without MINDECK_CLOUD_KEY')
     expect(cloudDefines()).toHaveProperty('__MINDECK_CLOUD_URL__')
+  })
+
+  it('bakes in a list of keys after a rotation — and fails the build on one that is no Ed25519 public key', () => {
+    const [a, b] = [keys(), keys()]
+    expect(cloudKeyDefine({})).toBe('""')
+    expect(cloudKeyDefine({ MINDECK_CLOUD_KEY: `${a.der},${b.der}` })).toBe(JSON.stringify(`${a.der},${b.der}`))
+    expect(JSON.parse(cloudKeyDefine({ MINDECK_CLOUD_KEY: `${a.pem}\n${b.pem}` }))).toBe(`${a.pem}\n${b.pem}`)
+    expect(() => cloudKeyDefine({ MINDECK_CLOUD_KEY: `${a.der},${b.der.slice(4)}` })).toThrow('MINDECK_CLOUD_KEY holds a key that is not an Ed25519 public key')
+    expect(() => cloudDefines({ MINDECK_CLOUD_URL: 'https://api.mindeck.test', MINDECK_CLOUD_KEY: 'K' })).toThrow('not an Ed25519 public key')
+    expect(cloudKeyDefine()).toEqual(expect.any(String))
   })
 
   it('a core the desktop runs elsewhere follows its license — in a release only the server package built for that', () => {
@@ -309,6 +466,7 @@ describe('CloudService', () => {
       account: null,
       license: null,
       validUntil: null,
+      offlineUntil: null,
       online: true,
       webUrl: null,
       error: null
@@ -780,7 +938,7 @@ describe('CloudService', () => {
     const lease = await t.svc.followerLease('remote-1')
     expect(lease).toEqual({ token: expect.stringMatching(/^mindeck1\./), account: { email: 'robin@mindeck.test', name: null } })
     expect(t.cloud.last('/v1/license/follower-lease')).toMatchObject({ method: 'POST', auth: 'Bearer ws_secret', body: { installId: 'remote-1', appVersion: '0.2.0' } })
-    expect(verifyEntitlement(lease!.token, parsePublicKey(t.cloud.k.pem))).toMatchObject({ dev: 'remote-1', lease: 'follower' })
+    expect(verifyEntitlement(lease!.token, trustedKeys([parsePublicKey(t.cloud.k.pem)])!)).toMatchObject({ dev: 'remote-1', lease: 'follower' })
     const asked = () => t.cloud.s.calls.filter((c) => c.path === '/v1/license/follower-lease').length
     // Kept for half its time (the trial lease of the desktop is renewed meanwhile).
     t.cloud.s.ttl = 86_400
@@ -955,5 +1113,322 @@ describe('CloudService', () => {
     vi.advanceTimersByTime(10_000)
     expect(tick).toHaveBeenCalledTimes(1)
     expect(onStatus).toHaveBeenCalledTimes(1) // nothing changed, nothing re-sent
+  })
+})
+
+// --- signing keys: rotation, revocation, offline certificates (CL-SEC-06) ----------
+
+/** The key id a token names (its payload, unverified). */
+const kidOf = (token: string) => (JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString('utf8')) as { kid?: string }).kid
+const saved = async (dir: string) => JSON.parse(await readFile(join(dir, 'cloud.json'), 'utf8')) as Record<string, unknown>
+const SIX_HOURS = 6 * 3600
+
+describe('CloudService: signing keys', () => {
+  it('names the keys it trusts on license calls only (Mindeck-Keys), so the cloud signs with one of them', async () => {
+    const t = await setup({ builtIn: ({ k, next }) => `${k.pem}\n${next.der}` })
+    await t.signIn()
+    const both = `${t.pair.k.kid},${t.next.kid}`
+    expect(t.cloud.last('/v1/license/heartbeat')!.keys).toBe(both)
+    expect(t.cloud.last('/v1/license/revocations')).toMatchObject({ method: 'GET', keys: both, auth: undefined })
+    expect(t.cloud.last('/v1/auth/login')!.keys).toBeUndefined()
+    expect(t.cloud.last('/v1/meta')!.keys).toBeUndefined()
+    await t.svc.followerLease('remote-1')
+    expect(t.cloud.last('/v1/license/follower-lease')!.keys).toBe(both)
+    await t.svc.api('GET', '/v1/me/sync')
+    expect(t.cloud.last('/v1/me/sync')!.keys).toBeUndefined()
+  })
+
+  it('after a rotation the new key signs for a core that knows it, the old one for a core that doesn’t — both hold', async () => {
+    const pair = { k: keys(), next: keys() }
+    const builtIn = ({ k, next }: KeyPairs) => `${k.der},${next.pem.replace(/\n/g, '\\n')}`
+    const t = await setup({ pair, builtIn })
+    t.cloud.s.next = pair.next
+    expect((await t.signIn()).state).toBe('active')
+    const token = (await saved(t.dir)).entitlement as string
+    expect(kidOf(token)).toBe(pair.next.kid)
+    t.svc.dispose()
+    const again = await setup({ pair, builtIn, dir: t.dir, secrets: t.secrets, offline: true })
+    expect(again.svc.status().state).toBe('active') // verified with the new key after a restart
+    // A build from before the rotation knows the old key only: it keeps getting tokens signed with it.
+    const old = await setup({ pair, builtIn: ({ k }) => k.pem })
+    old.cloud.s.next = pair.next
+    expect((await old.signIn()).state).toBe('active')
+    expect(old.cloud.last('/v1/license/heartbeat')!.keys).toBe(pair.k.kid)
+    expect(kidOf((await saved(old.dir)).entitlement as string)).toBe(pair.k.kid)
+  })
+
+  it('entitlements from before key ids (no kid) hold with the original key — and only with it', async () => {
+    const t = await setup({ builtIn: ({ k, next }) => `${k.pem},${next.pem}` })
+    t.cloud.s.noKid = true
+    expect((await t.signIn()).state).toBe('active')
+    expect(kidOf((await saved(t.dir)).entitlement as string)).toBeUndefined()
+    // Signed by the other trusted key without saying so: not tried with it.
+    t.cloud.s.next = t.next
+    await t.svc.refresh()
+    expect(t.svc.status().error).toBe('bad-entitlement')
+  })
+
+  it('a revoked key is remembered for good, and nothing it signed holds — entitlement, offline certificate, follower leases', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const pair = { k: keys(), next: keys() }
+    const builtIn = ({ k, next }: KeyPairs) => `${k.pem},${next.pem}`
+    const t = await setup({ pair, builtIn })
+    t.cloud.s.plan = 'lifetime'
+    t.cloud.s.ttl = 14 * 86_400
+    t.cloud.s.cert = 'good'
+    await t.signIn()
+    const oldCert = (await t.secrets.get(OFFLINE_SECRET))!
+    expect(kidOf(oldCert)).toBe(pair.k.kid)
+    const follower = await setup({ pair, builtIn, follower: true })
+    follower.clock.now = t.clock.now
+    const oldLease = (await t.svc.followerLease(follower.svc.installId()))!
+    expect(oldLease.revokedKids).toBeUndefined() // nothing revoked yet: nothing to hand over
+    expect(await follower.svc.adopt(oldLease.token, oldLease.account)).toMatchObject({ state: 'active' })
+    const otherLease = (await t.svc.followerLease('remote-2'))!
+
+    // The old key leaked: an emergency rotation revokes it.
+    t.cloud.s.next = pair.next
+    t.cloud.s.revoked = [pair.k.kid]
+    t.advance(SIX_HOURS)
+    await t.svc.refresh()
+    expect(warn).toHaveBeenCalledWith(`[cloud] signing key(s) revoked by Mindeck Cloud: ${pair.k.kid}`)
+    expect(t.svc.status()).toMatchObject({ state: 'active', error: null })
+    expect(await saved(t.dir)).toMatchObject({ revokedKids: [pair.k.kid] })
+    expect(kidOf((await saved(t.dir)).entitlement as string)).toBe(pair.next.kid)
+    expect(kidOf((await t.secrets.get(OFFLINE_SECRET))!)).toBe(pair.next.kid)
+    expect(t.cloud.last('/v1/license/heartbeat')!.keys).toBe(pair.next.kid) // the revoked key is not announced any more
+    // Follower leases it signed are asked for anew — and the desktop tells its followers what it revoked.
+    const lease = (await t.svc.followerLease('remote-2'))!
+    expect(lease.token).not.toBe(otherLease.token)
+    expect(kidOf(lease.token)).toBe(pair.next.kid)
+    expect(lease.revokedKids).toEqual([pair.k.kid])
+    expect(t.svc.entitlement()).toMatchObject({ revokedKids: [pair.k.kid] })
+
+    // The follower: its lease signed with the revoked key holds no more once the desktop says so …
+    await expect(follower.svc.adopt('mindeck1.bogus.sig', oldLease.account, [pair.k.kid])).rejects.toMatchObject({ code: 'bad-entitlement' })
+    expect(follower.svc.status()).toMatchObject({ allowed: false })
+    expect(await saved(follower.dir)).toMatchObject({ revokedKids: [pair.k.kid] })
+    await expect(follower.svc.adopt(oldLease.token, oldLease.account)).rejects.toMatchObject({ code: 'bad-entitlement' })
+    const fresh = (await t.svc.followerLease(follower.svc.installId()))!
+    expect(await follower.svc.adopt(fresh.token, fresh.account, fresh.revokedKids)).toMatchObject({ state: 'active' })
+
+    // The cloud forgets the revocation (a restore, a mistake): the core does not.
+    t.cloud.s.revoked = []
+    t.advance(SIX_HOURS)
+    await t.svc.refresh()
+    expect(await saved(t.dir)).toMatchObject({ revokedKids: [pair.k.kid] })
+    expect(t.cloud.last('/v1/license/heartbeat')!.keys).toBe(pair.next.kid)
+
+    // Offline, after a restart: the old certificate (put back into the store) holds no more; the new one does.
+    const newCert = (await t.secrets.get(OFFLINE_SECRET))!
+    t.svc.dispose()
+    await t.secrets.set(OFFLINE_SECRET, oldCert)
+    const restarted = await setup({ pair, builtIn, dir: t.dir, secrets: t.secrets, offline: true })
+    restarted.advance(30 * 86_400) // the 14-day lease ran out
+    expect(restarted.svc.status()).toMatchObject({ state: 'offline', allowed: false, offlineUntil: null })
+    restarted.svc.dispose()
+    await t.secrets.set(OFFLINE_SECRET, newCert)
+    const back = await setup({ pair, builtIn, dir: t.dir, secrets: t.secrets, offline: true })
+    back.advance(30 * 86_400)
+    expect(back.svc.status()).toMatchObject({ state: 'active', allowed: true })
+    warn.mockRestore()
+  })
+
+  it('a core whose every key is revoked names none and trusts nothing', async () => {
+    const t = await setup({ builtIn: ({ k }) => k.pem })
+    t.cloud.s.revoked = [t.pair.k.kid]
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    await t.signIn()
+    expect(t.svc.status()).toMatchObject({ state: 'checking', allowed: false, error: 'bad-entitlement' })
+    expect(t.cloud.last('/v1/license/heartbeat')!.keys).toBeUndefined()
+  })
+
+  it('ignores a revocation list it cannot verify and asks again in an hour — an older cloud (404) too, an unreachable one with the next heartbeat', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const t = await setup({ builtIn: ({ k }) => k.pem })
+    const asked = () => t.cloud.s.calls.filter((c) => c.path === '/v1/license/revocations').length
+    t.cloud.s.plan = 'lifetime'
+    t.cloud.s.ttl = 14 * 86_400
+    await t.signIn()
+    expect(asked()).toBe(1)
+    // Within six hours: not again.
+    t.advance(SIX_HOURS - 60)
+    await t.svc.refresh()
+    expect(asked()).toBe(1)
+    t.cloud.s.revoked = [t.pair.k.kid] // if any of these counted, nothing would verify any more
+    for (const kind of ['forged', 'expired', 'missing', 'garbled', 'self'] as const) {
+      t.cloud.s.revocations = kind
+      t.advance(SIX_HOURS)
+      await t.svc.refresh()
+      expect(t.svc.status(), kind).toMatchObject({ state: 'active', error: null })
+    }
+    expect(warn).toHaveBeenCalledWith('[cloud] ignoring a revocation list this core cannot verify')
+    expect((await saved(t.dir)).revokedKids).toBeUndefined()
+    const bad = asked()
+    t.advance(30 * 60)
+    await t.svc.refresh()
+    expect(asked()).toBe(bad) // an hour after a bad one
+    t.cloud.s.revoked = []
+    t.cloud.s.revocations = 'good'
+    t.cloud.s.fail['/v1/license/revocations'] = { status: 404, body: { error: { code: 'not_found', message: 'Not found' } } }
+    t.advance(31 * 60)
+    await t.svc.refresh()
+    expect(asked()).toBe(bad + 1)
+    expect(t.svc.status()).toMatchObject({ state: 'active', error: null }) // an older cloud: the heartbeat goes on
+    t.advance(30 * 60)
+    await t.svc.refresh()
+    expect(asked()).toBe(bad + 1)
+    delete t.cloud.s.fail['/v1/license/revocations']
+    t.cloud.s.down = true
+    t.advance(31 * 60)
+    await t.svc.refresh()
+    expect(asked()).toBe(bad + 2)
+    t.cloud.s.down = false
+    t.advance(31)
+    await t.svc.refresh()
+    expect(asked()).toBe(bad + 3) // unreachable: asked with the next heartbeat
+  })
+
+  it('dev builds (no key built in) take the keys and revoked ids from /v1/meta on first use', async () => {
+    const t = await setup()
+    t.cloud.s.next = t.next
+    t.cloud.s.revoked = ['an-old-key-id']
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    await t.signIn()
+    expect(await saved(t.dir)).toMatchObject({ publicKey: t.pair.k.pem, publicKeys: [t.next.pem, t.pair.k.pem], revokedKids: ['an-old-key-id'] })
+    expect(t.cloud.last('/v1/license/heartbeat')!.keys).toBe(`${t.pair.k.kid},${t.next.kid}`)
+    expect(kidOf((await saved(t.dir)).entitlement as string)).toBe(t.next.kid)
+    // A cloud from before key ids: its one key.
+    const old = await setup()
+    old.cloud.s.oldMeta = true
+    expect((await old.signIn()).state).toBe('active')
+    expect(await saved(old.dir)).toMatchObject({ publicKeys: [] })
+    expect(old.cloud.last('/v1/license/heartbeat')!.keys).toBe(old.pair.k.kid)
+  })
+})
+
+describe('CloudService: offline certificates', () => {
+  it('reports when the certificate ends (offlineUntil) — none without one', async () => {
+    const t = await setup()
+    t.cloud.s.plan = 'lifetime'
+    await t.signIn()
+    expect(t.svc.status().offlineUntil).toBeNull()
+    t.cloud.s.cert = 'good'
+    await t.svc.refresh()
+    const iat = Math.floor(t.clock.now / 1000)
+    expect(t.svc.status().offlineUntil).toBe(new Date((iat + 100 * 365 * 86_400) * 1000).toISOString())
+  })
+
+  it('holds only for the signed-in account and a lifetime plan', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const t = await setup()
+    t.cloud.s.plan = 'lifetime'
+    t.cloud.s.cert = 'good'
+    t.cloud.s.certOver = { sub: 'someone-else' }
+    await t.signIn()
+    expect(await t.secrets.get(OFFLINE_SECRET)).toBeUndefined()
+    t.cloud.s.certOver = { plan: 'trial' }
+    await t.svc.refresh()
+    expect(await t.secrets.get(OFFLINE_SECRET)).toBeUndefined()
+    expect(warn).toHaveBeenCalledWith('[cloud] ignoring an offline certificate this core cannot verify')
+    t.cloud.s.certOver = {}
+    await t.svc.refresh()
+    expect(await t.secrets.get(OFFLINE_SECRET)).toBeDefined()
+    expect(await saved(t.dir)).toMatchObject({ accountId: 'u1' })
+    // Signed out: the account's id goes too.
+    await t.svc.logout()
+    expect((await saved(t.dir)).accountId).toBeUndefined()
+  })
+
+  it('knows the account by its first entitlement when the cloud (or an older cloud.json) doesn’t say', async () => {
+    const t = await setup()
+    t.cloud.s.userId = undefined // an older cloud
+    t.cloud.s.plan = 'lifetime'
+    t.cloud.s.cert = 'good'
+    await t.signIn()
+    expect(await t.secrets.get(OFFLINE_SECRET)).toBeDefined()
+    expect(await saved(t.dir)).toMatchObject({ accountId: 'u1' })
+    t.svc.dispose()
+    // Saved before the account's id was: the stored entitlement names it.
+    const before = await saved(t.dir)
+    await writeFile(join(t.dir, 'cloud.json'), JSON.stringify({ ...before, accountId: undefined }))
+    const again = await setup({ dir: t.dir, secrets: t.secrets, offline: true })
+    again.advance(30 * 86_400)
+    expect(again.svc.status()).toMatchObject({ state: 'active' })
+    again.svc.dispose()
+    // Nothing names the account: the certificate doesn't hold.
+    await writeFile(join(t.dir, 'cloud.json'), JSON.stringify({ ...before, accountId: undefined, entitlement: null }))
+    const unknown = await setup({ dir: t.dir, secrets: t.secrets, offline: true })
+    expect(unknown.svc.status()).toMatchObject({ state: 'offline', offlineUntil: null })
+    // …nor one that names no account, when neither does anything else.
+    const none = await setup()
+    none.cloud.s.userId = undefined
+    none.cloud.s.sub = undefined
+    none.cloud.s.plan = 'lifetime'
+    none.cloud.s.cert = 'good'
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    await none.signIn()
+    expect(await none.secrets.get(OFFLINE_SECRET)).toBeUndefined()
+  })
+
+  it('a certificate from before key ids (no kid, issued for 100 years) holds 400 days from its issue at most', async () => {
+    const t = await setup()
+    t.cloud.s.noKid = true
+    t.cloud.s.plan = 'lifetime'
+    t.cloud.s.cert = 'good'
+    await t.signIn()
+    const iat = Math.floor(t.clock.now / 1000)
+    expect(t.svc.status().offlineUntil).toBe(new Date((iat + LEGACY_CERT_SECONDS) * 1000).toISOString())
+    t.svc.dispose()
+    const again = await setup({ dir: t.dir, secrets: t.secrets, offline: true })
+    again.advance(LEGACY_CERT_SECONDS - 60)
+    expect(again.svc.status()).toMatchObject({ state: 'active' })
+    again.advance(120)
+    expect(again.svc.status()).toMatchObject({ state: 'offline', allowed: false })
+  })
+
+  it('a disputed payment pauses a lifetime license: its own state, and the certificate goes until it is settled', async () => {
+    const t = await setup()
+    t.cloud.s.plan = 'lifetime'
+    t.cloud.s.cert = 'good'
+    await t.signIn()
+    expect(await t.secrets.get(OFFLINE_SECRET)).toBeDefined()
+    t.cloud.s.active = false
+    t.cloud.s.reason = 'license_suspended'
+    t.cloud.s.cert = undefined
+    await t.svc.refresh()
+    expect(t.svc.status()).toMatchObject({ state: 'license_suspended', allowed: false, license: { plan: 'lifetime' }, offlineUntil: null })
+    expect(await t.secrets.get(OFFLINE_SECRET)).toBeUndefined()
+    t.cloud.s.active = true
+    t.cloud.s.reason = 'ok'
+    t.advance(31)
+    await t.svc.tick()
+    expect(t.svc.status()).toMatchObject({ state: 'active', allowed: true })
+  })
+})
+
+describe('CloudService: new refusals', () => {
+  it('too many devices: the sign-in fails with device_limit, and the core learns where the website (its device list) is', async () => {
+    const limit = { status: 403, body: { error: { code: 'device_limit', message: 'Signed in on 3 computers already', details: { limit: 3, devices: [] } } } }
+    const t = await setup()
+    t.cloud.s.fail['/v1/auth/login'] = limit
+    await expect(t.signIn()).rejects.toMatchObject({ code: 'device_limit', status: 403 })
+    expect(t.svc.status()).toMatchObject({ state: 'signed_out', webUrl: 'https://mindeck.test' })
+    expect(t.onStatus).toHaveBeenLastCalledWith(expect.objectContaining({ webUrl: 'https://mindeck.test' }))
+    // The website unknown as well (the meta fails too): still the device limit.
+    const u = await setup()
+    u.cloud.s.fail['/v1/auth/register'] = limit
+    u.cloud.s.fail['/v1/meta'] = { status: 500 }
+    await expect(u.svc.register({ email: 'a@b.c', password: 'long enough!', locale: 'en' })).rejects.toMatchObject({ code: 'device_limit' })
+    expect(u.svc.status().webUrl).toBeNull()
+  })
+
+  it('the cloud AI switched off for the account: blocked, with credit and models still shown', async () => {
+    const t = await setup()
+    await t.signIn()
+    t.cloud.s.ai = { ...t.cloud.s.ai, blocked: true }
+    expect(await t.svc.aiInfo()).toMatchObject({ blocked: true, models: [{ id: 'claude-haiku-5-5' }] })
+    t.cloud.s.ai = { ...t.cloud.s.ai, blocked: false }
+    expect(await t.svc.aiInfo()).not.toHaveProperty('blocked')
   })
 })

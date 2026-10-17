@@ -92,8 +92,11 @@ export interface AiStatus {
   keyHint?: string
   /** The model in use right now. */
   model: string
-  /** Mindeck Cloud's AI (signed in): credit and models; null when signed out or the cloud offers none. */
-  cloud: { credit: AiCredit; models: { id: string; label: string; costFactor: number }[] } | null
+  /**
+   * Mindeck Cloud's AI (signed in): credit and models; null when signed out or
+   * the cloud offers none. `blocked`: an admin switched it off for this account.
+   */
+  cloud: { credit: AiCredit; models: { id: string; label: string; costFactor: number }[]; blocked?: true } | null
   settings: AiSettings
 }
 
