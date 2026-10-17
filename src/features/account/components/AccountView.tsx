@@ -68,12 +68,12 @@ function AccountCard({ status }: { status: CloudStatus }) {
       {license && !lifetime && <TrialMeter license={license} />}
       {lifetime && offlineUntil && <p className="font-mono text-[11px] text-text-muted">{t.cloud.offlineUntil(date(offlineUntil))}</p>}
       {daysLeft !== null && (
-        <p role="status" className="rounded-md border border-amber/40 bg-amber/[0.06] p-2.5 font-sans text-[12px] text-amber">
+        <p role="status" className="rounded-md border border-amber/40 bg-amber/6 p-2.5 font-sans text-[12px] text-amber">
           {t.cloud.offlineEnding(daysLeft, date(status.offlineUntil!))}
         </p>
       )}
       {status.state === 'license_suspended' && (
-        <p role="status" className="rounded-md border border-amber/40 bg-amber/[0.06] p-2.5 font-sans text-[12px] text-amber">
+        <p role="status" className="rounded-md border border-amber/40 bg-amber/6 p-2.5 font-sans text-[12px] text-amber">
           <span className="font-semibold">{t.cloud.suspendedTitle}.</span> {t.cloud.suspendedIntro}
         </p>
       )}
