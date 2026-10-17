@@ -21,7 +21,7 @@ Repository → Settings → Secrets and variables → Actions.
 | Name | Kind | Needed for | What |
 | --- | --- | --- | --- |
 | `MINDECK_CLOUD_URL` | variable | every build | Where Mindeck Cloud lives (baked in) |
-| `MINDECK_CLOUD_KEY` | secret | every build | The cloud's entitlement public key: `curl -s https://api.<domain>/v1/meta \| jq -r .entitlementPublicKey` |
+| `MINDECK_CLOUD_KEY` | secret | every build | The cloud's entitlement public key(s): `curl -s https://api.<domain>/v1/meta \| jq -r .entitlementPublicKey`. After a key rotation a list — PEM or base64 SPKI DER, comma- or line-separated, **the original key first**, the next key (from `keys:generate`) after it (docs/API.md §6.1). The build fails on a key it can't read |
 | `CSC_LINK` | secret | macOS signing | "Developer ID Application" certificate as `.p12`, base64-encoded (`base64 -i cert.p12 \| pbcopy`) |
 | `CSC_KEY_PASSWORD` | secret | macOS signing | The `.p12`'s password |
 | `APPLE_ID` | secret | macOS notarization | The Apple ID of the developer account |

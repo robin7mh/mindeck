@@ -446,7 +446,8 @@ export interface IpcChannels {
   'cloud:checkout': { request: void; response: { url: string } }
   /** Settings Sync through the account (Profile): status, save to the account (force: over a newer copy), load from it. */
   /** A follower core (Remote-SSH, Dev Container) takes the desktop's entitlement over. */
-  'cloud:adopt': { request: { token: string; account: CloudAccount }; response: CloudStatus }
+  /** `revokedKids`: the signing key ids the desktop knows to be revoked (the follower never asks the cloud). */
+  'cloud:adopt': { request: { token: string; account: CloudAccount; revokedKids?: string[] }; response: CloudStatus }
   /** A follower core's install id: the desktop asks Mindeck Cloud for a lease bound to it (BE-SEC-09). */
   'cloud:installId': { request: void; response: { installId: string } }
   'cloud:syncStatus': { request: void; response: SyncStatus }

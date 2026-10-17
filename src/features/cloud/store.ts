@@ -7,6 +7,8 @@ import { openExternal } from '@/lib/links'
 export interface CloudMessage {
   kind: 'error' | 'info'
   text: string
+  /** The cloud's error code (`device_limit` links the website's device list). */
+  code?: string
 }
 
 /** A cloud error in the UI language (by code), else its raw message. */
@@ -54,7 +56,7 @@ export const useCloud = create<CloudState>((set, get) => {
       set({ busy: false, ...(status ? { status } : {}), message: info ? { kind: 'info', text: info() } : null })
       return true
     } catch (err) {
-      set({ busy: false, message: { kind: 'error', text: cloudError(err) } })
+      set({ busy: false, message: { kind: 'error', text: cloudError(err), code: (err as { code?: string }).code } })
       return false
     }
   }

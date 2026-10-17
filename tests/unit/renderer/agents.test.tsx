@@ -518,6 +518,18 @@ describe('ChatThread', () => {
     useAssistant.setState({ status: undefined })
   })
 
+  it('the cloud AI switched off for the account, or content it doesn’t take: said in the app’s words', () => {
+    render(
+      <ChatThread
+        messages={[msg('b', { status: 'error', error: 'raw', errorCode: 'ai-blocked' }), msg('u', { status: 'error', error: 'raw', errorCode: 'ai-unsupported-content' })]}
+        pending={[]}
+        onRespond={vi.fn()}
+      />
+    )
+    expect(screen.getByText(/The AI through Mindeck Cloud is switched off for your account/)).toBeInTheDocument()
+    expect(screen.getByText(/a document by URL or a file from the Files API/)).toBeInTheDocument()
+  })
+
   it('renders user and assistant messages, tool cards with inline approval, states and usage', () => {
     const onRespond = vi.fn()
     const scrollIntoView = vi.fn()
