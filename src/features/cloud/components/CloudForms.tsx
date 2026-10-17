@@ -29,11 +29,21 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
 export function CloudNotice() {
   const message = useCloud((s) => s.message)
   const statusError = useCloud((s) => s.status?.error)
+  const webUrl = useCloud((s) => s.status?.webUrl)
   const t = useT()
   if (message) {
     return (
       <p role={message.kind === 'error' ? 'alert' : 'status'} className={cn('font-sans text-[12px]', message.kind === 'error' ? 'text-danger' : 'text-cyan')}>
         {message.text}
+        {/* Too many devices: they are removed on the website's account page. */}
+        {message.code === 'device_limit' && webUrl && (
+          <>
+            {' '}
+            <a href={`${webUrl}/account`} target="_blank" rel="noreferrer" className="text-cyan underline-offset-2 hover:underline">
+              {t.cloud.manageDevices}
+            </a>
+          </>
+        )}
       </p>
     )
   }

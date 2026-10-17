@@ -387,6 +387,10 @@ describe('SettingsView', () => {
     expect(screen.getByRole('meter', { name: 'AI credit' }).firstElementChild).toHaveClass('bg-cyan')
     expect(screen.getByText('Your own API key is set: the assistant uses it instead of this credit.')).toBeInTheDocument()
     expect(screen.getByLabelText('Suggestions while typing')).toBeEnabled()
+    expect(screen.queryByText(/switched off for your account/)).not.toBeInTheDocument()
+    // An admin switched the cloud AI off for this account.
+    act(() => useAssistant.setState({ status: cloudStatus({ cloud: { ...cloudStatus().cloud, blocked: true } }) as never }))
+    expect(screen.getByRole('status')).toHaveTextContent('The AI through Mindeck Cloud is switched off for your account')
     // No credit included at all (a cloud set to 0 €): the meter is full.
     act(() => useAssistant.setState({ status: cloudStatus({ cloud: { ...cloudStatus().cloud, credit: credit({ allowanceCents: 0, usedCents: 0 }) } }) as never }))
     expect(screen.getByRole('meter', { name: 'AI credit' })).toHaveAttribute('aria-valuenow', '100')

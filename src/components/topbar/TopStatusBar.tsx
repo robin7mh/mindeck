@@ -3,6 +3,7 @@ import { LogOut, Wifi, WifiOff, ShieldCheck } from 'lucide-react'
 import { Clock } from './Clock'
 import { StatusIndicator } from './StatusIndicator'
 import { UpdateChip } from '@/features/update/components/UpdateChip'
+import { OfflineChip } from '@/features/cloud/components/OfflineChip'
 import { WindowControls } from './WindowControls'
 import { TechLabel } from '@/components/ui/TechLabel'
 import { StatusDot } from '@/components/ui/StatusDot'
@@ -76,6 +77,7 @@ export function TopStatusBar({ since, showClock = true }: { since?: number; show
 
       {/* Right cluster */}
       <div className="ml-auto flex items-center gap-2 lg:ml-0">
+        <OfflineChip />
         <UpdateChip />
         <PaletteButton />
         <SplitButton />
