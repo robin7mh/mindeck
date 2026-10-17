@@ -1,6 +1,6 @@
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi, type Mock } from 'vitest'
 import {
   AgentSideConnection,
   ClientSideConnection,
@@ -135,7 +135,7 @@ interface FakeAgent {
   proc: AcpProcess
   newSession: NewSessionRequest[]
   prompts: PromptRequest[]
-  cancel: ReturnType<typeof vi.fn>
+  cancel: Mock
   /** What the agent does on a prompt (it can call back into the client). */
   onPrompt: (conn: AgentSideConnection, req: PromptRequest) => Promise<{ stopReason: 'end_turn' | 'cancelled' }>
   /** Model and mode switches it was asked for. */

@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join, basename } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 import { tempDir, tick } from './helpers'
 
 type FakePty = {
@@ -73,7 +73,7 @@ import type { TerminalSettings, TerminalSnapshot } from '@shared/types/terminal'
 const realPlatform = process.platform
 const setPlatform = (p: NodeJS.Platform) => Object.defineProperty(process, 'platform', { value: p })
 
-let emit: ReturnType<typeof vi.fn>
+let emit: Mock
 let svc: TerminalService
 let projectDir: string
 let dataDir: string

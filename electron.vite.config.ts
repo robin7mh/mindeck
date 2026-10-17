@@ -1,5 +1,5 @@
 import { resolve } from 'node:path'
-import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
+import { defineConfig } from 'electron-vite'
 import react from '@vitejs/plugin-react'
 import type { Plugin } from 'vite'
 import { remoteBundleDefines } from './electron/main/services/remote/bundle'
@@ -31,22 +31,22 @@ const devCsp: Plugin = {
 
 export default defineConfig({
   main: {
-    // Keep npm dependencies (e.g. systeminformation) external — required from
-    // node_modules at runtime instead of bundled (they use dynamic requires).
-    // ESM-only packages are bundled: the CommonJS main bundle can't require() them.
-    plugins: [externalizeDepsPlugin({ exclude: ['@agentclientprotocol/sdk'] })],
     resolve: { alias: shared },
     define: cloud,
     build: {
+      // Keep npm dependencies (e.g. systeminformation) external — required from
+      // node_modules at runtime instead of bundled (they use dynamic requires).
+      // ESM-only packages are bundled: the CommonJS main bundle can't require() them.
+      externalizeDeps: { exclude: ['@agentclientprotocol/sdk'] },
       outDir: 'out/main',
       // object entry => deterministic `index` output name (matches package.json "main")
       lib: { entry: { index: resolve(__dirname, 'electron/main.ts') } }
     }
   },
   preload: {
-    plugins: [externalizeDepsPlugin()],
     resolve: { alias: shared },
     build: {
+      externalizeDeps: true,
       outDir: 'out/preload',
       // browserPage: the browser tabs' own preload (session.ts), apart from Mindeck's bridge.
       lib: { entry: { index: resolve(__dirname, 'electron/preload.ts'), browserPage: resolve(__dirname, 'electron/browserPage.ts') } }
