@@ -66,9 +66,13 @@ const test = base.extend<{ core: Core; paired: Page; shells: boolean }>({
   }
 })
 
-/** A core route called the way the paired browser calls it (its device token), from outside the browser. */
+/**
+ * A core route called with the paired browser's device token, from outside the browser. The web UI
+ * keeps that token in its HttpOnly cookie (`mindeck_<port>`), which the page's scripts never see.
+ */
 async function rpc<T>(page: Page, core: Core, channel: string, payload: unknown = null): Promise<T> {
-  const token = await page.evaluate(() => sessionStorage.getItem('mindeck.token') ?? localStorage.getItem('mindeck.token'))
+  const cookies = await page.context().cookies(`${core.url}/api/rpc`) // the cookie's path is /api
+  const token = cookies.find((c) => c.name === `mindeck_${new URL(core.url).port}`)?.value
   const res = await fetch(`${core.url}/api/rpc/${channel}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
