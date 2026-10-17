@@ -188,7 +188,7 @@ describe('ESLint and Prettier from the project', () => {
       }
     })
     const pending = svc.format('p', 'a.js', 'x')
-    await tick()
+    await until(() => procs.length === 1)
     procs[0].say('a plugin printing to stdout')
     procs[0].say(JSON.stringify({ id: 99, ok: true, result: 'not ours' }))
     procs[0].say(JSON.stringify({ id: 1, ok: true, result: 'formatted' }))
@@ -199,13 +199,13 @@ describe('ESLint and Prettier from the project', () => {
     procs[0].emit('exit')
     await expect(crashing).rejects.toMatchObject({ message: 'The ESLint / Prettier worker stopped' })
     void svc.format('p', 'a.js', 'x').catch(() => {})
-    await tick()
+    await until(() => spawned === 2)
     expect(spawned).toBe(2)
     procs[0].emit('exit') // a stale exit: the new worker stays
     await tick(260) // idle: stopped
     expect(procs[1].killed).toBe(true)
     void svc.format('p', 'a.js', 'x').catch(() => {})
-    await tick()
+    await until(() => procs.length === 3)
     svc.restart()
     expect(procs[2].killed).toBe(true)
   })
@@ -217,6 +217,10 @@ describe('ESLint and Prettier from the project', () => {
 })
 
 const tick = (ms = 10) => new Promise((r) => setTimeout(r, ms))
+/** Waits by the clock (not a fixed number of turns): under load the worker starts later. */
+async function until(done: () => boolean, ms = 5000): Promise<void> {
+  for (const end = Date.now() + ms; !done() && Date.now() < end; ) await tick(5)
+}
 
 class FakeWorker extends EventEmitter {
   stdin = new PassThrough()
