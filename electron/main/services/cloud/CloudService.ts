@@ -1,5 +1,5 @@
 import type { AiCredit, AiStatus } from '@shared/types/ai'
-import { randomUUID, type KeyObject } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 import { mkdir, rename, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import {
@@ -11,7 +11,7 @@ import {
 } from '@shared/types/cloud'
 import type { SecretStore } from '../ai/SecretStore'
 import { readJson } from '../../lib/jsonFile'
-import { parsePublicKey, verifyEntitlement, type EntitlementClaims } from './entitlement'
+import { announcedKids, parsePublicKeys, trustedKeys, verifyEntitlement, verifyRevocations, type EntitlementClaims, type TrustedKeys } from './entitlement'
 
 /** The session token's name in the secret store (keychain on desktop). */
 export const SESSION_SECRET = 'cloud.session'
@@ -38,10 +38,20 @@ export const PAUSE_GRACE_MS = 2 * 60 * 60_000
 export const FOLLOWER_HANDOVER_MS = 24 * 60 * 60_000
 /** A cloud without follower leases (404) is asked again after this long. */
 const LEASE_RETRY_MS = 60 * 60_000
+/** The cloud's signed list of revoked signing keys is fetched again after this long (it is valid for 7 days). */
+const REVOCATIONS_REFRESH_MS = 6 * 60 * 60_000
+/**
+ * An offline certificate from before key ids (no `kid`) was issued for 100
+ * years: it holds this long from its issue at most. Newer ones last a year
+ * and are renewed with every heartbeat.
+ */
+export const LEGACY_CERT_SECONDS = 400 * 86_400
+/** Request header with the ids of the keys this core trusts — Mindeck Cloud signs with one of them (README → "Signing keys"). */
+export const KEYS_HEADER = 'mindeck-keys'
 
 export interface CloudServiceOptions {
   baseUrl: string
-  /** Entitlement key; without it the key is fetched from the cloud (and remembered). */
+  /** Entitlement key(s), the legacy key first (parsePublicKeys); without one they are fetched from the cloud (and remembered). */
   publicKey?: string
   enforced: boolean
   /** How this core signs in: the desktop app, or a headless server/Docker core. */
@@ -68,7 +78,14 @@ interface Persisted {
   account: CloudAccount | null
   license: CloudLicense | null
   entitlement: string | null
+  /** Without keys built in (dev): the cloud's `entitlementPublicKey` — the legacy key — trusted on first use. */
   publicKey: string | null
+  /** …and the other keys its /v1/meta listed (`entitlementKeys`), PEM. */
+  publicKeys?: string[]
+  /** Every signing key id Mindeck Cloud said is revoked. Only ever grows: a token signed with one is never trusted again, offline neither. */
+  revokedKids?: string[]
+  /** The signed-in account's id (`sub` of its entitlements) — an offline certificate must name it. */
+  accountId?: string
   webUrl: string | null
   /** Follower: when the desktop last handed over its own entitlement (not a lease) — it holds FOLLOWER_HANDOVER_MS from then at most. */
   adoptedAt?: number
@@ -77,6 +94,7 @@ interface Persisted {
 }
 
 interface ApiUser {
+  id?: string
   email: string
   name: string | null
 }
@@ -98,6 +116,20 @@ interface HeartbeatResponse {
 interface Meta {
   entitlementPublicKey: string
   webUrl: string
+  /** Newer clouds: every key a core may trust, and the ids it must not (dev builds take them on first use). */
+  entitlementKeys?: { kid: string; publicKey: string; active: boolean }[]
+  revokedKeyIds?: string[]
+}
+interface RevocationsResponse {
+  revokedKids: string[]
+  /** `mindeck-rl1.<payload>.<signature>` — only this signed copy counts. */
+  revocations: string
+}
+/** An entitlement as it is handed to a follower core — with the key ids this core knows to be revoked. */
+export interface Handover {
+  token: string
+  account: CloudAccount
+  revokedKids?: string[]
 }
 interface FollowerLeaseResponse {
   entitlement: { token: string } | null
@@ -117,7 +149,7 @@ const toLicense = (l: ApiLicense): CloudLicense => ({
 
 /** A verified offline certificate that still holds: lifetime, active, perpetual. */
 export function holdsOffline(cert: EntitlementClaims | null, now: number): cert is EntitlementClaims {
-  return !!cert && cert.perpetual === true && cert.active && cert.exp * 1000 > now
+  return !!cert && cert.perpetual === true && cert.active && cert.plan === 'lifetime' && cert.exp * 1000 > now
 }
 
 /**
@@ -141,7 +173,7 @@ export function deriveState(i: {
 }): LicenseState {
   if (!i.signedIn) return 'signed_out'
   const c = i.claims
-  if (c && !c.active) return c.reason === 'email_unverified' ? 'email_unverified' : 'trial_expired'
+  if (c && !c.active) return c.reason === 'email_unverified' || c.reason === 'license_suspended' ? c.reason : 'trial_expired'
   if (c && c.exp * 1000 > i.now) return 'active'
   if (holdsOffline(i.offline ?? null, i.now)) return 'active'
   if (!i.online) return 'offline'
@@ -167,9 +199,14 @@ export class CloudService {
     webUrl: null
   }
   private claims: EntitlementClaims | null = null
-  /** The lifetime license's offline certificate, verified. */
+  /** The lifetime license's offline certificate, verified — and as stored. */
   private offline: EntitlementClaims | null = null
-  private key: KeyObject | null = null
+  private offlineToken: string | null = null
+  private keys: TrustedKeys | null = null
+  /** `revokedKids` as a set. */
+  private revoked = new Set<string>()
+  /** The revocation list is not asked for before this. */
+  private revocationsDue = 0
   private online = true
   private error: string | null = null
   private lastAttempt = 0
@@ -198,14 +235,18 @@ export class CloudService {
       this.data.installId = randomUUID()
       await this.save()
     }
-    this.key = this.publicKey()
-    this.claims = this.data.entitlement && this.key ? verifyEntitlement(this.data.entitlement, this.key) : null
+    this.revoked = new Set(this.data.revokedKids)
+    this.keys = this.trustedKeys()
+    this.claims = this.verify(this.data.entitlement)
     // A follower's last entitlement holds as it did when it was handed over (a lease for this core, or briefly the desktop's).
     if (this.opts.follower) this.claims = this.followerClaims(this.claims)
-    // Saved before the device was remembered: the last lease names it (a lifetime license offline still starts).
-    else this.data.deviceId ??= this.claims?.dev
+    else {
+      // Saved before the device (or the account's id) was remembered: the last lease names it (a lifetime license offline still starts).
+      this.data.deviceId ??= this.claims?.dev
+      this.data.accountId ??= this.claims?.sub
+    }
     const cert = this.data.account ? await this.opts.secrets.get(OFFLINE_SECRET) : undefined
-    this.offline = cert ? this.verifyOffline(cert) : null
+    this.keepCertificate(cert ? this.verifyOffline(cert) : null, cert)
     // A follower only ever hears from the desktop (cloud:adopt).
     if (this.opts.follower) return this.emit()
     this.timer = setInterval(() => void this.tick(), TICK_MS)
@@ -225,8 +266,8 @@ export class CloudService {
   /** The account's AI credit and models — null when signed out, offline, a follower or the cloud offers no AI. */
   async aiInfo(): Promise<AiStatus['cloud']> {
     if (!this.data.account || this.opts.follower) return null
-    const res = await this.call<{ available: boolean; credit: AiCredit | null; models: { id: string; label: string; costFactor: number }[] }>('GET', '/v1/me/ai').catch(() => null)
-    return res?.available && res.credit ? { credit: res.credit, models: res.models } : null
+    const res = await this.call<{ available: boolean; blocked?: boolean; credit: AiCredit | null; models: { id: string; label: string; costFactor: number }[] }>('GET', '/v1/me/ai').catch(() => null)
+    return res?.available && res.credit ? { credit: res.credit, models: res.models, ...(res.blocked ? { blocked: true as const } : {}) } : null
   }
 
   status(): CloudStatus {
@@ -241,7 +282,8 @@ export class CloudService {
       lastAttempt: this.lastAttempt
     })
     // Running on the offline certificate: it says how long.
-    const until = this.claims && this.claims.exp * 1000 > now ? this.claims : holdsOffline(this.offline, now) ? this.offline : this.claims
+    const cert = holdsOffline(this.offline, now) ? this.offline : null
+    const until = this.claims && this.claims.exp * 1000 > now ? this.claims : (cert ?? this.claims)
     return {
       enforced: this.opts.enforced,
       allowed: !this.opts.enforced || USABLE_STATES.includes(state),
@@ -249,6 +291,7 @@ export class CloudService {
       account: this.data.account,
       license: this.data.license,
       validUntil: until ? new Date(until.exp * 1000).toISOString() : null,
+      offlineUntil: cert ? new Date(cert.exp * 1000).toISOString() : null,
       online: this.online,
       webUrl: this.data.webUrl,
       error: this.error
@@ -275,16 +318,12 @@ export class CloudService {
     return this.status().allowed
   }
 
-  async login(req: { email: string; password: string }): Promise<CloudStatus> {
-    const res = await this.call<AuthResponse>('POST', '/v1/auth/login', { ...req, ...this.client() }, false)
-    await this.signedIn(res)
-    return this.status()
+  login(req: { email: string; password: string }): Promise<CloudStatus> {
+    return this.signIn('/v1/auth/login', req)
   }
 
-  async register(req: { email: string; password: string; name?: string; locale: 'de' | 'en' }): Promise<CloudStatus> {
-    const res = await this.call<AuthResponse>('POST', '/v1/auth/register', { ...req, ...this.client() }, false)
-    await this.signedIn(res)
-    return this.status()
+  register(req: { email: string; password: string; name?: string; locale: 'de' | 'en' }): Promise<CloudStatus> {
+    return this.signIn('/v1/auth/register', req)
   }
 
   async logout(): Promise<CloudStatus> {
@@ -319,9 +358,14 @@ export class CloudService {
 
   /** A Stripe Checkout for this account; the client opens the URL in a browser. */
   /** The entitlement a follower core (Remote-SSH, Dev Container) takes over — none while it isn't valid. */
-  entitlement(): { token: string; account: CloudAccount } | null {
+  entitlement(): Handover | null {
     const { entitlement, account } = this.data
-    return entitlement && account && this.claims?.active && this.claims.exp * 1000 > this.now() ? { token: entitlement, account } : null
+    return entitlement && account && this.claims?.active && this.claims.exp * 1000 > this.now() ? this.handover(entitlement, account) : null
+  }
+
+  /** What a follower gets: the token, the account — and the revoked key ids, so it stops trusting them too (it never asks the cloud). */
+  private handover(token: string, account: CloudAccount): Handover {
+    return { token, account, ...(this.revoked.size ? { revokedKids: [...this.revoked] } : {}) }
   }
 
   /** This install's id — a follower's is what its leases are bound to (`dev`). */
@@ -337,24 +381,24 @@ export class CloudService {
    * asked again after an hour) or can't be reached without a lease still in
    * hand: the desktop then hands over its own entitlement (the transition).
    */
-  async followerLease(installId: string): Promise<{ token: string; account: CloudAccount } | null> {
+  async followerLease(installId: string): Promise<Handover | null> {
     const own = this.entitlement()
     if (!own || this.opts.follower) return null
     const now = this.now()
     const kept = this.leases.get(installId)
-    const held = kept && kept.claims.exp * 1000 > now ? { token: kept.token, account: own.account } : null
+    const held = kept && kept.claims.exp * 1000 > now ? this.handover(kept.token, own.account) : null
     if (held && now < ((kept!.claims.iat + kept!.claims.exp) / 2) * 1000) return held
     if (now < this.noLeasesUntil) return held
     try {
       const res = await this.call<FollowerLeaseResponse>('POST', '/v1/license/follower-lease', { installId, appVersion: this.opts.version })
       const token = res.entitlement?.token
-      const claims = token && this.key ? verifyEntitlement(token, this.key) : null
+      const claims = this.verify(token)
       if (!claims || claims.lease !== 'follower' || claims.dev !== installId || !claims.active || claims.exp * 1000 <= now) {
         console.warn('[cloud] ignoring a follower lease that is not valid for that core')
         return held
       }
       this.leases.set(installId, { token: token!, claims })
-      return { token: token!, account: own.account }
+      return this.handover(token!, own.account)
     } catch (err) {
       if ((err as { status?: number }).status === 404) this.noLeasesUntil = now + LEASE_RETRY_MS
       return held
@@ -369,12 +413,14 @@ export class CloudService {
    * good. A follower lease must be this core's (`dev` = its install id); the
    * desktop's own entitlement — while the cloud issues no leases — holds for
    * FOLLOWER_HANDOVER_MS after the desktop last handed it over, and not at all
-   * once this core ran on a lease.
+   * once this core ran on a lease. The key ids the desktop knows to be
+   * revoked are kept first: whatever they signed holds here no more.
    */
-  async adopt(token: string, account: CloudAccount): Promise<CloudStatus> {
+  async adopt(token: string, account: CloudAccount, revokedKids: readonly string[] = []): Promise<CloudStatus> {
     if (!this.opts.follower) throw coded('not-follower', 'This core signs in itself')
-    if (!this.key) await this.ensureMeta().catch(() => {})
-    const claims = this.key ? verifyEntitlement(token, this.key) : null
+    if (!this.keys) await this.ensureMeta().catch(() => {})
+    await this.revoke(revokedKids)
+    const claims = this.verify(token)
     if (!claims) throw coded('bad-entitlement', 'This entitlement cannot be verified')
     if (claims.perpetual) throw coded('bad-entitlement', 'An offline certificate holds only on the device it was issued to')
     if (!claims.active || claims.exp * 1000 <= this.now()) throw coded('bad-entitlement', 'This entitlement is not valid (any more)')
@@ -440,16 +486,18 @@ export class CloudService {
       this.lastAttempt = this.now()
       try {
         await this.ensureMeta()
+        await this.checkRevocations()
         const res = await this.call<HeartbeatResponse>('POST', '/v1/license/heartbeat', {
           appVersion: this.opts.version
         })
         this.data.license = toLicense(res.license)
         if (res.entitlement) {
-          const claims = this.key ? verifyEntitlement(res.entitlement.token, this.key) : null
+          const claims = this.verify(res.entitlement.token)
           if (!claims) throw coded('bad-entitlement', 'Mindeck Cloud sent an entitlement this core cannot verify')
           this.claims = claims
           this.data.entitlement = res.entitlement.token
           if (claims.dev) this.data.deviceId = claims.dev
+          this.data.accountId ??= claims.sub
         }
         await this.keepOffline(res)
         await this.save()
@@ -479,9 +527,26 @@ export class CloudService {
     }
   }
 
+  private async signIn(path: string, req: object): Promise<CloudStatus> {
+    let res: AuthResponse
+    try {
+      res = await this.call<AuthResponse>('POST', path, { ...req, ...this.client() }, false)
+    } catch (err) {
+      // Signed in on too many devices: one is removed on the website (its account page) — the UI links it once it knows where that is.
+      if ((err as { code?: string }).code === 'device_limit') {
+        await this.ensureMeta().catch(() => {})
+        this.emit()
+      }
+      throw err
+    }
+    await this.signedIn(res)
+    return this.status()
+  }
+
   private async signedIn(res: AuthResponse): Promise<void> {
     await this.opts.secrets.set(SESSION_SECRET, res.session.token)
     await this.dropOffline() // another account, maybe: its own certificate comes with the first heartbeat
+    this.data.accountId = res.user.id // an older cloud doesn't say: the first entitlement's `sub` then
     this.data.account = toAccount(res.user)
     this.data.license = toLicense(res.license)
     this.data.entitlement = null
@@ -495,7 +560,7 @@ export class CloudService {
   private async forget(error: string | null): Promise<void> {
     await this.opts.secrets.set(SESSION_SECRET, null)
     await this.dropOffline()
-    this.data = { ...this.data, account: null, license: null, entitlement: null }
+    this.data = { ...this.data, account: null, license: null, entitlement: null, accountId: undefined }
     this.claims = null
     this.error = error
     await this.save()
@@ -511,54 +576,119 @@ export class CloudService {
     if (typeof res.offlineCertificate === 'string') {
       const cert = this.verifyOffline(res.offlineCertificate)
       if (cert) {
-        this.offline = cert
+        this.keepCertificate(cert, res.offlineCertificate)
         await this.opts.secrets.set(OFFLINE_SECRET, res.offlineCertificate)
         return
       }
       console.warn('[cloud] ignoring an offline certificate this core cannot verify')
     }
-    const revoked = (this.claims && !this.claims.active) || res.license.plan !== 'lifetime'
-    if (revoked && this.offline) await this.dropOffline()
+    // A refund, a chargeback, an open dispute: the cloud's answer wins.
+    const ended = (this.claims && !this.claims.active) || res.license.plan !== 'lifetime'
+    if (ended && this.offline) await this.dropOffline()
+  }
+
+  private keepCertificate(cert: EntitlementClaims | null, token: string | undefined): void {
+    this.offline = cert
+    this.offlineToken = cert ? token! : null
   }
 
   private async dropOffline(): Promise<void> {
-    this.offline = null
+    this.keepCertificate(null, undefined)
     await this.opts.secrets.set(OFFLINE_SECRET, null)
   }
 
   /**
-   * The certificate's claims if it is genuine, perpetual and this device's —
-   * else null. A certificate names the device it was issued to (`dev`: the id
-   * Mindeck Cloud gave this install, or its install id): one copied from
-   * another installation doesn't hold here. One without `dev` holds anywhere.
+   * The certificate's claims if it is genuine, perpetual, lifetime, the
+   * signed-in account's (`sub`) and this device's — else null. A certificate
+   * names the device it was issued to (`dev`: the id Mindeck Cloud gave this
+   * install, or its install id): one copied from another installation or
+   * account doesn't hold here. One without `dev` holds on any device of the
+   * account. One from before key ids (no `kid`) holds LEGACY_CERT_SECONDS
+   * from its issue at most.
    */
   private verifyOffline(token: string): EntitlementClaims | null {
-    const claims = this.key ? verifyEntitlement(token, this.key) : null
-    if (!claims || !holdsOffline(claims, this.now())) return null
-    return !claims.dev || claims.dev === this.data.installId || claims.dev === this.data.deviceId ? claims : null
+    const claims = this.verify(token)
+    if (!claims) return null
+    const cert = claims.kid ? claims : { ...claims, exp: Math.min(claims.exp, claims.iat + LEGACY_CERT_SECONDS) }
+    if (!holdsOffline(cert, this.now()) || !cert.sub || cert.sub !== this.data.accountId) return null
+    return !cert.dev || cert.dev === this.data.installId || cert.dev === this.data.deviceId ? cert : null
+  }
+
+  /** A token's claims if one of the trusted keys signed it (its `kid`'s) and that key is not revoked. */
+  private verify(token: string | null | undefined): EntitlementClaims | null {
+    return token && this.keys ? verifyEntitlement(token, this.keys, this.revoked) : null
+  }
+
+  /**
+   * The cloud's signed revocation list, every REVOCATIONS_REFRESH_MS: only a
+   * list signed by a key this core trusts counts (the unsigned copy next to
+   * it does not). A cloud that answers without one (older versions: 404) is
+   * asked again after an hour; one that can't be reached with the next heartbeat.
+   */
+  private async checkRevocations(): Promise<void> {
+    const now = this.now()
+    if (now < this.revocationsDue || !this.keys) return
+    const res = await this.call<RevocationsResponse>('GET', '/v1/license/revocations', undefined, false).catch((err: { status?: number }) => {
+      if (err.status !== undefined) this.revocationsDue = now + LEASE_RETRY_MS
+      return null
+    })
+    if (!res) return
+    const kids = typeof res.revocations === 'string' ? verifyRevocations(res.revocations, this.keys, this.revoked, Math.floor(now / 1000)) : null
+    if (!kids) {
+      console.warn('[cloud] ignoring a revocation list this core cannot verify')
+      this.revocationsDue = now + LEASE_RETRY_MS
+      return
+    }
+    this.revocationsDue = now + REVOCATIONS_REFRESH_MS
+    await this.revoke(kids)
+  }
+
+  /**
+   * Revoked signing keys: remembered for good (never removed), and whatever
+   * they signed is dropped — the entitlement, the offline certificate, the
+   * follower leases. The cloud signs anew with a key still trusted.
+   */
+  private async revoke(kids: readonly string[]): Promise<void> {
+    const fresh = kids.filter((kid) => !this.revoked.has(kid))
+    if (!fresh.length) return
+    for (const kid of fresh) this.revoked.add(kid)
+    this.data.revokedKids = [...this.revoked]
+    console.warn(`[cloud] signing key(s) revoked by Mindeck Cloud: ${fresh.join(', ')}`)
+    if (this.claims && !this.verify(this.data.entitlement)) {
+      this.claims = null
+      this.data.entitlement = null
+    }
+    if (this.offlineToken && !this.verifyOffline(this.offlineToken)) await this.dropOffline()
+    for (const [installId, lease] of this.leases) if (!this.verify(lease.token)) this.leases.delete(installId)
+    await this.save()
   }
 
   private note(err: unknown): void {
     this.error = (err as { code?: string }).code ?? 'error'
   }
 
-  private publicKey(): KeyObject | null {
-    const pem = this.opts.publicKey ?? this.data.publicKey
-    if (!pem) return null
+  /** The keys built in — else those the cloud named on first use. Null when there are none or one can't be read. */
+  private trustedKeys(): TrustedKeys | null {
+    const list = this.opts.publicKey ?? [this.data.publicKey, ...(this.data.publicKeys ?? [])].filter(Boolean).join(',')
     try {
-      return parsePublicKey(pem)
+      return trustedKeys(parsePublicKeys(list))
     } catch {
       return null
     }
   }
 
-  /** The website URL and (unless built in) the entitlement key, once per run. */
+  /** The website URL and (unless built in) the entitlement keys and revoked key ids, until the core knows them. */
   private async ensureMeta(): Promise<void> {
-    if (this.key && this.data.webUrl) return
+    if (this.keys && this.data.webUrl) return
     const meta = await this.call<Meta>('GET', '/v1/meta', undefined, false)
     this.data.webUrl = meta.webUrl
-    if (!this.opts.publicKey) this.data.publicKey = meta.entitlementPublicKey
-    this.key = this.publicKey()
+    const tofu = !this.opts.publicKey
+    if (tofu) {
+      this.data.publicKey = meta.entitlementPublicKey
+      this.data.publicKeys = (meta.entitlementKeys ?? []).map((k) => k.publicKey)
+    }
+    this.keys = this.trustedKeys()
+    if (tofu) await this.revoke(meta.revokedKeyIds ?? [])
     await this.save()
   }
 
@@ -573,6 +703,9 @@ export class CloudService {
       }
       headers.authorization = `Bearer ${token}`
     }
+    // License calls name the keys this core trusts, so the cloud signs with one of them (after a rotation: the new key).
+    const kids = path.startsWith('/v1/license') && this.keys ? announcedKids(this.keys, this.revoked) : []
+    if (kids.length) headers[KEYS_HEADER] = kids.join(',')
     let res: Response
     try {
       res = await this.fetch(`${this.opts.baseUrl}${path}`, {

@@ -1,10 +1,12 @@
 import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { useEffect, useState } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { CloudStatus } from '@shared/types/cloud'
+import { offlineDaysLeft, OFFLINE_WARN_DAYS, type CloudStatus } from '@shared/types/cloud'
 import { cloudError, formatDuration, useCloud } from '@/features/cloud/store'
 import { CloudNotice, SignInForm } from '@/features/cloud/components/CloudForms'
 import { CloudScreen, LicenseGate } from '@/features/cloud/components/LicenseGate'
+import { OfflineChip } from '@/features/cloud/components/OfflineChip'
+import { useWorkspace } from '@/features/workspace/store'
 import { AccountView } from '@/features/account/components/AccountView'
 import { SideNavigation } from '@/components/nav/SideNavigation'
 import { useLocale } from '@/lib/i18n'
@@ -27,6 +29,20 @@ describe('helpers', () => {
     expect(cloudError(Object.assign(new Error('raw'), { code: 'invalid_credentials' }))).toBe('Email or password is wrong.')
     expect(cloudError(Object.assign(new Error('raw text'), { code: 'something_new' }))).toBe('raw text')
     expect(cloudError(new Error('plain'))).toBe('plain')
+  })
+
+  it('warns about the offline certificate in its last 30 days only', () => {
+    const now = Date.parse('2026-10-17T12:00:00Z')
+    const at = (days: number) => ({ offlineUntil: new Date(now + days * 86_400_000).toISOString() })
+    expect(OFFLINE_WARN_DAYS).toBe(30)
+    expect(offlineDaysLeft({ offlineUntil: null }, now)).toBeNull()
+    expect(offlineDaysLeft(at(200), now)).toBeNull()
+    expect(offlineDaysLeft(at(30), now)).toBeNull()
+    expect(offlineDaysLeft(at(29.5), now)).toBe(29)
+    expect(offlineDaysLeft(at(12.2), now)).toBe(12)
+    expect(offlineDaysLeft(at(0.5), now)).toBe(0)
+    expect(offlineDaysLeft(at(-3), now)).toBe(0)
+    expect(offlineDaysLeft({ offlineUntil: new Date(Date.now() + 5.5 * 86_400_000).toISOString() })).toBe(5) // the clock by default
   })
 
   it('formats trial time', () => {
@@ -96,7 +112,16 @@ describe('cloud store', () => {
   it('shows what went wrong and stays usable', async () => {
     installBridge({ 'cloud:login': () => fail('nope', 'invalid_credentials') })
     expect(await useCloud.getState().login('a@b.de', 'x')).toBe(false)
-    expect(useCloud.getState()).toMatchObject({ busy: false, message: { kind: 'error', text: 'Email or password is wrong.' } })
+    expect(useCloud.getState()).toMatchObject({ busy: false, message: { kind: 'error', text: 'Email or password is wrong.', code: 'invalid_credentials' } })
+  })
+
+  it('too many devices: says so in the UI language', async () => {
+    installBridge({ 'cloud:login': () => fail('Signed in on 3 computers already', 'device_limit') })
+    await useCloud.getState().login('a@b.de', 'x')
+    expect(useCloud.getState().message).toMatchObject({ code: 'device_limit', text: expect.stringContaining('Remove one under Devices') })
+    act(() => useLocale.setState({ locale: 'de' }))
+    await useCloud.getState().login('a@b.de', 'x')
+    expect(useCloud.getState().message!.text).toContain('Entferne eines unter „Geräte“')
   })
 })
 
@@ -113,6 +138,17 @@ describe('CloudNotice', () => {
     expect(screen.getByRole('status')).toHaveTextContent('Sent.')
     act(() => useCloud.setState({ message: { kind: 'error', text: 'Bad.' } }))
     expect(screen.getByRole('alert')).toHaveTextContent('Bad.')
+    expect(screen.queryByRole('link')).not.toBeInTheDocument()
+  })
+
+  it('device limit: links the website’s device list once the core knows where it is', () => {
+    act(() => useCloud.setState({ status: locked('signed_out'), message: { kind: 'error', text: 'Too many.', code: 'device_limit' } }))
+    const { rerender } = render(<CloudNotice />)
+    expect(screen.getByRole('alert')).toHaveTextContent('Too many.')
+    expect(screen.queryByRole('link')).not.toBeInTheDocument()
+    act(() => useCloud.setState({ status: locked('signed_out', { webUrl: 'https://mindeck.test' }) }))
+    rerender(<CloudNotice />)
+    expect(screen.getByRole('link', { name: 'Manage devices' })).toHaveAttribute('href', 'https://mindeck.test/account')
   })
 })
 
@@ -242,6 +278,19 @@ describe('CloudScreen', () => {
     expect(bridge.invoke).toHaveBeenCalledWith('cloud:refresh', undefined)
   })
 
+  it('a disputed payment: the license is paused — nothing to buy, check again or sign out', async () => {
+    const bridge = installBridge()
+    show(locked('license_suspended', { license: LIFETIME }))
+    expect(screen.getByText('Payment disputed — license paused')).toBeInTheDocument()
+    expect(screen.getByText(/was disputed \(a chargeback\)/)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Buy lifetime license' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Check again' }))
+    await settle()
+    expect(bridge.invoke).toHaveBeenCalledWith('cloud:refresh', undefined)
+    act(() => useLocale.setState({ locale: 'de' }))
+    expect(screen.getByText('Zahlung angefochten – Lizenz pausiert')).toBeInTheDocument()
+  })
+
   it('waits while checking; keeps buttons off while busy; works without a known account', () => {
     installBridge()
     const { rerender } = show(locked('checking'))
@@ -291,6 +340,34 @@ describe('AccountView account card', () => {
     expect(screen.getByText(/Entwickler-Build/)).toBeInTheDocument()
   })
 
+  it('a lifetime account on its offline certificate: how long it holds — and a warning in its last 30 days', () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-10-17T12:00:00Z'))
+    useCloud.setState({
+      status: status({ state: 'active', account: ACCOUNT, license: LIFETIME, validUntil: '2026-10-31T12:00:00.000Z', offlineUntil: '2027-09-01T12:00:00.000Z' })
+    })
+    const { unmount } = render(<AccountView />)
+    expect(screen.getByText('Works offline until Sep 1, 2027')).toBeInTheDocument()
+    expect(screen.queryByText(/offline certificate runs out/)).not.toBeInTheDocument()
+    unmount()
+    for (const [until, when] of [['2026-11-03T12:00:00.000Z', 'in 17 days'], ['2026-10-18T13:00:00.000Z', 'in 1 day'], ['2026-10-17T13:00:00.000Z', 'within a day']]) {
+      useCloud.setState({ status: status({ state: 'active', account: ACCOUNT, license: LIFETIME, validUntil: null, offlineUntil: until }) })
+      const view = render(<AccountView />)
+      expect(screen.getByRole('status')).toHaveTextContent(`The offline certificate runs out ${when}`)
+      view.unmount()
+    }
+    act(() => useLocale.setState({ locale: 'de' }))
+    render(<AccountView />)
+    expect(screen.getByRole('status')).toHaveTextContent('Das Offline-Zertifikat läuft in weniger als einem Tag ab')
+    vi.useRealTimers()
+  })
+
+  it('a paused lifetime license (disputed payment) says so on the card', () => {
+    useCloud.setState({ status: status({ state: 'license_suspended', account: ACCOUNT, license: LIFETIME }) })
+    render(<AccountView />)
+    expect(screen.getByRole('status')).toHaveTextContent('Payment disputed — license paused.')
+  })
+
   it('without a license yet, or a lifetime license not yet confirmed offline', () => {
     useCloud.setState({ status: status({ state: 'checking', account: ACCOUNT, license: null }) })
     const { unmount } = render(<AccountView />)
@@ -312,6 +389,33 @@ describe('AccountView account card', () => {
     useCloud.setState({ status: locked('signed_out') })
     render(<AccountView />)
     expect(screen.queryByText(/Developer build/)).not.toBeInTheDocument()
+  })
+})
+
+describe('OfflineChip', () => {
+  it('shows in the top bar in the certificate’s last 30 days and opens the profile', () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-10-17T12:00:00Z'))
+    const { container, rerender } = render(<OfflineChip />)
+    expect(container).toBeEmptyDOMElement() // no status yet
+    act(() => useCloud.setState({ status: status({ offlineUntil: '2027-10-17T12:00:00.000Z' }) }))
+    expect(container).toBeEmptyDOMElement()
+    act(() => useCloud.setState({ status: status({ offlineUntil: '2026-10-27T12:00:00.000Z' }) }))
+    rerender(<OfflineChip />)
+    const show = vi.spyOn(useWorkspace.getState(), 'show')
+    fireEvent.click(screen.getByRole('button', { name: 'Offline license ends in 10 days' }))
+    expect(show).toHaveBeenCalledWith('account')
+    act(() => useCloud.setState({ status: status({ offlineUntil: '2026-10-18T13:00:00.000Z' }) }))
+    expect(screen.getByRole('button', { name: 'Offline license ends in 1 day' })).toBeInTheDocument()
+    act(() => useCloud.setState({ status: status({ offlineUntil: '2026-10-17T13:00:00.000Z' }) }))
+    expect(screen.getByRole('button', { name: 'Offline license ends within a day' })).toBeInTheDocument()
+    act(() => useLocale.setState({ locale: 'de' }))
+    expect(screen.getByRole('button', { name: 'Offline-Lizenz endet in weniger als einem Tag' })).toBeInTheDocument()
+    act(() => useCloud.setState({ status: status({ offlineUntil: '2026-10-18T13:00:00.000Z' }) }))
+    expect(screen.getByRole('button', { name: 'Offline-Lizenz endet in 1 Tag' })).toBeInTheDocument()
+    act(() => useCloud.setState({ status: status({ offlineUntil: '2026-10-27T12:00:00.000Z' }) }))
+    expect(screen.getByRole('button', { name: 'Offline-Lizenz endet in 10 Tagen' })).toBeInTheDocument()
+    vi.useRealTimers()
   })
 })
 

@@ -302,7 +302,7 @@ an admin device. Types: see `contract.ts`.
 - **Projects:** `projects:list` (the ones the device may use) · `projects:add { path }` (inside the shared folders) · `projects:remove` · `projects:refresh` · *(only with remote shells:)* `projects:pull` (`git pull --ff-only`) · `context:get` · `context:reindex` · `fs:dirs { path? }` (folder browser on the core's machine; for devices: the shared folders, listed in `roots`, no `path` = the first) · `projects:pickFolder` / `projects:openInEditor` / `projects:githubDesktop` / `projects:openInGitHubDesktop` / `projects:openFile` (*desktop*)
 - **Editor (project files):** `files:list { projectId, dir? }` → `FileEntry[]` · `files:read { projectId, path }` → `FileContent` (`unsupported: "binary" | "too-large"` instead of text) · `files:stat { projectId, paths }` · `files:write { projectId, path, content, expectedMtime? }` (only with remote shells; fails with `conflict` when the file changed since `expectedMtime`)
 - **Agent cockpit:** `agents:detect` · `agents:list` · `agents:get { id }` → session + messages · `agents:changes { id }` · `agents:branch { id }` → own working folder: pushed, pull request (via `gh`), merged, uncommitted files · `agents:diff { id, path }` · *(only with remote shells:)* `agents:create { kind, projectId, isolated?, prompt? }` · `agents:send { id, text }` · `agents:interrupt` · `agents:stop` · `agents:resume` · `agents:remove` · `agents:accept` · `agents:discard` · `agents:rename { id, title }` · `agents:shell { id }` → `{ terminalId }` (a shell in the session's folder, attach with `terminal:*`) · *(desktop only:)* `agents:openInEditor { id }` (VS Code on the session's folder). Push: `agents:changed { session? , removed? }`, `agents:message { sessionId, message }`; approvals come as `permission:request` like the assistant's
-- **Mindeck account (license):** `cloud:status` → `{ enforced, allowed, state, account, license, validUntil, online, webUrl, error }` · *(admin:)* `cloud:login { email, password }` · `cloud:register { email, password, name?, locale }` · `cloud:logout` · `cloud:adopt { token, account }` · `cloud:installId` → `{ installId }` (both for follower cores, §6) · `cloud:refresh` · `cloud:resendVerification` · `cloud:forgotPassword { email }` · `cloud:checkout` → `{ url }` (Stripe Checkout). Push: `cloud:status`. On a licensed core every other channel answers `license-required` until `allowed` — sign in first.
+- **Mindeck account (license):** `cloud:status` → `{ enforced, allowed, state, account, license, validUntil, offlineUntil, online, webUrl, error }` (`state`: `active` · `paused` · `signed_out` · `checking` · `email_unverified` · `trial_expired` · `license_suspended` · `offline`; `offlineUntil`: end of the lifetime license's offline certificate, warn in its last 30 days — §6) · *(admin:)* `cloud:login { email, password }` (`403 device_limit`: too many devices — removed under Devices on `${webUrl}/account`) · `cloud:register { email, password, name?, locale }` · `cloud:logout` · `cloud:adopt { token, account, revokedKids? }` · `cloud:installId` → `{ installId }` (both for follower cores, §6) · `cloud:refresh` · `cloud:resendVerification` · `cloud:forgotPassword { email }` · `cloud:checkout` → `{ url }` (Stripe Checkout). Push: `cloud:status`. On a licensed core every other channel answers `license-required` until `allowed` — sign in first.
 - **Memory (vault):** `memory:status` · `memory:list` · `memory:read` · `memory:search` · `memory:graph` · `memory:folders` · `memory:create` · `memory:write` · `memory:writeBody` · `memory:rename` · `memory:move` · `memory:moveFolder` · `memory:createFolder` · `memory:link` · `memory:unlink` · `memory:trash` · `memory:createVault` · `memory:setGraphStyle` · *(admin:)* `memory:setVault { path }` · `memory:setDailyNotes` · `memory:pickVault` / `memory:reveal` (*desktop*)
 - **System:** `system:snapshot` · `system:user`
 - **Assistant:** `ai:status` · *(admin:)* `ai:setKey { key }` · `ai:clearKey` · `ai:configure { model?, effort? }` · `ai:agents` · `ai:tools` · `ai:conversations` · `ai:conversation { id }` (while a run is going: as it stands — streamed text, tool calls waiting for approval — so a client reconnecting after missed push events can catch up) · `ai:send { text, conversationId?, agentId?, projectId? }` → `{ conversationId, messageId }` (the answer streams via push events) · `ai:cancel { conversationId }` · `ai:deleteConversation` · `ai:runs` · *(only with remote shells:)* `ai:inlineComplete` · `ai:inlineEdit`
@@ -343,7 +343,75 @@ core.on('permission:request', (req) => showApprovalSheet(req)) // → core.invok
 The web UI in `src/` is the reference implementation of every flow (session/pairing in
 `src/features/session`, the assistant in `src/features/agents`).
 
-## 6. Cloud-Vertrag: follower leases (Mindeck Cloud)
+## 6. Cloud-Vertrag: Signierschlüssel, Lizenz und follower leases (Mindeck Cloud)
+
+### 6.1 Signing keys: `kid`, `Mindeck-Keys`, revocations (CL-SEC-06)
+
+Mindeck Cloud signs entitlements, offline certificates and follower leases with Ed25519 and can
+rotate its key (mindeck-cloud `README.md` → *Signing keys*, `src/lib/keys.ts`). The core side
+(`electron/main/services/cloud/entitlement.ts`, `CloudService.ts`, implemented):
+
+- **Keys built in:** `MINDECK_CLOUD_KEY` (build time; dev runs: env) is a **list** — PEM blocks and/or
+  base64 SPKI DER, separated by commas or line breaks, **the original key first** (the *legacy key*,
+  the one older cores pinned). A key that is no Ed25519 public key fails the build
+  (`cloudKeyDefine`). After `keys:generate` the next public key goes into the list *before*
+  `keys:rotate` on the server.
+- **Key id:** `kid` = the first 16 characters of `base64url(SHA-256(SPKI DER of the public key))` —
+  the cloud's `keyId()`; the core computes it from the keys built in (`Map<kid, KeyObject>`).
+- **Verifying a token** (`mindeck1.<payload>.<signature>`): the payload is read unverified only to
+  take its `kid`; the key with that id verifies it. **No `kid`** (tokens from before key ids): the
+  legacy key only. An **unknown or revoked `kid`** is rejected — the core never tries its other keys.
+- **`Mindeck-Keys: <kid>,<kid>`** goes with every `/v1/license/*` call (heartbeat, `GET /v1/license`,
+  follower lease, revocations): the trusted kids minus the revoked ones, none if every key is revoked.
+  The cloud signs with its active key if the core names it, else with a previous key it names, else
+  with the legacy key — so old and new builds both keep working through a rotation.
+- **Revocations:** `GET /v1/license/revocations` (no session) → `{ revokedKids, revocations }`. Only the
+  signed copy counts: `mindeck-rl1.<base64url { kid, iat, exp, revokedKids }>.<Ed25519 over
+  "mindeck-rl1.<payload>">` — its own prefix (never taken for an entitlement), signed by a trusted,
+  not revoked key its `kid` names (no legacy fallback), `exp` not passed, `revokedKids` strings.
+  Asked before the heartbeat, again every 6 hours; a list that does not verify or a cloud without
+  the endpoint (`404`) is asked again after an hour, an unreachable cloud with the next heartbeat.
+- **Revoked is forever:** the kids go into `cloud.json` (`revokedKids`) and are never removed, even
+  if a later list no longer names them. Whatever such a key signed is dropped at once — the stored
+  entitlement, the offline certificate, cached follower leases — and rejected from then on, offline
+  and after restarts too. The next heartbeat brings tokens signed with a key still trusted.
+- **Followers** (Remote-SSH, Dev Containers) never ask the cloud: the desktop hands its revoked kids
+  over with every licence (`cloud:adopt { token, account, revokedKids? }`, ≤ 256 ids); the follower
+  keeps them like its own and drops what they signed.
+- **Dev builds without a key built in** (trust on first use): `/v1/meta` → `entitlementPublicKey`
+  (legacy) plus `entitlementKeys: [{ kid, publicKey, active }]` and `revokedKeyIds`, kept in
+  `cloud.json` (`publicKey`, `publicKeys`, `revokedKids`). Release builds trust only what is built in
+  and the signed list.
+
+### 6.2 Licence states and offline certificate
+
+- **Entitlement claims** `{ sub, email, plan, active, reason, rem, dev?, kid?, iat, exp, perpetual?, lease? }`,
+  `reason`: `ok` · `trial_expired` · `email_unverified` · `license_suspended`. `active: false` with
+  `license_suspended` (a lifetime licence whose payment is disputed, a chargeback) is its own state
+  `license_suspended` ("Zahlung angefochten – Lizenz pausiert"; nothing to buy, `check again` once the
+  dispute is closed) — not `trial_expired`.
+- **Offline certificate** (`offlineCertificate` of heartbeat / `GET /v1/license`): kept in the secret
+  store and used only while the cloud can't be reached. It holds when the signature verifies (as
+  above), `perpetual`, `active`, **`plan: "lifetime"`**, **`sub` = the signed-in account** (its id from
+  sign-in `user.id`; for older clouds and older `cloud.json` the `sub` of the stored entitlement) and
+  `dev` = this install (the cloud's device id or the install id; none: any device of the account).
+  A certificate **without `kid`** (the 100-year ones from before key ids) holds **400 days from its
+  `iat`** at most. The cloud's answer wins while it answers: inactive, or a plan other than lifetime,
+  drops the certificate.
+- `cloud:status.offlineUntil` = the certificate's (capped) end; the desktop shows a warning in the
+  profile and a chip in the top bar once fewer than 30 days are left (`offlineDaysLeft`).
+
+### 6.3 Error codes the core shows in its own words (DE + EN)
+
+| Code (cloud) | Where | Shown as |
+|---|---|---|
+| `device_limit` (403, `details: { limit, devices }`) | sign-in / register | "signed in on the most computers it may use" + link *Manage devices* → `${webUrl}/account` (the core fetches `/v1/meta` for `webUrl` if it doesn't know it yet) |
+| `license_suspended` (entitlement `reason`) | licence gate, profile | state `license_suspended` |
+| `already_licensed` (409) | checkout | "This account already has the lifetime license" |
+| `ai_blocked` (403) → `ai-blocked` | assistant | "switched off for your account — support or an own API key"; `/v1/me/ai` `blocked: true` → `AiStatus.cloud.blocked`, a notice in Settings → AI |
+| `ai_unsupported_content` (400, `details.path`) → `ai-unsupported-content` | assistant | "a document by URL / Files API id is not taken — attach the file itself" |
+
+### 6.4 Follower leases
 
 A core the desktop app starts on another machine — Remote-SSH, Dev Containers — runs as a
 *follower*: it never signs in itself, the desktop hands it a license. That hand-over must not be a
@@ -365,7 +433,8 @@ Content-Type: application/json
 ```
 
 - **Token:** the format and key of every entitlement (`mindeck1.<claims>.<signature>`, Ed25519 over
-  `mindeck1.<claims>`, `electron/main/services/cloud/entitlement.ts` ↔ `mindeck-cloud/src/lib/entitlement.ts`).
+  `mindeck1.<claims>`, `kid` as in §6.1, `electron/main/services/cloud/entitlement.ts` ↔ `mindeck-cloud/src/lib/entitlement.ts`).
+  The request carries `Mindeck-Keys` like every licence call.
 - **Claims:** those of the heartbeat's entitlement for this account (`sub`, `email`, `plan`, `active`,
   `reason`, `rem`, `iat`, `exp`) plus `"dev": "<installId from the request>"` and `"lease": "follower"`;
   never `perpetual`. `exp` short: **1 hour** recommended, 24 hours at most. The desktop asks again

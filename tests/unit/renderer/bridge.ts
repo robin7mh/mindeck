@@ -14,6 +14,7 @@ export const OPEN_CLOUD = {
   account: null,
   license: null,
   validUntil: null,
+  offlineUntil: null,
   online: true,
   webUrl: null,
   error: null

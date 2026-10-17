@@ -184,6 +184,8 @@ describe('AnthropicProvider', () => {
       expect(await refused(403, { code: 'license_required', message: 'Lizenz fehlt.' })).toMatchObject({ code: 'license-required' })
       expect(await refused(503, { code: 'ai_unavailable', message: 'Pause.' })).toMatchObject({ code: 'ai-unavailable' })
       expect(await refused(429, { code: 'ai_rate_limited', message: 'Busy.' })).toMatchObject({ code: 'rate-limited' })
+      expect(await refused(403, { code: 'ai_blocked', message: 'Switched off.' })).toEqual({ code: 'ai-blocked', message: 'Switched off.' })
+      expect(await refused(400, { code: 'ai_unsupported_content', message: 'Document by URL.', details: { path: 'messages.0.content.1' } })).toMatchObject({ code: 'ai-unsupported-content' })
       expect(await refused(401, { code: 'session_invalid', message: 'Session expired or revoked' })).toMatchObject({ code: 'session_expired' })
       expect(await refused(400, { code: 'invalid_input' })).toEqual({ code: 'ai-error', message: 'invalid_input' })
       // Not the cloud's words (a proxy in between): as for Anthropic itself.

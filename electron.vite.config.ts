@@ -3,6 +3,7 @@ import { defineConfig } from 'electron-vite'
 import react from '@vitejs/plugin-react'
 import type { Plugin } from 'vite'
 import { remoteBundleDefines } from './electron/main/services/remote/bundle'
+import { cloudKeyDefine } from './electron/main/services/cloud/config'
 
 // @shared points at src/shared (types + IPC contract shared by main/preload/renderer).
 const shared = { '@shared': resolve(__dirname, 'src/shared') }
@@ -15,7 +16,7 @@ const monacoDeepImports = { find: /^monaco-editor\/esm\/vs\/(.*?)(\.js)?$/, repl
 // (electron/main/services/remote/bundle.ts).
 const cloud = {
   __MINDECK_CLOUD_URL__: JSON.stringify(process.env.MINDECK_CLOUD_URL ?? ''),
-  __MINDECK_CLOUD_KEY__: JSON.stringify(process.env.MINDECK_CLOUD_KEY ?? ''),
+  __MINDECK_CLOUD_KEY__: cloudKeyDefine(),
   ...remoteBundleDefines()
 }
 

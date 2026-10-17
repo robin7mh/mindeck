@@ -83,6 +83,11 @@ export function AiCard() {
       {status?.cloud && (
         <div className="mt-3 space-y-2">
           <CreditMeter cloud={status.cloud} />
+          {status.cloud.blocked && (
+            <p role="status" className="font-sans text-[12px] text-amber">
+              {s.cloudBlocked}
+            </p>
+          )}
           {own && <p className={hint}>{s.ownKeyWins}</p>}
           <div className="flex min-w-0 flex-col gap-1">
             <TechLabel className="text-text-muted">{s.cloudModel}</TechLabel>

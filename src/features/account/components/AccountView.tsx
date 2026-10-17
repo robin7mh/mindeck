@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import { ArrowDownToLine, ArrowUpFromLine, CloudCog, Languages, Loader2, LogOut, RefreshCw, Server, ShoppingCart, UserRound } from 'lucide-react'
-import type { CloudLicense, CloudStatus } from '@shared/types/cloud'
+import { offlineDaysLeft, type CloudLicense, type CloudStatus } from '@shared/types/cloud'
 import { Panel } from '@/components/ui/Panel'
 import { Card } from '@/components/ui/Card'
 import { LanguageSwitch } from '@/components/ui/LanguageSwitch'
@@ -40,6 +40,10 @@ function AccountCard({ status }: { status: CloudStatus }) {
   }
   const lifetime = license?.plan === 'lifetime'
   const cloud = useCloud.getState()
+  const date = (iso: string) => new Intl.DateTimeFormat(intlLocale(), { dateStyle: 'medium' }).format(new Date(iso))
+  // Offline, the certificate holds longer than the lease (a year, renewed with every heartbeat).
+  const offlineUntil = status.offlineUntil ?? status.validUntil
+  const daysLeft = offlineDaysLeft(status)
   return (
     <div className="flex flex-col gap-3">
       <div className="flex items-center gap-3">
@@ -62,9 +66,15 @@ function AccountCard({ status }: { status: CloudStatus }) {
         )}
       </div>
       {license && !lifetime && <TrialMeter license={license} />}
-      {lifetime && status.validUntil && (
-        <p className="font-mono text-[11px] text-text-muted">
-          {t.cloud.offlineUntil(new Intl.DateTimeFormat(intlLocale(), { dateStyle: 'medium' }).format(new Date(status.validUntil)))}
+      {lifetime && offlineUntil && <p className="font-mono text-[11px] text-text-muted">{t.cloud.offlineUntil(date(offlineUntil))}</p>}
+      {daysLeft !== null && (
+        <p role="status" className="rounded-md border border-amber/40 bg-amber/[0.06] p-2.5 font-sans text-[12px] text-amber">
+          {t.cloud.offlineEnding(daysLeft, date(status.offlineUntil!))}
+        </p>
+      )}
+      {status.state === 'license_suspended' && (
+        <p role="status" className="rounded-md border border-amber/40 bg-amber/[0.06] p-2.5 font-sans text-[12px] text-amber">
+          <span className="font-semibold">{t.cloud.suspendedTitle}.</span> {t.cloud.suspendedIntro}
         </p>
       )}
       <CloudNotice />
