@@ -78,7 +78,7 @@ declare module 'node:events' {
 }
 
 /** The remote core's HTTP API through the tunnel. */
-function api(opts: { tokenOk?: boolean; pair?: 'ok' | 'refuse'; adopt?: 'ok' | 'fail' | 'garbage' } = {}) {
+function api(opts: { tokenOk?: boolean; pair?: 'ok' | 'refuse'; adopt?: 'ok' | 'fail' | 'garbage'; addFails?: boolean } = {}) {
   const calls: { url: string; body: unknown; auth?: string }[] = []
   const fetch = vi.fn(async (url: string, init: { body: string; headers: Record<string, string> }) => {
     const body = JSON.parse(init.body)
@@ -86,6 +86,7 @@ function api(opts: { tokenOk?: boolean; pair?: 'ok' | 'refuse'; adopt?: 'ok' | '
     const reply = (data: unknown) => ({ status: 200, json: async () => data })
     if (url.endsWith('/api/pair')) return opts.pair === 'refuse' ? reply({ ok: false, error: { message: 'Code expired' } }) : reply({ ok: true, data: { token: 'tok-new', device: { id: 'dev-new' } } })
     if (url.endsWith('/api/rpc/app:info')) return reply(opts.tokenOk ? { ok: true, data: {} } : { ok: false, error: { message: 'unauthorized' } })
+    if (url.endsWith('/api/rpc/projects:add') && opts.addFails) return reply({ ok: false, error: { message: 'Folder not found' } })
     if (url.endsWith('/api/rpc/cloud:adopt')) {
       if (opts.adopt === 'garbage') return { status: 502, json: async () => Promise.reject(new Error('not json')) }
       return reply(opts.adopt === 'fail' ? { ok: false, error: { message: 'bad-entitlement' } } : { ok: true, data: {} })
@@ -145,6 +146,7 @@ Host build-box db
   HostName 10.0.0.5
   User robin
   Port 2222
+  IdentityFile ~/.ssh/id_box
 Host *.internal
   User nobody
 Host=pi raspberry
@@ -184,7 +186,8 @@ describe('Remote-SSH', () => {
   })
 
   it('first time: installs Mindeck there, starts it behind a tunnel, pairs, hands the license over, opens a window', async () => {
-    const t = await setup()
+    const remote: Parameters<typeof api>[0] = {}
+    const t = await setup({ api: api(remote) })
     const c = await t.svc.ssh('box')
     expect(c).toMatchObject({ id: 'ssh:box', kind: 'ssh', label: 'box', state: 'ready', url: expect.stringMatching(/^http:\/\/127\.0\.0\.1:\d+$/) })
     expect(t.published.map((l) => l[0].state)).toEqual(['connecting', 'installing', 'starting', 'ready'])
@@ -198,6 +201,10 @@ describe('Remote-SSH', () => {
     // The license goes over again now and then.
     await tick(60)
     expect(t.a.calls.filter((x) => x.url.endsWith('cloud:adopt')).length).toBeGreaterThan(1)
+    // A handover that fails later keeps the connection.
+    remote.adopt = 'fail'
+    await tick(60)
+    expect(t.svc.list()[0].state).toBe('ready')
     // Connecting again while it runs: the same connection.
     expect(await t.svc.ssh('box')).toBe(c)
     expect(t.svc.list()).toHaveLength(1)
@@ -368,5 +375,11 @@ describe('Dev Containers', () => {
     await t.svc.container(await project())
     expect(t.m.find('uname -m')[0].line).toContain('-u root c1')
     expect(t.a.calls.some((x) => x.url.endsWith('projects:add'))).toBe(false)
+  })
+
+  it('a folder the container\'s Mindeck can\'t add leaves the connection up', async () => {
+    const t = await setup({ api: api({ addFails: true }) })
+    expect(await t.svc.container(await project())).toMatchObject({ state: 'ready' })
+    expect(t.a.calls.some((x) => x.url.endsWith('projects:add'))).toBe(true)
   })
 })

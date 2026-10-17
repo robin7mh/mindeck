@@ -12,7 +12,9 @@ const h = vi.hoisted(() => ({
   watchers: [] as { root: string; cb: (event: string, filename: string | null) => void; emitter: EventEmitter & { close: () => void } }[],
   watchThrows: false,
   /** Next writeFile to a path ending in this fails with EIO (portable, works as root). */
-  failWrite: null as string | null
+  failWrite: null as string | null,
+  /** Next readdir of a path ending in this fails with EACCES (portable, works as root). */
+  failReaddir: null as string | null
 }))
 vi.mock('electron', () => ({
   clipboard: {},
@@ -43,7 +45,14 @@ vi.mock('node:fs/promises', async (orig) => {
         throw Object.assign(new Error('EIO: i/o error'), { code: 'EIO' })
       }
       return (actual.writeFile as (...a: unknown[]) => Promise<void>)(file, ...rest)
-    }) as typeof actual.writeFile
+    }) as typeof actual.writeFile,
+    readdir: (async (dir: string, ...rest: unknown[]) => {
+      if (h.failReaddir && String(dir).endsWith(h.failReaddir)) {
+        h.failReaddir = null
+        throw Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' })
+      }
+      return (actual.readdir as (...a: unknown[]) => Promise<unknown>)(dir, ...rest)
+    }) as typeof actual.readdir
   }
 })
 
@@ -275,6 +284,8 @@ describe('VaultService — folders, renames, moves, links', () => {
     expect(await v.createFolder('', 'Archiv')).toBe('Archiv')
     expect(await v.createFolder('Archiv', '2026')).toBe('Archiv/2026')
     expect(await v.folders()).toEqual(['Archiv', 'Archiv/2026', 'Entscheidungen', 'Ich', 'Projekte'])
+    h.failReaddir = 'Archiv' // a folder it can't look into: listed, without what it holds
+    expect(await v.folders()).toEqual(['Archiv', 'Entscheidungen', 'Ich', 'Projekte'])
     await expect(v.createFolder('', 'Archiv')).rejects.toMatchObject({ code: 'exists' })
     expect(await v.createFolder('', '.hidden')).toBe('hidden')
     await expect(v.createFolder('../out', 'x')).rejects.toMatchObject({ code: 'bad-path' })
@@ -354,6 +365,7 @@ describe('VaultService — watcher', () => {
     await writeFile(join(root, 'External.md'), 'from obsidian')
     await mkdir(join(root, 'New/Deep'), { recursive: true })
     await writeFile(join(root, 'New/Deep/In.md'), 'x')
+    await writeFile(join(root, 'New/Deep/pic.png'), 'not a note either')
     await writeFile(join(root, 'notes.txt'), 'not a note')
     await rm(join(root, 'Ich/Vorlieben.md'))
     for (const f of ['External.md', 'New', 'notes.txt', '.obsidian/workspace.json', 'Ich/Vorlieben.md', 'Gone-before.md', '']) fire(f)
@@ -363,6 +375,15 @@ describe('VaultService — watcher', () => {
 
     onChange.mockClear()
     fire('External.md') // unchanged content → no event
+    fire('New') // a folder whose notes are unchanged: neither
+    await tick(FLUSH)
+    expect(onChange).not.toHaveBeenCalled()
+
+    // a new folder it can't read yet: nothing to pick up
+    await mkdir(join(root, 'Locked'))
+    await writeFile(join(root, 'Locked/A.md'), 'a')
+    h.failReaddir = 'Locked'
+    fire('Locked')
     await tick(FLUSH)
     expect(onChange).not.toHaveBeenCalled()
   })

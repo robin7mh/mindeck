@@ -6,9 +6,9 @@ type Obj = Record<string, unknown>
 const isObj = (v: unknown): v is Obj => !!v && typeof v === 'object' && !Array.isArray(v)
 
 /** Arc keeps its lists as `[id, object, id, object, …]`. */
-function byId(list: unknown): Map<string, Obj> {
+function byId(list: unknown[]): Map<string, Obj> {
   const out = new Map<string, Obj>()
-  if (Array.isArray(list)) for (const v of list) if (isObj(v) && typeof v.id === 'string') out.set(v.id, v)
+  for (const v of list) if (isObj(v) && typeof v.id === 'string') out.set(v.id, v)
   return out
 }
 
@@ -26,7 +26,7 @@ function profileOf(space: Obj): string {
  */
 export function arcBookmarks(sidebar: unknown, profile: string): BookmarkSet {
   const containers = isObj(sidebar) && isObj(sidebar.sidebar) && Array.isArray(sidebar.sidebar.containers) ? sidebar.sidebar.containers : []
-  const main = containers.find((c): c is Obj => isObj(c) && Array.isArray(c.items) && Array.isArray(c.spaces))
+  const main = containers.find((c): c is Obj & { items: unknown[]; spaces: unknown[] } => isObj(c) && Array.isArray(c.items) && Array.isArray(c.spaces))
   if (!main) return { bar: [], other: [] }
   const items = byId(main.items)
   const seen = new Set<string>()

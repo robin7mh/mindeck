@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { delimiter, join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -248,6 +248,16 @@ describe('createCore', () => {
     expect(await c.router.dispatch('finder:list', { path: home, hidden: true }, { transport: 'ipc' })).toMatchObject({ ok: true, data: { entries: [expect.objectContaining({ name: '.trash' })] } })
     if (savedHomeEnv === undefined) delete process.env.HOME
     else process.env.HOME = savedHomeEnv
+  })
+
+  it('wires the editor\'s files and Source Control to the project registry; deleted files land in the core\'s trash', async () => {
+    const c = await core()
+    const dir = await tempDir()
+    await writeFile(join(dir, 'old.txt'), 'x')
+    const { data: project } = (await c.router.dispatch('projects:add', { path: dir }, { transport: 'ipc' })) as { data: { id: string } }
+    expect(await c.router.dispatch('files:delete', { projectId: project.id, path: 'old.txt' }, { transport: 'ipc' })).toMatchObject({ ok: true })
+    expect(await readdir(join(process.env.MINDECK_HOME!, 'data', 'file-trash', '.trash'))).toEqual([expect.stringMatching(/^old \d+\.txt$/)])
+    expect(await c.router.dispatch('scm:status', { projectId: project.id }, { transport: 'ipc' })).toMatchObject({ ok: true, data: { repo: false } })
   })
 
   it('desktop mode keeps the server config in settings; history is kept as files in the data folder', async () => {

@@ -304,6 +304,23 @@ describe('Live Server and the Sass watcher', () => {
     expect(bridge.invoke).not.toHaveBeenCalledWith('sass:compile', expect.anything())
     expect(heard).toEqual([])
     stop()
+
+    // A core that can't say which servers run: none shown.
+    useLive.setState({ servers: [] })
+    installBridge({ 'liveServer:status': () => Promise.reject(new Error('offline')) })
+    const again = useLive.getState().connect()
+    await settle()
+    expect(useLive.getState().servers).toEqual([])
+    again()
+  })
+
+  it('saving all writes the changed files only', async () => {
+    const written: string[] = []
+    installBridge({ 'liveServer:status': () => [], 'files:write': ({ path }: { path: string }) => (written.push(path), { mtimeMs: 2, size: 1 }) })
+    useEditor.setState({ tabs: [tab('a.ts', { dirty: true }), tab('b.ts'), tab('c.ts', { dirty: true })] })
+    setBufferHostFor('any')
+    await act(() => useEditor.getState().saveAll())
+    expect(written.sort()).toEqual(['a.ts', 'c.ts'])
   })
 
   it('compiles on save when watched; other files and other projects are left alone', async () => {
@@ -338,13 +355,17 @@ describe('Live Server and the Sass watcher', () => {
     await useLive.getState().toggleSass()
     expect(bridge.invoke).not.toHaveBeenCalled()
     useEditor.setState({ projectId: 'p' })
+    const other = { ...status, projectId: 'q', port: 5501 }
+    useLive.setState({ servers: [other] }) // another project's server stays listed
     await useLive.getState().start('index.html')
     expect(bridge.invoke).toHaveBeenCalledWith('liveServer:start', { projectId: 'p', page: 'index.html' })
-    expect(useLive.getState().servers).toEqual([status])
+    expect(useLive.getState().servers).toEqual([other, status])
+    useLive.setState({ servers: [status] })
     await useLive.getState().start('boom.html')
     expect(useLive.getState().error).toBe('port taken')
     useLive.getState().clearError()
-    await useLive.getState().stop()
+    bridge.invoke.mockRejectedValueOnce(new Error('already stopped'))
+    await useLive.getState().stop() // gone already: off the list all the same
     expect(useLive.getState().servers).toEqual([])
 
     await useLive.getState().toggleSass()
@@ -555,6 +576,8 @@ describe('debug store', () => {
     expect(d().error).toBe('not running')
     await d().stop()
     expect(bridge.invoke).toHaveBeenCalledWith('debug:stop', undefined)
+    bridge.invoke.mockRejectedValueOnce(new Error('already over'))
+    await expect(d().stop()).resolves.toBeUndefined()
     useEditor.setState({ tabs: [tab('src/a.js')], activeId: 'p:src/a.js' })
     await d().restart()
     expect(bridge.invoke).toHaveBeenCalledWith('debug:start', expect.anything())
@@ -705,6 +728,9 @@ describe('debug panel', () => {
 
     act(() => useDebug.setState({ session: session({ reason: 'mystery', frames: [frame()] }), frame: 0 }))
     expect(screen.getByRole('status')).toHaveTextContent('Paused on mystery')
+    // a stop elsewhere whose innermost scope is open already: left open, not toggled shut
+    act(() => useDebug.setState({ expanded: { '0:0': true }, session: session({ frames: [frame({ id: 'f8' })] }), frame: 0 }))
+    expect(useDebug.getState().expanded['0:0']).toBe(true)
     act(() => useDebug.setState({ session: session({ reason: undefined, frames: [frame({ scopes: [] })] }) }))
     expect(screen.getByRole('status')).toHaveTextContent('Paused on')
   })

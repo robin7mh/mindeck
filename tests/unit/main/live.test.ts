@@ -69,8 +69,10 @@ describe('Live Server', () => {
     expect(css.headers.get('content-type')).toBe('text/css; charset=utf-8')
     expect(await css.text()).toBe('h1 { color: red }')
     expect((await fetch(`${status.url}/data.bin`)).headers.get('content-type')).toBe('application/octet-stream')
+    await writeFile(join(root, 'public', 'empty', 'Tom & "Jerry" <1>.txt'), '')
     const listing = await (await fetch(`${status.url}/empty/`)).text()
     expect(listing).toContain('<a href="notes.txt">notes.txt</a>')
+    expect(listing).toContain('>Tom &amp; &quot;Jerry&quot; &lt;1&gt;.txt</a>')
     expect(listing).toContain('<a href="sub/">sub/</a>')
     expect(listing.indexOf('sub/')).toBeLessThan(listing.indexOf('notes.txt')) // folders first
     const top = await (await fetch(`${status.url}/css`)).text()
@@ -78,6 +80,10 @@ describe('Live Server', () => {
     const missing = await fetch(`${status.url}/nope.html`)
     expect(missing.status).toBe(404)
     expect(await (await fetch(`${status.url}/../../etc/passwd`)).text()).toContain('Not found')
+
+    // A watch that fails (too many files, say) leaves the server serving.
+    ;(service as unknown as { running: Map<string, { watcher: NodeJS.EventEmitter }> }).running.get('p')!.watcher.emit('error', new Error('EMFILE'))
+    expect((await fetch(`${status.url}/about.html`)).status).toBe(200)
 
     // Started again: the same server, the page opens.
     expect(await service.start('p')).toEqual(status)

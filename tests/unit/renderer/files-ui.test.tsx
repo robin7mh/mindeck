@@ -201,7 +201,7 @@ describe('Files: keys, menus and the status line', () => {
   })
 
   it('shows how far a big folder has loaded and the jobs running', async () => {
-    setup()
+    const { bridge } = setup()
     await settle()
     act(() => useFiles.setState({ listing: { path: '/home', parent: '/', entries: [entry('/home/top.txt')], total: 3, offset: 0 } }))
     expect(screen.getByText('Loading… 1 of 3')).toBeInTheDocument()
@@ -209,6 +209,9 @@ describe('Files: keys, menus and the status line', () => {
     act(() => useFiles.setState({ jobs: { j: { id: 'j', kind: 'copy', done: 25, total: 100, file: '/home/x' }, k: { id: 'k', kind: 'unzip', done: 0, total: 0 } } }))
     expect(screen.getByRole('progressbar', { name: 'Copying' })).toHaveAttribute('aria-valuenow', '25')
     expect(screen.getByRole('progressbar', { name: 'Extracting' })).toHaveAttribute('aria-valuenow', '0')
+    // the core reports how far a job is
+    act(() => bridge.emit('finder:progress', { id: 'j', kind: 'copy', done: 60, total: 100 }))
+    expect(screen.getByRole('progressbar', { name: 'Copying' })).toHaveAttribute('aria-valuenow', '60')
     const cancelJob = vi.fn(async () => {})
     useFiles.setState({ cancelJob })
     fireEvent.click(screen.getAllByRole('button', { name: 'Stop' })[0])

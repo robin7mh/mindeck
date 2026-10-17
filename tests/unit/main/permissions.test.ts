@@ -1,4 +1,4 @@
-import { readFile, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { tempDir } from './helpers'
@@ -65,6 +65,17 @@ describe('PermissionService · grants per project', () => {
     const b = perms.ask(input({ projectId: 'p1', toolName: 'Write' }), new AbortController().signal)
     await Promise.all([perms.respond(a.id, 'always'), perms.respond(b.id, 'always')])
     expect((await perms.grants()).map((g) => g.toolName).sort()).toEqual(['Edit', 'Write'])
+  })
+
+  it('a grant that can\'t be saved fails its answer, not the ones after it', async () => {
+    const { perms, file } = await setup()
+    await mkdir(file) // the file can't be replaced by a folder's name
+    const a = perms.ask(input({ projectId: 'p1', toolName: 'Edit' }), new AbortController().signal)
+    await expect(perms.respond(a.id, 'always')).rejects.toThrow()
+    await rm(file, { recursive: true })
+    const b = perms.ask(input({ projectId: 'p1', toolName: 'Write' }), new AbortController().signal)
+    await perms.respond(b.id, 'always')
+    expect((await perms.grants()).map((g) => g.toolName)).toEqual(['Write'])
   })
 
   it('migrates global grants: kept for every project, title-keyed ACP ones dropped', async () => {

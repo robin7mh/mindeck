@@ -164,6 +164,11 @@ describe('assistant store', () => {
     act(() => bridge.emit('ai:message', { conversationId: 'c1', message: msg('a'), running: false }))
     await settle()
     expect(useAssistant.getState().status?.cloud?.credit.usedCents).toBe(12)
+    // The credit can't be read just now: the last one stays.
+    bridge.invoke.mockRejectedValueOnce(new Error('offline'))
+    act(() => bridge.emit('ai:message', { conversationId: 'c1', message: msg('a'), running: false }))
+    await settle()
+    expect(useAssistant.getState().status?.cloud?.credit.usedCents).toBe(12)
     // A key of one's own: no credit to refresh.
     act(() => useAssistant.setState({ status: status() }))
     bridge.invoke.mockClear()

@@ -294,6 +294,8 @@ describe('a notebook session', () => {
     await s.run(['c1'])
     expect(b.invoke.mock.calls.filter(([c]) => c === 'notebook:start')).toHaveLength(2)
 
+    // a kernel that's gone already: interrupting, restarting and stopping it fail quietly
+    for (const ch of ['notebook:interrupt', 'notebook:restart', 'notebook:shutdown']) routes[ch] = () => Promise.reject(new Error('no kernel'))
     s.interrupt()
     s.restart()
     await settle()

@@ -70,7 +70,11 @@ describe('GitService', () => {
     const start = (await git.baseline(dir))!
     expect(start.base).toBe(sh(dir, 'rev-parse', 'HEAD').trim())
     await writeFile(join(dir, 'pic.bin'), Buffer.from([0, 8, 7]))
-    expect(await git.changes(dir, start)).toEqual([{ path: 'pic.bin', status: 'modified', added: 0, removed: 0 }])
+    await symlink(join(dir, 'nowhere'), join(dir, 'dangling')) // new, and nothing to read: 0 lines
+    expect(await git.changes(dir, start)).toEqual([
+      { path: 'dangling', status: 'added', added: 0, removed: 0 },
+      { path: 'pic.bin', status: 'modified', added: 0, removed: 0 }
+    ])
   })
 
   it('worktrees: add, apply into the project (new files too, a node_modules link left out), remove with the branch', async () => {
@@ -98,6 +102,11 @@ describe('GitService', () => {
     expect(existsSync(wt)).toBe(false)
     expect(sh(dir, 'branch', '--list', 'mindeck/test')).toBe('')
     await expect(git.removeWorktree(dir, wt, 'mindeck/test')).rejects.toMatchObject({ code: 'git' })
+    // its branch gone already: the worktree goes all the same
+    const wt2 = join(await tempDir(), 'wt2')
+    await git.addWorktree(dir, wt2, 'mindeck/two')
+    await git.removeWorktree(dir, wt2, 'mindeck/not-there')
+    expect(existsSync(wt2)).toBe(false)
   })
 
   it('refuses a patch that does not apply, touching nothing', async () => {

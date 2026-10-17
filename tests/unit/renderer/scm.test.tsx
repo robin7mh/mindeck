@@ -87,6 +87,12 @@ describe('scm store', () => {
     s().setMessage('only staged')
     await s().commit()
     expect(bridge.invoke).toHaveBeenCalledWith('scm:commit', { projectId: 'p', message: 'only staged', amend: false, all: false })
+    // a commit that fails keeps the message for another try
+    s().setMessage('again')
+    bridge.invoke.mockRejectedValueOnce(new Error('hook failed'))
+    await s().commit()
+    expect(s()).toMatchObject({ message: 'again', error: 'hook failed' })
+    s().clearError()
 
     await s().sync()
     expect(bridge.invoke).toHaveBeenCalledWith('scm:pull', { projectId: 'p' })
@@ -411,6 +417,10 @@ describe('git graph', () => {
     expect(openDiff).toHaveBeenCalledWith({ path: 'y.ts', from: 'old.ts', change: 'renamed' }, { kind: 'commit', hash: 'm'.repeat(40) }, 'y.ts (mmmmmmm)')
     fireEvent.click(screen.getByTitle('src/x.ts'))
     expect(openDiff).toHaveBeenCalledTimes(2)
+    // a lane that ended between two that go on leaves a gap, drawn as none
+    act(() => useScm.setState({ log: [commit('x1', ['p1']), commit('x2', ['p2']), commit('x3', ['p3']), commit('p2', []), commit('p1', [])], detail: undefined }))
+    rerender(<GitGraph />)
+    expect(screen.getAllByRole('option')).toHaveLength(5)
   })
 })
 

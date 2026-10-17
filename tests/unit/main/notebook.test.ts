@@ -31,7 +31,8 @@ class FakeProc extends EventEmitter {
 const tick = () => new Promise((r) => setTimeout(r, 5))
 /** The n-th Python started (file system work comes first, beyond fake timers). */
 async function proc(procs: FakeProc[], n: number): Promise<FakeProc> {
-  for (let i = 0; i < 200 && !procs[n]; i++) await new Promise((r) => setImmediate(r))
+  // By the clock, not by turns: under load the start takes more turns of the event loop.
+  for (const until = Date.now() + 10_000; !procs[n] && Date.now() < until; ) await new Promise((r) => setImmediate(r))
   return procs[n]
 }
 

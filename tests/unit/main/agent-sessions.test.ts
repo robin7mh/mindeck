@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync, lstatSync } from 'node:fs'
-import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { onCleanup, tempDir, tick } from './helpers'
@@ -619,6 +619,30 @@ describe('AgentSessionService: changes and own working folders', () => {
     sh(t.projectPath, 'worktree', 'remove', '--force', s.worktree!)
     await t.svc.remove(s.id) // git refuses, the session goes anyway
     expect(t.svc.list()).toEqual([])
+  })
+})
+
+describe('AgentSessionService: own working folders, odd cases', () => {
+  it('isolated where the repo tracks node_modules itself: the checked-out folder stays, no link', async () => {
+    const t = await setup()
+    await mkdir(join(t.projectPath, 'node_modules'))
+    await writeFile(join(t.projectPath, 'node_modules', 'vendored.js'), 'export {}\n')
+    sh(t.projectPath, 'add', '-f', 'node_modules')
+    sh(t.projectPath, 'commit', '-q', '-m', 'vendor')
+    const s = await t.svc.create({ kind: 'claude-code', projectId: 'p1', isolated: true })
+    expect(lstatSync(join(s.worktree!, 'node_modules')).isSymbolicLink()).toBe(false)
+    expect(existsSync(join(s.worktree!, 'node_modules', 'vendored.js'))).toBe(true)
+  })
+
+  it('an agent ending whose launch files can\'t be removed still ends', async () => {
+    const t = await setup()
+    const a = await t.svc.create({ kind: 'claude-code', projectId: 'p1' })
+    const launch = join(t.deps.dir, 'launch', a.id)
+    await rm(launch, { recursive: true })
+    await writeFile(launch, 'not a folder') // removing launch/<id>/1 fails now
+    t.terminal.kill('pty-1')
+    await tick(20)
+    expect(t.svc.get(a.id).status).toBe('ended')
   })
 })
 

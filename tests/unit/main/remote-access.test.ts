@@ -78,6 +78,16 @@ describe('RemoteAccess · folders', () => {
     expect(await m.access.folder(join(m.home, 'Mindeck', 'vault'))).toBe(join(m.home, 'Mindeck', 'vault'))
   })
 
+  it('guards Mindeck\'s data folder by its path while it doesn\'t exist yet', async () => {
+    const base = await tempDir()
+    const later = join(base, 'Mindeck', 'data')
+    await mkdir(join(base, 'other'))
+    const m = await machine({ protectedDirs: [later], roots: () => [join(base, 'other')] })
+    expect(await m.access.folder(join(base, 'other'))).toBe(join(base, 'other')) // the guard is taken now
+    await mkdir(later, { recursive: true })
+    await expect(m.access.folder(later)).rejects.toThrow("Mindeck's own data")
+  })
+
   it('refuses folders whose names are on the deny list', async () => {
     const m = await machine()
     await mkdir(join(m.code, 'id_rsa'), { recursive: true })

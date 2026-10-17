@@ -98,6 +98,7 @@ describe('browser history', () => {
     expect(again.suggest('git').map((e) => e.url)).toEqual(['https://github.com/acme'])
     expect(again.suggest('docs').map((e) => e.url)).toEqual(['https://example.com/docs'])
     expect(again.suggest('DEV').map((e) => e.url)).toEqual(['http://localhost:5173/'])
+    expect(again.suggest('e').map((e) => e.url)).toEqual(['https://example.com/docs', 'https://github.com/acme', 'http://localhost:5173/'])
     // top sites leave local dev pages out
     expect(again.top().map((e) => e.url)).toEqual(['https://github.com/acme', 'https://example.com/docs'])
   })

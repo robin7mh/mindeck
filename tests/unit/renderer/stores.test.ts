@@ -50,6 +50,22 @@ describe('projects store', () => {
     expect(useProjects.getState().selectedId).toBeUndefined()
     list = [project('a'), project('b')]
     await s.load()
+    // GitHub Desktop can't be looked up: no button for it, the projects still load
+    const lookup = installBridge({ 'projects:list': () => list, 'projects:githubDesktop': () => Promise.reject(new Error('mdfind failed')) })
+    await s.load()
+    expect(useProjects.getState()).toMatchObject({ githubDesktop: null, projects: [expect.objectContaining({ id: 'a' }), expect.objectContaining({ id: 'b' })] })
+    expect(lookup.invoke).toHaveBeenCalledWith('projects:githubDesktop', undefined)
+    installBridge({
+      'projects:list': () => list,
+      'projects:pickFolder': () => ({ path: '/new' }),
+      'projects:add': () => project('c'),
+      'projects:refresh': ({ id }: { id: string }) => ({ ...project(id), name: 'fresh' }),
+      'projects:remove': () => undefined,
+      'projects:openInEditor': () => undefined,
+      'projects:openInGitHubDesktop': () => undefined,
+      'projects:githubDesktop': () => 'GitHub Desktop',
+      'projects:pull': ({ id }: { id: string }) => ({ ...project(id), name: 'pulled' })
+    })
 
     await s.addViaPicker()
     expect(useProjects.getState()).toMatchObject({ selectedId: 'c' })

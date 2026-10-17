@@ -441,6 +441,13 @@ describe('the shortcut overview', () => {
     document.body.focus()
     fireEvent.keyDown(window, { key: 'Escape' })
     expect(usePalette.getState().view).toBeUndefined()
+    // what had the focus is gone meanwhile: nothing to give it back to
+    document.body.innerHTML = '<button id="gone">x</button>'
+    document.getElementById('gone')!.focus()
+    open()
+    document.getElementById('gone')!.remove()
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(usePalette.getState().view).toBeUndefined()
   })
 })
 

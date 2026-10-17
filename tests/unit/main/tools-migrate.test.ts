@@ -99,6 +99,9 @@ describe('moving over from VS Code / Cursor', () => {
     // Cursor installed too, with one setting; VSCodium with settings Mindeck can't use.
     await mkdir(join(appData, 'Cursor', 'User'), { recursive: true })
     await writeFile(join(appData, 'Cursor', 'User', 'settings.json'), '{ "editor.fontLigatures": false }')
+    // Vim in Cursor too — without remappings
+    await mkdir(join(home, '.cursor', 'extensions', 'vscodevim.vim-1'), { recursive: true })
+    await writeFile(join(home, '.cursor', 'extensions', 'vscodevim.vim-1', 'package.json'), JSON.stringify({ publisher: 'vscodevim', name: 'vim', displayName: 'Vim', main: './x.js' }))
     await mkdir(join(appData, 'VSCodium', 'User'), { recursive: true })
     const invalid = {
       'editor.fontSize': 2,
@@ -148,7 +151,7 @@ describe('moving over from VS Code / Cursor', () => {
       'vscodevim.vim|Vim|built-in|',
       'zhuangtongfa.material-theme|One Dark Pro|theme|'
     ])
-    expect(cursor).toEqual({ app: 'Cursor', name: 'Cursor', settings: 1, keybindings: 0, snippets: 0, extensions: [] })
+    expect(cursor).toEqual({ app: 'Cursor', name: 'Cursor', settings: 2, keybindings: 0, snippets: 0, extensions: [{ id: 'vscodevim.vim', name: 'Vim', fate: 'built-in' }] })
   })
 
   it('takes settings, the keybindings Mindeck can honor and every snippet over', async () => {
@@ -190,6 +193,10 @@ describe('moving over from VS Code / Cursor', () => {
     expect(snippets.find((s: { prefix: string }) => s.prefix === 'rfc')).toMatchObject({ name: 'Comp', body: 'export function $1() {\n  return null\n}', description: 'A component' })
     expect(await service.editor()).toMatchObject({ settings: { fontSize: 15 }, snippets: expect.any(Array) })
     await expect(service.apply('Notepad')).rejects.toMatchObject({ code: 'not-found' })
+    // From Cursor: Vim keys, but no remappings to take
+    expect(await service.apply('Cursor')).toEqual({ settings: 2, keybindings: 0, snippets: 0 })
+    expect(settings.get().editor).toMatchObject({ vim: true, importedFrom: { app: 'Cursor' } })
+    expect(settings.get().editor).not.toHaveProperty('vimMappings')
     const elsewhere = new MigrateService({ home: '/nowhere', appData: await tempDir(), settings, snippetsFile: join(data, 'x.json') })
     await expect(elsewhere.apply('Code')).rejects.toMatchObject({ code: 'not-found' }) // not installed here
     expect(await elsewhere.scan()).toEqual([])

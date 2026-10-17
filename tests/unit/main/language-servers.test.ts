@@ -174,22 +174,31 @@ describe('LspClient', () => {
     expect(exited).toBe(1)
     server.emit('exit')
     expect(exited).toBe(1)
+
+    // A server that refuses to shut down is ended all the same.
+    const stubborn = new FakeServer({ shutdown: () => Promise.reject(new Error('busy')) })
+    await new LspClient(stubborn as unknown as RpcProcess).dispose()
+    expect(stubborn.killed).toBe(true)
   })
 
   it('a reply to a server request after the server stopped is dropped', async () => {
     let release!: (v: unknown) => void
     const server = new FakeServer()
     new LspClient(server as unknown as RpcProcess, { onRequest: () => new Promise((r) => (release = r)) })
+    let refuse!: (e: Error) => void
     const failing = new FakeServer()
-    new LspClient(failing as unknown as RpcProcess, { onRequest: () => Promise.reject(new Error('x')) })
+    new LspClient(failing as unknown as RpcProcess, { onRequest: () => new Promise((_r, reject) => (refuse = reject)) })
     server.send({ jsonrpc: '2.0', id: 1, method: 'slow' })
     failing.send({ jsonrpc: '2.0', id: 1, method: 'slow' })
     await tick()
     failing.received = []
     server.emit('exit')
+    failing.emit('exit')
     release('late')
+    refuse(new Error('x')) // an error after it stopped: dropped too
     await tick()
     expect(server.received.filter((m) => m.id === 1)).toEqual([])
+    expect(failing.received.filter((m) => m.id === 1)).toEqual([])
   })
 
   it('frames: odd headers are skipped, broken bodies dropped, split chunks joined', () => {

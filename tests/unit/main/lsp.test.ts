@@ -151,6 +151,8 @@ describe('LspService (real tsserver)', () => {
     expect(fixes[0].title).toBe('Add import from "./c"')
     expect(fixes[0].files[0]).toMatchObject({ path: 'src/b.ts' })
     expect(await lsp.codeFixes('p', 'src/b.ts', missing.range, [])).toEqual([])
+    // a file tsserver doesn't know: no fixes, no error
+    expect(await lsp.codeFixes('p', 'src/nope.ts', missing.range, [2304])).toEqual([])
     expect(await make(root).codeFixes('p', 'src/b.ts', missing.range, [2304])).toEqual([]) // no server yet
 
     await lsp.close('p', 'src/b.ts')

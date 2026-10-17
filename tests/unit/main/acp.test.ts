@@ -307,6 +307,8 @@ describe('AgentSessionService with ACP agents (Codex, Gemini)', () => {
     agent.onPrompt = async (conn, req) => {
       await conn.sessionUpdate({ sessionId: req.sessionId, update: { sessionUpdate: 'tool_call', toolCallId: 'e', title: 'Edit a.ts', kind: 'edit' } })
       answers.push(await conn.requestPermission({ sessionId: req.sessionId, toolCall: { toolCallId: 'e', title: 'Edit a.ts', kind: 'edit' }, options: [{ optionId: 'no', name: 'Reject', kind: 'reject_once' }] }))
+      // A tool call that names no kind: nothing to keep, the request decides.
+      await conn.sessionUpdate({ sessionId: req.sessionId, update: { sessionUpdate: 'tool_call', toolCallId: 'plain', title: 'Think' } })
       answers.push(await conn.requestPermission({ sessionId: req.sessionId, toolCall: { toolCallId: 'unseen' }, options: [{ optionId: 'ok', name: 'Allow', kind: 'allow_once' }] }))
       // Reading outside the folder counts as a change (BE-SEC-17).
       answers.push(await conn.requestPermission({ sessionId: req.sessionId, toolCall: { toolCallId: 'r', title: 'Read key', kind: 'read', locations: [{ path: '/etc/ssh/ssh_host_rsa_key' }] }, options: [{ optionId: 'no', name: 'Reject', kind: 'reject_once' }] }))
@@ -394,6 +396,7 @@ describe('AgentSessionService with ACP agents (Codex, Gemini)', () => {
 
     const failing = await acpSetup({ failInit: true })
     const s3 = await failing.svc.create({ kind: 'codex', projectId: 'p1' })
+    failing.svc.interrupt(s3.id) // the handshake fails: nothing to cancel, nothing thrown
     failing.svc.stop(s3.id) // stopped before the failed handshake reports
     await tick(20)
     expect(failing.svc.get(s3.id).error).toBeUndefined()

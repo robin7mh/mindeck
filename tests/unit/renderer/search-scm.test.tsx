@@ -130,6 +130,14 @@ describe('search store', () => {
     expect(bridge.invoke).toHaveBeenCalledWith('search:cancel', { id: second })
     progress(bridge, { id: startedId(bridge), done: true, error: 'The search pattern takes too long' })
     expect(q().error).toBe('The search pattern takes too long')
+    // another project: the running search is cancelled (a failing cancel is fine), the results go
+    await q().run()
+    const running = startedId(bridge)
+    bridge.invoke.mockClear()
+    act(() => useEditor.setState({ projectId: 'q' }))
+    await act(settle)
+    expect(bridge.invoke).toHaveBeenCalledWith('search:cancel', { id: running })
+    expect(q().results).toEqual([])
     off()
   })
 

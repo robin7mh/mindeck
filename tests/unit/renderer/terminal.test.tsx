@@ -299,6 +299,17 @@ describe('XtermPane', () => {
     expect(remote.invoke.mock.calls.filter((c) => c[0] === 'terminal:attach')).toHaveLength(7)
   })
 
+  it('back online while still attaching: no second fetch', async () => {
+    const tab = info()
+    const remote = installRemote({ 'terminal:attach': pending })
+    render(<XtermPane tab={tab} label="~" active={false} framed={false} />)
+    await act(async () => {
+      remote.resync()
+      await settle()
+    })
+    expect(remote.invoke.mock.calls.filter((c) => c[0] === 'terminal:attach')).toHaveLength(1)
+  })
+
   it('a failed attach still flushes live output; exit marks the tab and Enter restarts', async () => {
     const tab = info()
     const fresh = info()
@@ -507,6 +518,9 @@ describe('useXterm extras', () => {
     await act(async () => void term.key({ key: 'V', ctrlKey: true, shiftKey: true }))
     await act(async () => void term.key({ key: 'Insert', shiftKey: true }))
     expect(term.paste.mock.calls).toEqual([['pasted'], ['pasted']])
+    board.readText.mockRejectedValueOnce(new Error('not allowed')) // the browser says no: nothing pasted
+    await act(async () => void term.key({ key: 'V', ctrlKey: true, shiftKey: true }))
+    expect(term.paste).toHaveBeenCalledTimes(2)
     act(() => void term.key({ key: 'f', ctrlKey: true, shiftKey: true }))
     expect(screen.getByRole('search')).toBeInTheDocument()
   })
@@ -530,13 +544,18 @@ describe('useXterm extras', () => {
   })
 
   it('agents’ terminals: find goes to the program, no file links, nothing saved', async () => {
-    installBridge({ 'terminal:attach': pending })
+    const bridge = installBridge({ 'terminal:attach': () => ({ buffer: '', end: 0, info: info() }) })
     const { SessionTerminalProbe } = await import('./terminalProbe')
     render(<SessionTerminalProbe id="a1" />)
+    await act(settle)
     const term = x.terms[0]
     expect(term.key({ key: 'f', ctrlKey: true, shiftKey: true }).handled).toBe(false)
     expect(term.linkProviders).toHaveLength(0)
     expect(serializers.has('a1')).toBe(false)
+    // its output shows (and is not kept); its end is the session's to tell, not the terminal's
+    act(() => bridge.emit('terminal:data', { id: 'a1', data: 'working', end: 7 }))
+    act(() => bridge.emit('terminal:exit', { id: 'a1', exitCode: 0 }))
+    expect(term.written.at(-1)).toBe('working')
   })
 
   it('restored output shows greyed above; the tab’s output is kept for the next start', async () => {

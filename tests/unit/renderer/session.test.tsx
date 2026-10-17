@@ -288,7 +288,7 @@ describe('client transport selection', () => {
 // --- session -------------------------------------------------------------------
 
 const initialSession = useSession.getState()
-const sessionFetch = (opts: { health?: boolean; pair?: 'ok' | 'bad'; info?: number } = {}) =>
+const sessionFetch = (opts: { health?: boolean; pair?: 'ok' | 'bad'; info?: number; revoke?: 'fail' } = {}) =>
   fakeFetch((url) => {
     if (url.endsWith('/api/health')) {
       return opts.health === false ? { status: 0, throws: new Error('down') } : { status: 200, body: { ok: true, name: 'Mindeck', version: '1', mode: 'server' } }
@@ -303,7 +303,7 @@ const sessionFetch = (opts: { health?: boolean; pair?: 'ok' | 'bad'; info?: numb
       if (opts.info === 0) return { status: 0, throws: new Error('ECONNREFUSED') }
       return { status: 200, body: { ok: true, data: { mode: 'server', version: '1', hostname: 'nas', platform: 'linux', remoteTerminal: false } } }
     }
-    if (url.endsWith('/api/rpc/server:revokeDevice')) return { status: 200, body: { ok: true } }
+    if (url.endsWith('/api/rpc/server:revokeDevice')) return opts.revoke === 'fail' ? { status: 0, throws: new Error('offline') } : { status: 200, body: { ok: true } }
     return { status: 404, body: { ok: false, error: { code: 'nf', message: 'nf' } } }
   })
 
@@ -369,6 +369,17 @@ describe('session store', () => {
     expect(useSession.getState().status).toBe('unpaired')
     expect(localStorage.getItem('mindeck.token')).toBeNull()
     await useSession.getState().logout() // nothing to revoke
+
+    // The core can't be told: signed out here all the same.
+    withFetch(sessionFetch())
+    expect(await useSession.getState().pair('ABCD-EFGH', 'Me')).toBe(true)
+    const failing = withFetch(sessionFetch({ revoke: 'fail' }))
+    useSession.setState(initialSession, true)
+    await useSession.getState().init()
+    await useSession.getState().logout()
+    expect(failing.mock.calls.some(([url]) => String(url).endsWith('server:revokeDevice'))).toBe(true)
+    expect(useSession.getState().status).toBe('unpaired')
+    expect(localStorage.getItem('mindeck.token')).toBeNull()
   })
 
   it('"stay paired" off: the token lives only as long as the tab (sessionStorage)', async () => {

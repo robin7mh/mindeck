@@ -525,6 +525,14 @@ describe('files building blocks', () => {
     useFiles.setState({ places: { home: '/home', places: [], volumes: [] } })
   }
 
+  it('Sidebar: no vault when its status can\'t be read', async () => {
+    installBridge({ 'memory:status': () => Promise.reject(new Error('offline')), 'projects:list': () => [] })
+    useFiles.setState({ places: { home: '/home', places: [{ id: 'home', path: '/home' }], volumes: [] } })
+    render(<Sidebar />)
+    await settle()
+    expect(screen.queryByText('Memory vault')).toBeNull()
+  })
+
   it('Sidebar: places, vault, projects and drives — and a drop target for moving and copying', async () => {
     installBridge({ 'memory:status': () => ({ exists: false, root: '/v' }), 'finder:move': () => [], 'finder:copy': () => [], 'finder:list': () => ({ path: '/home', parent: '/', entries: [], total: 0, offset: 0 }) })
     const move = vi.fn(async () => {})

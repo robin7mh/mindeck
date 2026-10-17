@@ -1,10 +1,10 @@
-import { chmod, mkdir, readFile, readdir as realReaddir, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir as realReaddir, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { tempDir } from './helpers'
 
 // Pass-through fs, with switches to fail one call the way a real disk sometimes does.
-const fsFail = vi.hoisted(() => ({ readdir: null as null | NodeJS.ErrnoException, rename: null as null | NodeJS.ErrnoException, mkdir: null as null | NodeJS.ErrnoException }))
+const fsFail = vi.hoisted(() => ({ readdir: null as null | NodeJS.ErrnoException, rename: null as null | NodeJS.ErrnoException, mkdir: null as null | NodeJS.ErrnoException, lstat: null as null | NodeJS.ErrnoException }))
 const mountsRead = vi.hoisted(() => [] as string[])
 vi.mock('node:fs/promises', async (importOriginal) => {
   const real = await importOriginal<typeof import('node:fs/promises')>()
@@ -26,7 +26,7 @@ vi.mock('node:fs/promises', async (importOriginal) => {
     }
     return (real.readdir as (...a: unknown[]) => Promise<unknown>)(path, ...rest)
   }) as typeof real.readdir
-  return { ...real, readdir: once('readdir', readdir), rename: once('rename', real.rename), mkdir: once('mkdir', real.mkdir) }
+  return { ...real, readdir: once('readdir', readdir), rename: once('rename', real.rename), mkdir: once('mkdir', real.mkdir), lstat: once('lstat', real.lstat) }
 })
 const exec = vi.hoisted(() => ({ fn: vi.fn() }))
 vi.mock('node:child_process', async (importOriginal) => ({ ...(await importOriginal<typeof import('node:child_process')>()), execFile: (...a: unknown[]) => exec.fn(...a) }))
@@ -54,6 +54,7 @@ async function world() {
   await mkdir(join(volumes, '.Spotlight'))
   await writeFile(join(volumes, 'notes.txt'), '')
   await symlink('/', join(volumes, 'Macintosh HD'))
+  await symlink(join(volumes, 'unplugged'), join(volumes, 'Gone')) // a link to nothing is no drive
   const trash = vi.fn(async () => {})
   const finder = new FinderService({ home, writableRoots: [home], volumeDirs: [volumes, join(volumes, 'missing')], trash, openPath: vi.fn(async () => {}), revealPath: vi.fn() })
   return { home, volumes, trash, finder }
@@ -155,6 +156,9 @@ describe('FinderService · reading', () => {
     expect(await finder.search(home, '  ')).toEqual([])
     const walked = await finder.search(home, 'REPORT')
     expect(walked.map((e) => e.name).sort()).toEqual(['report 10.md', 'report 2.md', 'report-tool.ts'])
+    // a folder it may not read is passed over
+    fsFail.readdir = errno('EACCES')
+    expect(await finder.search(join(home, 'Project', 'src'), 'tool')).toEqual([])
 
     const spotlight = vi.fn(async () => [join(home, 'Documents', 'report 2.md'), join(home, '.hidden', 'report.md'), '/elsewhere/report.md', join(home, 'Documents', 'vanished.md')])
     const indexed = new FinderService({ home, trash, spotlight })
@@ -196,9 +200,11 @@ describe('FinderService · reading', () => {
     // a folder Mindeck may not read still previews, without a count
     const locked = join(home, 'Locked')
     await mkdir(locked)
-    await chmod(locked, 0o000)
+    fsFail.readdir = errno('EACCES')
     expect(await finder.preview(locked)).toMatchObject({ type: 'dir', items: 0 })
-    await chmod(locked, 0o755)
+    // a file whose link status can't be read counts as no link
+    fsFail.lstat = errno('EIO')
+    expect((await finder.preview(join(docs, 'report 2.md'))).entry).not.toHaveProperty('link')
   })
 })
 

@@ -143,6 +143,10 @@ describe('tab groups', () => {
     a.prune()
     a.place(byId('b'), 5)
     expect(ids()[0]).toBe('b')
+    // the only tab of its group goes wherever it is asked to (after the pinned ones)
+    a.create([byId('a')])
+    a.place(byId('a'), 0)
+    expect(ids()[1]).toBe('a')
   })
 })
 

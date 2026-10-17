@@ -147,6 +147,13 @@ describe('settings store', () => {
     localStorage.removeItem('mindeck.deviceId')
   })
 
+  it('loads without the projects when they can\'t be listed', async () => {
+    installBridge(settingsCore({ 'projects:list': () => fail('busy') }))
+    await useSettings.getState().load()
+    expect(useSettings.getState().projects).toEqual([])
+    expect(useSettings.getState().devices).toHaveLength(2)
+  })
+
   it('loads, configures, pairs (with a QR code), revokes; reports failures', async () => {
     installBridge(settingsCore())
     const s = () => useSettings.getState()
@@ -395,6 +402,19 @@ describe('SettingsView', () => {
     expect(screen.getByText('Through your Mindeck account · claude-old-1')).toBeInTheDocument()
     act(() => useAssistant.setState({ status: cloudStatus({ cloud: null }) as never }))
     expect(screen.getByText('Through your Mindeck account · claude-haiku-5-5')).toBeInTheDocument()
+  })
+
+  it('a key that isn\'t taken stays in the field; a credit that can\'t be read keeps the last one', async () => {
+    installBridge(settingsCore({ 'ai:status': () => fail('offline'), 'ai:setKey': () => fail('invalid key') }))
+    useAssistant.setState({ status: { configured: true, model: 'claude-opus-5-5', cloud: null, source: 'stored', keyHint: 'ABCD', settings: { model: 'claude-opus-5-5', effort: 'high', inline: false, inlineModel: 'claude-opus-5-5', cloudModel: 'claude-haiku-5-5' } } })
+    useSession.setState({ info: { mode: 'desktop', version: '1.2.3', platform: 'darwin', hostname: 'mac', remoteTerminal: false } })
+    render(<SettingsView />)
+    await act(settle)
+    expect(screen.getByText('Anthropic key stored · …ABCD')).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('New API key'), { target: { value: 'sk-bad' } })
+    fireEvent.click(screen.getByText('Save'))
+    await act(settle)
+    expect(screen.getByLabelText('New API key')).toHaveValue('sk-bad')
   })
 
   it('desktop: AI key + model, server toggles, pairing, devices, grants, vault, about', async () => {
@@ -720,6 +740,9 @@ describe('ContextSection', () => {
     fireEvent.click(screen.getByText('Show fewer'))
     fireEvent.click(screen.getByText('f0.ts:1'))
     expect(bridge.invoke).toHaveBeenCalledWith('projects:openFile', { id: 'p1', file: 'f0.ts', line: 1 })
+    bridge.invoke.mockRejectedValueOnce(new Error('gone')) // a file that went away: nothing to show
+    fireEvent.click(screen.getByText('f0.ts:1'))
+    await act(settle)
     expect(screen.getByText('Reindex')).toBeInTheDocument()
   })
 

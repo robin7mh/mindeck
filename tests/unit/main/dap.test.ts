@@ -203,18 +203,35 @@ describe('DapSession', () => {
 
   it('pause before any stop asks for the threads; many frames load scopes only at the top', async () => {
     const many = Array.from({ length: 25 }, (_, i) => ({ id: i, name: `f${i}`, line: 1, column: 1, source: i === 1 ? { name: '<string>' } : { path: `/root/f${i}.py` } }))
-    const s = session({ stackTrace: () => ({ stackFrames: many }), scopes: (a: { frameId: number }) => (a.frameId === 2 ? {} : { scopes: [{ name: 'Locals', variablesReference: 1 }] }) })
+    const s = session({
+      stackTrace: () => ({ stackFrames: many }),
+      // frame 2 has none, frame 3's can't be read: both show without scopes
+      scopes: (a: { frameId: number }) => (a.frameId === 3 ? Promise.reject(new Error('gone')) : a.frameId === 2 ? {} : { scopes: [{ name: 'Locals', variablesReference: 1 }] }),
+      // an adapter that fails to disconnect is closed all the same
+      disconnect: () => Promise.reject(new Error('already gone'))
+    })
     await s.dap.start([], false)
     await s.dap.control('pause')
     expect(s.adapter.received.at(-1)).toMatchObject({ command: 'pause', arguments: { threadId: 1 } })
     s.adapter.event('stopped', { reason: 'pause' })
     await tick(60)
-    expect(s.last().frames.filter((f) => f.scopes.length)).toHaveLength(19)
+    expect(s.last().frames.filter((f) => f.scopes.length)).toHaveLength(18)
     expect(s.last().frames[1]).toMatchObject({ url: '<string>', path: undefined })
     await s.dap.stop()
     expect(s.adapter.commands()).toContain('disconnect')
     expect(s.last().status).toBe('exited')
     expect(s.output.at(-1)!.text).toBe('exit -\n')
+  })
+
+  it('a program that stops on entry before the handshake is answered stays paused', async () => {
+    const s = session({
+      configurationDone: (_a, ad) => {
+        ad.event('stopped', { reason: 'entry', threadId: 1 })
+        return new Promise((r) => setTimeout(() => r({}), 30))
+      }
+    })
+    await s.dap.start([], true)
+    expect(s.last()).toMatchObject({ status: 'paused', reason: 'entry' })
   })
 
   it('a launch the adapter refuses ends the session with the reason; the adapter going away ends it too', async () => {
@@ -591,6 +608,20 @@ describe('DebugService: compiled languages, the build step, other languages', ()
     await killed.svc.stop()
     fail(new Error('Build failed: clang (exit 1)'))
     expect(await run).toMatchObject({ status: 'exited', error: undefined })
+
+    // Started again while building: the first build's end leaves the second one alone.
+    const builds: ((v: string) => void)[] = []
+    const again = await setup({ 'main.c': '' }, { build: () => new Promise((r) => builds.push(r)) })
+    const first = again.svc.start({ projectId: 'p', program: 'main.c', breakpoints: [] })
+    await tick()
+    const second = again.svc.start({ projectId: 'p', program: 'main.c', breakpoints: [] })
+    while (builds.length < 2) await tick()
+    builds[0]('/built')
+    expect(await first).toMatchObject({ status: 'exited', error: undefined })
+    expect(again.svc.session()).toMatchObject({ status: 'starting' })
+    builds[1]('/built')
+    expect((await second).error).toBeUndefined()
+    expect(again.adapters).toHaveLength(1) // only the second build reached the debugger
   })
 
   it('a built program goes to LLDB as it is (nothing to compile)', async () => {

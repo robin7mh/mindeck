@@ -4,7 +4,7 @@ import { hostOf, mongoDriver, MongoService, type MongoClientLike, type MongoColl
 type Doc = Record<string, unknown> & { _id?: unknown }
 
 /** An in-memory MongoDB: databases of collections of documents (filters match by equality). */
-function fakeMongo(opts: { failConnect?: string; failList?: boolean } = {}) {
+function fakeMongo(opts: { failConnect?: string; failList?: boolean; failClose?: boolean } = {}) {
   const data: Record<string, Record<string, Doc[]>> = { shop: { users: [{ _id: 1, name: 'Ann', age: 31 }, { _id: 2, name: 'Bob', age: 25 }], views: [] }, empty: {} }
   const calls: string[] = []
   let closed = 0
@@ -64,7 +64,10 @@ function fakeMongo(opts: { failConnect?: string; failList?: boolean } = {}) {
         }
       })
     }),
-    close: async () => void closed++
+    close: async () => {
+      closed++
+      if (opts.failClose) throw new Error('connection reset')
+    }
   }
   const connects: string[] = []
   const driver: MongoDriver = {
@@ -117,6 +120,12 @@ describe('MongoDB', () => {
     const unauthorized = setup(fakeMongo({ failList: true }))
     await expect(unauthorized.svc.add('x', 'mongodb://localhost')).rejects.toMatchObject({ message: 'not authorized' })
     expect(await unauthorized.svc.connections()).toEqual([])
+    // a client that fails to close is gone all the same
+    const stuck = setup(fakeMongo({ failClose: true }))
+    const s1 = await stuck.svc.add('x', 'mongodb://localhost')
+    await stuck.svc.remove(s1.id)
+    expect(await stuck.svc.connections()).toEqual([])
+    expect(stuck.closed()).toBe(1)
   })
 
   it('opens saved connections on first use (again after a failure); broken storage is no connections', async () => {

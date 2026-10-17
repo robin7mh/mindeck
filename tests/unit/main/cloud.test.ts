@@ -651,6 +651,10 @@ describe('CloudService', () => {
     const status = await t.svc.logout()
     expect(t.cloud.last('/v1/auth/logout')!.auth).toBe('Bearer ws_secret')
     expect(status).toMatchObject({ state: 'signed_out', account: null, license: null, validUntil: null })
+    // the cloud not answering never keeps the user signed in
+    await t.signIn()
+    t.cloud.s.fail['/v1/auth/logout'] = { status: 503 }
+    expect(await t.svc.logout()).toMatchObject({ state: 'signed_out', account: null })
   })
 
   it('refresh does nothing while signed out, and survives a failing account read', async () => {

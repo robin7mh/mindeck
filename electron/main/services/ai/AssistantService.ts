@@ -406,7 +406,8 @@ export class AssistantService {
     }
     // 3. permission gate — an "Always allow" holds in the tool's project only
     if (tool.risk !== 'read') {
-      const granted = tool.risk === 'write' && (await this.deps.permissions.isGranted(agent.id, tool.name, projectId))
+      let granted = false
+      if (tool.risk === 'write') granted = await this.deps.permissions.isGranted(agent.id, tool.name, projectId)
       if (!granted) {
         const reason = String((parsed.data as { reason?: unknown }).reason ?? '')
         const asked = this.deps.permissions.ask(

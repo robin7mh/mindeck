@@ -256,9 +256,11 @@ describe('AnthropicProvider', () => {
       { type: 'server_tool_use', id: 's3', name: 'web_fetch', input: {} } as never,
       { type: 'web_fetch_tool_result', tool_use_id: 's3', content: {} } as never,
       { type: 'server_tool_use', id: 's4', name: 'web_search', input: {} } as never,
-      { type: 'web_search_tool_result', tool_use_id: 's4', content: [{}] } as never
+      { type: 'web_search_tool_result', tool_use_id: 's4', content: [{}] } as never,
+      { type: 'thinking', thinking: 'hm', signature: 'sig' } as never
     ])
     expect(fetched.serverTools.map((s) => s.output)).toEqual(['https://x', 'error: url_not_allowed', 'fetched', ' — '])
+    expect(fetched.blocks.at(-1)).toEqual({ type: 'opaque', data: { type: 'thinking', thinking: 'hm', signature: 'sig' } }) // kept for replay
   })
 })
 

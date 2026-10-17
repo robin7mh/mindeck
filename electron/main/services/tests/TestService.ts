@@ -259,7 +259,7 @@ export class TestService {
       const framework: TestFramework | undefined = JS_TEST.test(path) ? js : GO_TEST.test(path) ? (frameworks.includes('go') ? 'go' : undefined) : frameworks.includes('pytest') ? 'pytest' : undefined
       if (!framework) continue
       const text = await readFile(join(root, path), 'utf8')
-      const children = framework === 'pytest' ? pyTests(path, text) : framework === 'go' ? goTests(path, text) : await jsTests(path, text, framework)
+      const children = await (framework === 'pytest' ? pyTests(path, text) : framework === 'go' ? goTests(path, text) : jsTests(path, text, framework))
       if (children.length) tests.push({ id: path, name: path, kind: 'file', framework, path, children })
     }
     const old = this.projects.get(projectId)

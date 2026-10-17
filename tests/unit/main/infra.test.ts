@@ -565,7 +565,10 @@ describe('ipc handler modules bind every channel to its service', () => {
         ['agents:branch', { id: 'i' }, 'branch', ['i']],
         ['agents:diff', { id: 'i', path: 'a.ts' }, 'diff', ['i', 'a.ts']],
         ['agents:accept', { id: 'i' }, 'accept', ['i']],
-        ['agents:discard', { id: 'i' }, 'discard', ['i']]
+        ['agents:discard', { id: 'i' }, 'discard', ['i']],
+        ['agents:rename', { id: 'i', title: 'Fix login' }, 'rename', ['i', 'Fix login']],
+        ['agents:shell', { id: 'i' }, 'shell', ['i']],
+        ['agents:openInEditor', { id: 'i' }, 'openInEditor', ['i']]
       ]
     ]
   ] as const)('%s', async (_name, register, cases) => {

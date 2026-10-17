@@ -246,6 +246,10 @@ describe('the browser host · profiles, fullscreen, media, logins', () => {
     expect(own.opts.webPreferences.partition).toBe('persist:mindeck-browser')
     // every profile asks the blocker
     expect(h.sessions.get('mindeck-private')!.beforeRequest).toBeDefined()
+    // and asks the window open now — naming the tab
+    const [ask] = h.sessions.get('mindeck-private')!.setPermissionRequestHandler.mock.calls[0] as [(...a: unknown[]) => void]
+    ask(priv.webContents, 'notifications', vi.fn(), { requestingUrl: 'https://secret.dev/x' })
+    expect(ev.permission).toHaveBeenCalledWith({ tabId: 'p', origin: 'https://secret.dev', kind: 'notifications' }, expect.any(Function))
     // a private sign-in popup stays private
     const popup = priv.webContents.openHandler!({ url: 'https://login.dev/', disposition: 'new-window', features: 'width=400' } as never) as {
       overrideBrowserWindowOptions: { webPreferences: { partition: string } }

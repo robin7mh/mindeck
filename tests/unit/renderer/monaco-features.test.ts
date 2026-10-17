@@ -410,6 +410,7 @@ describe('TypeScript through tsserver', () => {
     await flush() // a failed sync is not fatal
 
     m.type('y')
+    routes['lsp:close'] = () => Promise.reject(new Error('gone')) // closing a server that went: fine
     m.dispose()
     await flush()
     expect(calls('lsp:close')).toEqual([{ projectId: 's1', path: 'a.ts' }])

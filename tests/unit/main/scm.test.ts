@@ -364,6 +364,8 @@ describe('ScmService', () => {
     await expect(s.blame('p', '../x')).rejects.toMatchObject({ code: 'outside-project' })
     await writeFile(join(dir, 'new.txt'), 'n\n')
     await expect(s.blame('p', 'new.txt')).rejects.toMatchObject({ code: 'git' })
+    // git stops before reading a big buffer: its error, not a broken pipe
+    await expect(s.blame('p', 'new.txt', 'line\n'.repeat(200_000))).rejects.toMatchObject({ code: 'git' })
   })
 
   it('commit details and diffs: working tree, index, commit (also a rename)', async () => {

@@ -235,6 +235,7 @@ describe('BrowserService · tabs and the session', () => {
     b.permission(b.state().permissions[0].id, false)
     expect(deps.openExternal).not.toHaveBeenCalled()
     b.navigate(ntp, 'zoommtg://zoom.us/join')
+    vi.mocked(deps.openExternal!).mockRejectedValueOnce(new Error('the app did not start')) // nothing to report
     b.permission(b.state().permissions[0].id, true, true)
     expect(deps.openExternal).toHaveBeenCalledWith('zoommtg://zoom.us/join')
     b.navigate(ntp, 'ZOOMMTG://zoom.us/join?confno=2')
@@ -333,6 +334,12 @@ describe('BrowserService · tabs and the session', () => {
     expect(t().audible).toBe(true)
     b.update(tab.id, { muted: true })
     expect(host.setMuted).toHaveBeenCalledWith(tab.id, true)
+    // a tab without a page (the new-tab page) keeps the setting for when it has one
+    host.setMuted.mockClear()
+    const asleep = b.open({ background: true })
+    b.update(asleep.id, { muted: true })
+    expect(host.setMuted).not.toHaveBeenCalled()
+    expect(b.state().tabs.find((x) => x.id === asleep.id)!.muted).toBe(true)
 
     // events of tabs that are gone change nothing
     for (const call of [
@@ -700,6 +707,10 @@ describe('BrowserService · agents', () => {
     const second = b.open({ url: 'localhost:3000', background: true })
     b.noteAgent(second.id, 'Codex', 'click', 'Save')
     expect(b.agentTab().id).toBe(second.id)
+    await tick(5)
+    b.noteAgent(local.id, 'Claude Code', 'read')
+    expect(b.agentTab().id).toBe(local.id) // used later
+    await tick(5)
     expect(b.state().tabs.find((t) => t.id === second.id)!.agent).toMatchObject({ name: 'Codex', action: 'click', detail: 'Save' })
     b.noteAgent(second.id, 'Codex', 'read')
     expect(b.state().tabs.find((t) => t.id === second.id)!.agent).not.toHaveProperty('detail')

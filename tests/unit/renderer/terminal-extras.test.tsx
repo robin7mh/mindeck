@@ -389,6 +389,12 @@ describe('terminal store: restore, split, follow, save', () => {
     installBridge({ 'terminal:list': () => [], 'terminal:restore': () => saved([{ title: 'a', cwd: '/a', scrollback: '' }], { active: 3 }), 'terminal:create': () => created })
     await useTerminals.getState().init()
     expect(useTerminals.getState().activeId).toBe(created.id)
+
+    // the saved tabs can't be read: Home as before
+    useTerminals.setState(initial, true)
+    installBridge({ 'terminal:list': () => [], 'terminal:restore': () => fail('corrupt'), 'terminal:create': () => created })
+    await useTerminals.getState().init()
+    expect(useTerminals.getState().tabs).toEqual([created])
   })
 
   it('splits next to a shell (single → side by side), follows reported folders, restarts in the last folder', async () => {
@@ -440,11 +446,14 @@ describe('terminal store: restore, split, follow, save', () => {
     window.dispatchEvent(new Event('beforeunload'))
     await vi.advanceTimersByTimeAsync(0)
     expect(persist).toHaveBeenCalledTimes(2)
+    persist.mockRejectedValueOnce(new Error('disk full')) // closing anyway: no error
+    await expect(saveNow()).resolves.toBeUndefined()
+    expect(persist).toHaveBeenCalledTimes(3)
 
     // restoring switched off: nothing is sent
     useTerminalSettings.setState({ settings: { ...DEFAULT_TERMINAL_SETTINGS, restore: false } })
     await saveNow()
-    expect(persist).toHaveBeenCalledTimes(2)
+    expect(persist).toHaveBeenCalledTimes(3)
     expect(snapshot().active).toBe(1)
     useTerminals.setState({ activeId: undefined })
     expect(snapshot().active).toBe(0)

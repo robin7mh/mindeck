@@ -195,13 +195,13 @@ describe('Netscape bookmark files', () => {
   })
 
   it('find a toolbar folder nested deeper, and take only the first one', () => {
-    const html = `<DL><p><DT><H3>Menu</H3><DL><p>
+    const html = `<DL><p><DT><A HREF="https://top.dev/">Top</A><DT><H3>Menu</H3><DL><p>
       <DT><H3 PERSONAL_TOOLBAR_FOLDER="true">Toolbar</H3><DL><p><DT><A HREF="https://t.dev/">T</A></DL><p>
       <DT><H3 PERSONAL_TOOLBAR_FOLDER="true">Second</H3><DL><p><DT><A HREF="https://s.dev/">S</A></DL><p>
     </DL><p></DL><p>`
     const set = parseNetscape(html)
     expect(set.bar.map((n) => n.title)).toEqual(['T'])
-    expect(titles(set.other)).toEqual([{ Menu: [{ Second: ['S'] }] }])
+    expect(titles(set.other)).toEqual(['Top', { Menu: [{ Second: ['S'] }] }])
   })
 
   it('write a file every browser reads — and read it back the same', () => {
