@@ -323,7 +323,9 @@ export function useXterm(hostRef: RefObject<HTMLDivElement>, id: string, exited:
       ro.disconnect()
       window.clearTimeout(settling)
       mo.disconnect()
-      term.dispose()
+      // A task later: open() left xterm a timer that measures the view (Viewport.syncScrollArea);
+      // a view gone in the same task (StrictMode, a layout switching fast) would make it throw.
+      window.setTimeout(() => term.dispose())
       termRef.current = null
       fitRef.current = null
       parts.current = null

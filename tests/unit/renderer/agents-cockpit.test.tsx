@@ -456,6 +456,7 @@ describe('SessionPane', () => {
     await act(settle)
     expect(xt.terms).toHaveLength(1)
     fireEvent.click(screen.getByLabelText('Hide terminal'))
+    await act(settle) // the view is disposed a task later
     expect(xt.terms[0].disposed).toBe(true)
 
     rerender(<SessionPane session={session({ status: 'idle' })} messages={messages} />)
@@ -651,6 +652,7 @@ describe('SessionPane: a shell for agents without a terminal', () => {
     act(() => bridge.emit('terminal:exit', { id: 'sh1', exitCode: 0 }))
     expect(xt.terms[0].written.join('')).toContain('[the shell ended]')
     fireEvent.click(screen.getByLabelText('Hide terminal'))
+    await act(settle) // the view is disposed a task later
     expect(xt.terms[0].disposed).toBe(true)
 
     openShell.mockResolvedValueOnce(undefined as never)

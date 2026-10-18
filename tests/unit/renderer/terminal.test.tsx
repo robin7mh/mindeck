@@ -382,6 +382,9 @@ describe('XtermPane', () => {
     rerender(<XtermPane tab={tab} label="~" active={false} framed={false} />)
 
     unmount()
+    // Disposed a task later — after the timer xterm's open() left (it would hit a disposed view).
+    expect(term.disposed).toBe(false)
+    await act(() => new Promise((r) => setTimeout(r)))
     expect(term.disposed).toBe(true)
     restore()
   })
