@@ -366,9 +366,10 @@ app.on('before-quit', (event) => lifecycle.onBeforeQuit(event))
 // without asking — no one is at the window to answer, and Mindeck must not linger.
 for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) process.on(signal, () => lifecycle.quitNow())
 
-// A helper process (GPU, network, a utility) ended unexpectedly — for the log.
+// A helper process (GPU, network, a utility) ended unexpectedly — for the log. While
+// quitting, Mindeck ends its own helpers (tsserver, the lint worker): that is no news.
 app.on('child-process-gone', (_event, details) => {
-  if (details.reason === 'clean-exit') return
+  if (details.reason === 'clean-exit' || (details.reason === 'killed' && lifecycle.isQuitting)) return
   console.warn(`[app] ${details.type}${details.name ? ` (${details.name})` : ''} process gone: ${details.reason}, exit code ${details.exitCode}`)
 })
 

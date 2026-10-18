@@ -767,6 +767,11 @@ describe('stability', () => {
       '[app] GPU process gone: crashed, exit code 1',
       '[app] Utility (Network Service) process gone: killed, exit code 9'
     ])
+    // Quitting ends Mindeck's own helpers: not worth a warning — a crash still is.
+    h.appHandlers.get('before-quit')!({ preventDefault: vi.fn() })
+    h.appHandlers.get('child-process-gone')!({}, { type: 'Utility', name: 'TypeScript', reason: 'killed', exitCode: 2 })
+    h.appHandlers.get('child-process-gone')!({}, { type: 'GPU', reason: 'crashed', exitCode: 1 })
+    expect(warn.mock.calls.slice(3).map((c) => c[0])).toEqual(['[app] GPU process gone: crashed, exit code 1'])
   })
 
   it('a redirect never takes the window away from Mindeck', async () => {
