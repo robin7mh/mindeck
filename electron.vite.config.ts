@@ -60,7 +60,13 @@ export default defineConfig({
       // Its "browser" build is a UMD bundle without named exports: the ESM one.
       alias: [monacoDeepImports, { find: /^monaco-vim$/, replacement: resolve(__dirname, 'node_modules/monaco-vim/dist/index.mjs') }, { find: '@', replacement: resolve(__dirname, 'src') }, { find: '@shared', replacement: shared['@shared'] }]
     },
-    optimizeDeps: { exclude: ['monaco-vim'] },
+    optimizeDeps: {
+      exclude: ['monaco-vim'],
+      // monaco-vim stays out of the pre-bundle, so the dev server would find its Monaco imports only
+      // when the editor first loads — then bundle again and reload the window mid-session (it looks
+      // like a crash). Bundled at start instead, in the same pass as monaco-editor (one copy of it).
+      include: ['monaco-editor/esm/vs/editor/editor.api', 'monaco-editor/esm/vs/editor/common/commands/shiftCommand']
+    },
     build: {
       outDir: 'out/renderer',
       rollupOptions: {
