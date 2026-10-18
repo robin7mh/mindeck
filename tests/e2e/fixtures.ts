@@ -1,5 +1,5 @@
 import { _electron as electron, test as base, type ElectronApplication, type Page } from '@playwright/test'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
@@ -87,6 +87,10 @@ async function kill(app: ElectronApplication): Promise<void> {
 export const test = base.extend<Fixtures>({
   home: async ({}, use) => {
     const dir = await mkdtemp(join(tmpdir(), 'mindeck-e2e-'))
+    // Terminals draw with the DOM renderer, whose text the tests read — on a Mac with a GPU as on a
+    // CI runner without one (WebGL would paint it onto a canvas).
+    await mkdir(join(dir, 'data'), { recursive: true })
+    await writeFile(join(dir, 'data', 'settings.json'), JSON.stringify({ version: 1, settings: { terminal: { gpu: false } } }))
     await use(dir)
     await rm(dir, { recursive: true, force: true })
   },

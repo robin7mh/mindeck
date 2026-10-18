@@ -12,8 +12,8 @@ test('terminal: find in the output (Ctrl+Shift+F), and after a restart the old o
   await page.keyboard.type(`cd "${work}" && echo "marker-$((6 * 7))"\n`)
   await expect(screen).toContainText('marker-42')
 
-  // find: Ctrl+Shift+F (Ctrl+F stays the shell's)
-  await page.keyboard.press('Control+Shift+F')
+  // find: ⌘F on macOS, else Ctrl+Shift+F (Ctrl+F stays the shell's)
+  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+f' : 'Control+Shift+F')
   const find = page.getByRole('textbox', { name: 'Find' })
   await expect(find).toBeFocused()
   await find.fill('marker-42')

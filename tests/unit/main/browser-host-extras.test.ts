@@ -311,7 +311,7 @@ describe('the browser host · profiles, fullscreen, media, logins', () => {
     a.webContents.emit('leave-html-full-screen')
     expect(a.bounds).toEqual({ x: 10, y: 50, width: 800, height: 600 })
     // F11 / ⌃⌘F still toggles the window's own full screen from the page
-    a.webContents.emit('before-input-event', esc, { ...key('F11') })
+    a.webContents.emit('before-input-event', esc, process.platform === 'darwin' ? { ...key('f'), meta: true, control: true } : key('F11'))
     expect(win.setFullScreen).toHaveBeenCalledWith(true)
 
     // fullscreen again, then another tab: the first leaves fullscreen

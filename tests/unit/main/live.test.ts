@@ -158,6 +158,8 @@ describe('Live Server', () => {
     await writeFile(join(root, 'node_modules/x.js'), 'x') // ignored
     await writeFile(join(root, 'public/index.html'), '<body>v2</body>')
     expect(await reload).toBe('reload')
+    // macOS reports a change late at times (or twice): let the page's events die down before the stylesheet's.
+    await new Promise((r) => setTimeout(r, 400))
     const swap = nextEvent(url)
     await new Promise((r) => setTimeout(r, 100))
     await writeFile(join(root, 'public/css/site.css'), 'h1 { color: blue }')

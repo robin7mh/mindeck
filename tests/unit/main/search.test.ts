@@ -310,7 +310,7 @@ describe('SearchService: the built-in engine', () => {
 })
 
 /** A stand-in ripgrep: prints the given lines (and records its arguments). */
-async function fakeRg(spec: { stdout: string[]; stderr?: string; code?: number; hang?: boolean }): Promise<{ bin: string; args: () => string[] }> {
+async function fakeRg(spec: { stdout: string[]; stderr?: string; code?: number; hang?: boolean; pauseMs?: number }): Promise<{ bin: string; args: () => string[] }> {
   const dir = await tempDir('mindeck-rg-')
   const bin = join(dir, 'rg')
   await writeFile(join(dir, 'spec.json'), JSON.stringify(spec))
@@ -324,6 +324,7 @@ async function fakeRg(spec: { stdout: string[]; stderr?: string; code?: number; 
       "process.stdout.write(spec.stdout.map((l) => l + '\\n').join(''))",
       'if (spec.stderr) process.stderr.write(spec.stderr)',
       'if (spec.hang) setInterval(() => {}, 1000)',
+      'else if (spec.pauseMs) setTimeout(() => (process.exitCode = spec.code || 0), spec.pauseMs)',
       'else process.exitCode = spec.code || 0'
     ].join('\n')
   )
@@ -367,6 +368,19 @@ describe('SearchService: ripgrep', () => {
     const { files } = await h.done('r')
     expect(files).toEqual({ 'ascii.ts': ['1:1:1'], 'src/ä.ts': ['2:0:5', '2:6:5'] })
     expect(rg.args()).toEqual(ripgrepArgs(q('w', { include: ['src'] }), { ...SEARCH_LIMITS }))
+  })
+
+  it('a search still running sends what it found so far, batch by batch', async () => {
+    const root = await tempDir()
+    const rg = await fakeRg({ stdout: [begin('./a.ts'), match('./a.ts', 1, 'needle\n', [[0, 6]]), end('./a.ts')], pauseMs: 300 })
+    const h = harness(root, { ripgrep: rg.bin })
+    await h.service.start('slow', 'p', q('needle'))
+    const { files, last } = await h.done('slow')
+    expect(files).toEqual({ 'a.ts': ['1:0:6'] })
+    const mine = h.events.filter((e) => e.id === 'slow')
+    // The match went out in a batch of its own (after batchMs), before the search was done.
+    expect(mine[0]).toMatchObject({ done: false, files: [{ path: 'a.ts' }] })
+    expect(last).toMatchObject({ done: true, files: [] })
   })
 
   it('stops ripgrep at the match limit, and when cancelled', async () => {

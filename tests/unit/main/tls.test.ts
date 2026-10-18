@@ -394,13 +394,14 @@ describe('HttpServer over TLS', () => {
     expect(await plain('renamed.local')).toBe(200) // the renewed certificate's names
 
     const internals = http as unknown as { sockets: Set<Socket> }
-    const silent = netConnect(port, '127.0.0.1')
+    // The server cuts these off: depending on timing the client sees a reset (an error) before 'close'.
+    const silent = netConnect(port, '127.0.0.1').on('error', () => {})
     await new Promise((r) => silent.once('connect', r))
     await tick(20)
     const closed = new Promise((r) => silent.once('close', r))
     ;[...internals.sockets].at(-1)!.emit('timeout') // nothing said within the first-byte window
     await closed
-    const broken = netConnect(port, '127.0.0.1')
+    const broken = netConnect(port, '127.0.0.1').on('error', () => {})
     await new Promise((r) => broken.once('connect', r))
     await tick(20)
     const gone = new Promise((r) => broken.once('close', r))
@@ -408,7 +409,7 @@ describe('HttpServer over TLS', () => {
     await gone
 
     // An open TLS connection ends with the server.
-    const open = tlsConnect({ host: '127.0.0.1', port, rejectUnauthorized: false })
+    const open = tlsConnect({ host: '127.0.0.1', port, rejectUnauthorized: false }).on('error', () => {})
     await new Promise((r) => open.once('secureConnect', r))
     const ended = new Promise((r) => open.once('close', r))
     await http.close()
