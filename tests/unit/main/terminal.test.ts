@@ -300,6 +300,22 @@ describe('TerminalService.spawnProgram (agents)', () => {
     expect(onExit).toHaveBeenCalledWith(2)
   })
 
+  it('an exception after a process ended is logged — it never escapes into node-pty (that would end the app)', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const info = await svc.spawnProgram({
+      title: 'x',
+      cwd: projectDir,
+      command: { file: 'claude', args: [] },
+      onExit: () => {
+        throw new Error('listener broke')
+      }
+    })
+    expect(() => pty().exit(1)).not.toThrow()
+    expect(error).toHaveBeenCalledWith(`[terminal] after ${info.id} ended:`, expect.objectContaining({ message: 'listener broke' }))
+    expect(svc.info(info.id)).toBeUndefined()
+    error.mockRestore()
+  })
+
   it('on Windows starts the program directly', async () => {
     setPlatform('win32')
     await svc.spawnProgram({ title: 'x', cwd: projectDir, command: { file: 'claude.exe', args: ['--a b'] } })
