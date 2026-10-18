@@ -1,9 +1,10 @@
-import { useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent } from 'react'
+import { useRef, useState, type KeyboardEvent, type MouseEvent } from 'react'
 import { ChevronDown, ChevronRight, PanelLeftClose, PanelLeftOpen, Plus, Search, X } from 'lucide-react'
 import { VERTICAL_TABS_WIDTH, type BrowserTab, type BrowserTabGroup } from '@shared/types/browser'
 import { cn } from '@/lib/cn'
 import { useT } from '@/lib/i18n'
 import { useOverlay } from '@/lib/overlay'
+import { usePointerDrag } from '@/lib/pointerDrag'
 import { tabLabel } from '../library'
 import { splitOf, useBrowser } from '../store'
 import { dropAtEnd, dropOnGroup, dropOnTab, GROUP_STYLES, tabItems } from '../tabs'
@@ -22,20 +23,19 @@ const clampWidth = (w: number) => Math.round(Math.max(VERTICAL_TABS_WIDTH.min, M
 /** The sidebar's right edge: drag it (or use the arrow keys) for another width, double-click for the default. */
 function Resizer({ width, onWidth }: { width: number; onWidth: (w: number | null) => void }) {
   const t = useT()
-  const start = useRef<{ x: number; width: number } | null>(null)
-  const [dragging, setDragging] = useState(false)
+  const start = useRef({ x: 0, width })
+  const at = (clientX: number) => clampWidth(start.current.width + clientX - start.current.x)
+  const commit = (w: number) => void useBrowser.getState().configure({ verticalTabsWidth: clampWidth(w) })
+  const { dragging, onPointerDown } = usePointerDrag({
+    onStart: ({ clientX }) => (start.current = { x: clientX, width }),
+    onMove: ({ clientX }) => onWidth(at(clientX)),
+    onEnd: ({ clientX }) => {
+      onWidth(null)
+      commit(at(clientX))
+    }
+  })
   // The page is a native view: while dragging over it, its picture stands in (it would take the pointer).
   useOverlay(dragging)
-  const commit = (w: number) => void useBrowser.getState().configure({ verticalTabsWidth: clampWidth(w) })
-  const end = (e: PointerEvent<HTMLDivElement>) => {
-    if (!start.current) return
-    e.currentTarget.releasePointerCapture?.(e.pointerId)
-    const w = clampWidth(start.current.width + e.clientX - start.current.x)
-    start.current = null
-    setDragging(false)
-    onWidth(null)
-    commit(w)
-  }
   const onKeyDown = (e: KeyboardEvent) => {
     const step: Record<string, number> = { ArrowLeft: -STEP, ArrowRight: STEP }
     if (!(e.key in step)) return
@@ -53,15 +53,7 @@ function Resizer({ width, onWidth }: { width: number; onWidth: (w: number | null
         aria-valuemax={VERTICAL_TABS_WIDTH.max}
         aria-valuenow={width}
         title={t.browserTabs.resizeSidebar}
-        onPointerDown={(e) => {
-          e.preventDefault()
-          e.currentTarget.setPointerCapture?.(e.pointerId)
-          start.current = { x: e.clientX, width }
-          setDragging(true)
-        }}
-        onPointerMove={(e) => start.current && onWidth(clampWidth(start.current.width + e.clientX - start.current.x))}
-        onPointerUp={end}
-        onPointerCancel={end}
+        onPointerDown={onPointerDown}
         onDoubleClick={() => commit(VERTICAL_TABS_WIDTH.default)}
         onKeyDown={onKeyDown}
         className="group absolute inset-y-0 -right-1 z-20 flex w-2 cursor-col-resize justify-center outline-hidden"

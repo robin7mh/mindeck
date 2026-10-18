@@ -290,9 +290,9 @@ describe('editor groups: the view', () => {
     fireEvent.pointerMove(columns, { clientX: 300 }) // not dragging
     expect(sizes()).toEqual([0.5, 0.5])
     fireEvent.pointerDown(columns, { clientX: 500, pointerId: 2 })
-    fireEvent.pointerMove(columns, { clientX: 300 })
+    fireEvent.pointerMove(columns, { clientX: 300, buttons: 1 })
     expect(sizes()).toEqual([0.3, 0.7])
-    fireEvent.pointerMove(columns, { clientX: 10 })
+    fireEvent.pointerMove(columns, { clientX: 10, buttons: 1 })
     expect(sizes()[0]).toBeCloseTo(0.12) // 120 px at least
     fireEvent.pointerUp(columns, { pointerId: 2 })
     fireEvent.pointerUp(columns) // already up
@@ -308,7 +308,7 @@ describe('editor groups: the view', () => {
     fireEvent.keyDown(rows, { key: 'ArrowDown' })
     expect(inner()[0]).toBeCloseTo(0.52)
     fireEvent.pointerDown(rows, { clientY: 300, pointerId: 3 })
-    fireEvent.pointerMove(rows, { clientY: 150 })
+    fireEvent.pointerMove(rows, { clientY: 150, buttons: 1 })
     expect(inner()[0]).toBeCloseTo(0.25)
     fireEvent.pointerCancel(rows, { pointerId: 3 })
   })
@@ -321,7 +321,7 @@ describe('editor groups: the view', () => {
     await act(settle)
     const [columns] = screen.getAllByRole('separator')
     fireEvent.pointerDown(columns, { clientX: 500 })
-    fireEvent.pointerMove(columns, { clientX: 300 })
+    fireEvent.pointerMove(columns, { clientX: 300, buttons: 1 })
     fireEvent.keyDown(columns, { key: 'ArrowLeft' })
     expect((e().grid as { sizes: number[] }).sizes[0]).toBeCloseTo(0.48)
   })
