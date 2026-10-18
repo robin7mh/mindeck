@@ -130,6 +130,18 @@ describe('remote transport', () => {
     ws.message(JSON.stringify({ channel: 'other' }))
     expect(a).toHaveBeenCalledWith({ paths: [] })
     expect(links).toEqual(['connecting', 'online'])
+    // A listener that throws is logged; the others still get the event.
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const broken = t.on('memory:changed', () => {
+      throw new Error('listener broke')
+    })
+    const later = vi.fn()
+    t.on('memory:changed', later)
+    ws.message(JSON.stringify({ channel: 'memory:changed', payload: { paths: ['b'] } }))
+    expect(later).toHaveBeenCalledWith({ paths: ['b'] })
+    expect(error).toHaveBeenCalledWith('[transport] a listener for memory:changed failed:', expect.any(Error))
+    broken()
+    error.mockRestore()
 
     ws.drop() // after it was open: reconnect without probing
     expect(fetch).not.toHaveBeenCalled()

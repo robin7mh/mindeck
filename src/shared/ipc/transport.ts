@@ -123,8 +123,16 @@ export function createRemoteTransport(opts: RemoteTransportOptions): RemoteTrans
   /** Back after an outage, resumed: the core replays — unless its hello shows it can't (an older core). */
   let awaitingHello = false
 
+  /** One listener failing never keeps an event (or a resync) from the others. */
+  const call = (cb: () => void, what: string) => {
+    try {
+      cb()
+    } catch (err) {
+      console.error(`[transport] a listener for ${what} failed:`, err)
+    }
+  }
   const resync = () => {
-    for (const cb of [...resyncs]) cb()
+    for (const cb of [...resyncs]) call(cb, 'resync')
   }
 
   const setLink = (state: LinkState) => opts.onLinkState?.(state)
@@ -178,7 +186,7 @@ export function createRemoteTransport(opts: RemoteTransportOptions): RemoteTrans
         gap = msg.seq > lastSeq + 1
         lastSeq = msg.seq
       }
-      for (const cb of [...(listeners.get(String(msg.channel)) ?? [])]) cb(msg.payload)
+      for (const cb of [...(listeners.get(String(msg.channel)) ?? [])]) call(() => cb(msg.payload), String(msg.channel))
       if (gap) resync()
     }
     ws.onerror = () => {}
