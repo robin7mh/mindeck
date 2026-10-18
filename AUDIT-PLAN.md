@@ -3,6 +3,7 @@
 - **Datum:** 2026-10-17
 - **Branch:** `feature/claude-remote`
 - **Analysierter Commit:** `e5cadb9` (= `develop`)
+- **Nachtrag:** 2026-10-18, Runde 3 (Stabilität, Kontrolle unter macOS), siehe Abschnitt 0a
 - **Umfang:** komplettes Repo, in zwei Teilen geprüft:
   - **Backend:** `electron/` (main, ipc, preload, services, server, platform), `server/`, `remote/`, `scripts/`, `build/`, Docker, CI/CD, `electron-builder.yml`, Dependencies, `src/shared/` (IPC-Verträge)
   - **Frontend:** `src/` (Renderer/Web-UI), `tests/`, `index.html`/CSP, Vite-/Vitest-/Playwright-Configs
@@ -12,6 +13,8 @@
 ---
 
 ## 0. Umsetzungsstand (2026-10-17, abgeschlossen)
+
+> **Nachtrag 2026-10-18:** Runde 3 (Abschnitt 0a) hat 10 weitere Punkte gefunden, darunter zwei hohe Ursachen für „Absturz beim Ziehen“. 8 sind behoben, offen bleiben FE-BUG-12 (Outline) und BE-QA-08 (Patch-Updates).
 
 Alle Findings dieses Plans sind auf `feature/claude-remote` umgesetzt, in zwei Runden und jeweils mit Regressionstests. Commits heißen `fix(security): … (ID)` oder `fix: … (ID)`.
 
@@ -75,6 +78,133 @@ Alle Findings dieses Plans sind auf `feature/claude-remote` umgesetzt, in zwei R
 
 In der Checkliste (Abschnitt 5) heißt `[x]` erledigt, `[~]` heißt teilweise erledigt, der Rest liegt in einem anderen Repo.
 
+## 0a. Runde 3: Stabilität und Kontrolle unter macOS (2026-10-18)
+
+**Anlass:** Die App stürzte beim Hin- und Herziehen ab. Zusätzlich kam die Frage auf, warum `npm run dev` „zwischendrin eine neue Dependency installiert“. Danach folgte eine Kontrolle des ganzen Projekts, diesmal auf einem Mac mit GPU. Runde 1 und 2 waren nur unter Linux/Xvfb geprüft worden.
+
+**Methode:**
+- macOS-Crash-Reports und `~/Mindeck/logs/mindeck.log` ausgewertet.
+- Jeder Fund in der echten App reproduziert, mit Playwright/Electron oder dem Vite-Dev-Server, und die Gegenprobe nach dem Fix gemacht.
+- Typecheck, Lint, Vitest mit Coverage, die volle E2E-Suite, `npm audit` und `npm outdated` laufen lassen.
+
+### Ergebnis
+
+| ID | Prio | Thema | Status |
+|---|---|---|---|
+| FE-BUG-09 | 🟠 | Splitter-Zug endet nicht, wenn das Loslassen verloren geht: Die Abdeckung bleibt liegen und der Workspace nimmt keinen Klick mehr an | ✅ behoben |
+| BE-BUG-09 | 🟠 | Exception im node-pty-Exit-Callback beendet die ganze App (SIGABRT) | ✅ behoben |
+| FE-QA-06 | 🟡 | Dev-Server lädt das Fenster mitten in der Sitzung neu: sieht aus wie ein Absturz | ✅ behoben |
+| FE-TEST-04 | 🟡 | Suite nur unter Linux grün: unter macOS 15 Unit- und 5 E2E-Fehlschläge | ✅ behoben |
+| FE-BUG-12 | 🟡 | Outline bleibt für manche TypeScript-Dateien dauerhaft leer | ❌ offen |
+| FE-BUG-10 | 🟢 | xterm: Terminal in derselben Task geöffnet und entsorgt, ein Timer wirft „reading 'dimensions'“ | ✅ behoben |
+| FE-BUG-11 | 🟢 | Web-UI-Transport: Ein werfender Event-Listener blockiert die übrigen und den Resync | ✅ behoben |
+| FE-TEST-05 | 🟢 | Wackelnde Tests und Coverage: `tls.test.ts` (unbehandeltes `ECONNRESET`), `live.test.ts` (verspätete FSEvents), Batch-Timer der Suche nur zufällig abgedeckt | ✅ behoben |
+| BE-QA-07 | 🟢 | Beim Beenden landen Mindecks eigene Helfer als „process gone: killed“ im Log | ✅ behoben |
+| BE-QA-08 | 🟢 | Patch-Updates offen: Electron 44.7.2 → 44.9.0, DOMPurify 3.4.16 → 3.4.17 | ❌ offen (Empfehlung) |
+
+### Findings
+
+#### FE-BUG-09 · Splitter-Zug endet nur über das eigene `pointerup`: hängende Abdeckung sperrt den Workspace
+**Ort:** `src/features/workspace/components/DividerHandle.tsx` (Workspace-Splitter), `src/features/browser/components/SplitView.tsx` (Browser-Split), `src/features/browser/components/VerticalTabs.tsx` (Breite der Tab-Leiste), `src/features/editor/components/EditorGrid.tsx` (Editor-Gruppen).
+**Problem:** Alle vier Griffe beendeten einen Zug nur in ihrem eigenen `onPointerUp`/`onPointerCancel`. Dazu kam ein `dragging`-State, der erst mit dem nächsten Render galt. Kommt das Loslassen nie im DOM an, bleibt der Zug für die App aktiv. Das passiert über der nativen Browser-Ansicht, deren Standbild erst nach `capturePage` erscheint, und außerhalb des Fensters. Die Folge:
+- Die Abdeckung (`drag-shield`, `z-30` über dem ganzen Workspace) bleibt liegen, und kein Klick kommt mehr durch.
+- Die Browser-Seite bleibt eingefroren (`useOverlay`).
+
+Für Nutzer sieht das aus wie ein Absturz beim Hin- und Herziehen.
+**Beleg:** Reproduziert mit Playwright in der gebauten App. Seitenleiste mit Agents | Browser, langsame Züge über die Browser-Seite: Danach liegt `drag-shield` dauerhaft über dem Workspace und jeder Klick läuft in einen Timeout. Das war in jedem Lauf so.
+**Fix:** Neuer Hook `src/lib/pointerDrag.ts` (`usePointerDrag`), den alle vier Griffe nutzen. Ein Zug endet bei:
+- `pointerup` oder `pointercancel` irgendwo im Fenster,
+- Verlust des Pointer-Captures (`lostpointercapture`),
+- Fokusverlust des Fensters,
+- der ersten Bewegung ohne gedrückte Taste,
+- Unmount des Griffs mitten im Zug.
+
+Bewegungen laufen über `window` und hängen nicht mehr an einem React-State.
+**Tests:**
+- `tests/unit/renderer/pointer-drag.test.tsx` (alle Enden, Neustart mitten im Zug, verweigertes Capture).
+- Angepasste Splitter-Tests (`buttons: 1` bei echten Zügen).
+- Neuer E2E-Regressionstest `tests/e2e/app-drag.spec.ts`: schnelle und langsame Züge, Zen-Modus, Modulwechsel und Module aus der Seitenleiste ziehen. Am Ende prüft er: kein Absturz, keine Fehler im Renderer und im Main-Log. Vor dem Fix scheiterte er jedes Mal, danach ist er 3 von 3 Mal grün.
+
+#### BE-BUG-09 · Exception im node-pty-Exit-Callback → `std::terminate` → App-Absturz (SIGABRT)
+**Ort:** `electron/main/services/terminal/TerminalService.ts`, `pty.onExit(...)`. Darüber laufen Terminal-Tabs und Agent-PTYs (Claude Code).
+**Problem:** node-pty 1.1 ruft den `exit`-Listener aus seinem nativen ThreadSafeFunction-Callback auf, und zwar synchron, wenn der Socket schon zu ist (`unixTerminal.js`, `onexit`). Wirft dort irgendetwas in Mindecks Exit-Kette, wird die JS-Exception in node-addon-api zu einer C++-Exception und endet in `std::terminate`. Mögliche Werfer sind `flush` → `emit('terminal:data')`, `emit('terminal:exit')` und `req.onExit` → AgentSessionService. `catchCrashes` (`lib/log.ts`) greift hier nicht.
+**Beleg:** macOS-Crash-Reports `Electron-2026-10-15-025516.ips` und `Electron-2026-10-16-005409.ips`: `EXC_CRASH (SIGABRT)`, Stack `pty.node Napi::Error::ThrowAsJavaScriptException → __cxa_throw → std::terminate`.
+**Fix:** Der Exit-Callback fängt alles ab und loggt es (`[terminal] after <id> ended:`). Session und Event werden trotzdem aufgeräumt.
+**Test:** `tests/unit/main/terminal.test.ts`. Ein werfender `onExit`-Listener darf nicht nach node-pty durchschlagen, der Fehler wird geloggt und die Session ist weg.
+
+#### FE-QA-06 · `npm run dev`: Vite bündelt mitten in der Sitzung neu und lädt das Fenster neu
+**Ort:** `electron.vite.config.ts`, `renderer.optimizeDeps`.
+**Problem:** `monaco-vim` ist von der Vorbündelung ausgenommen (`exclude`). Seine Importe `monaco-editor/esm/vs/editor/editor.api` und `…/commands/shiftCommand` findet Vite deshalb erst, wenn der Editor zum ersten Mal lädt. Dann meldet es „new dependencies optimized … optimized dependencies changed. reloading“ und lädt das ganze Fenster neu. Nach jedem `npm install` (neues Lockfile, leerer Cache) passiert das wieder. Das ist keine Installation: Vite baut nur seinen Cache in `node_modules/.vite` neu. **Nutzer betrifft das nie:** Die gepackte App lädt den fertig gebündelten Renderer aus `out/renderer`, ohne Vite.
+**Beleg:** Im Log vom 18.10. passt alles auf die Sekunde. Um 01:41:36 kommt der Reload, um 01:41:37/38 folgt der xterm-Fehler (FE-BUG-10) durch das Neuaufbauen. Mit der alten Config reproduziert: Dev-Server mit leerem Cache, `monaco-vim` abgerufen, Reload-Meldung erscheint. Mit dem Fix bleibt sie aus.
+**Fix:** `optimizeDeps.include` mit den beiden Monaco-Pfaden. Sie werden beim Start im selben Durchgang wie `monaco-editor` gebündelt, es gibt also nur eine Monaco-Kopie und keinen Reload.
+
+#### FE-TEST-04 · Die Suite war nur unter Linux grün (FE-TEST-03 war nur dort geprüft)
+**Problem:**
+- **Unit, 15 Fehlschläge unter macOS:**
+  - `tmpdir()` ist dort ein Link (`/var` → `/private/var`), der Code unter Test löst Links auf, die Erwartungen nicht. Betroffen sind `remote-access`, `createCore`, `acp`, `agent-composer`, `agent-sessions` und `node-process`.
+  - Der Fullscreen-Test drückte F11, unter macOS gilt ⌃⌘F.
+- **E2E, 5 Fehlschläge auf einem Mac mit GPU:**
+  - Die Tests lesen Terminal-Text aus `.xterm-rows`, das nur der DOM-Renderer hat. Mit WebGL zeichnet xterm auf ein Canvas.
+  - Dazu kamen macOS-Kürzel: ⌘F statt Ctrl+Shift+F im Terminal, ⌘⌥Z statt Ctrl+Alt+Z.
+
+**Fix:**
+- `tempDir()` (`tests/unit/main/helpers.ts`) liefert den echten Pfad.
+- Der Fullscreen-Test nutzt die Taste der Plattform.
+- Das E2E-Profil startet mit `terminal.gpu: false` (`tests/e2e/fixtures.ts`), wie ein CI-Runner ohne GPU.
+- Die Kürzel sind plattformabhängig (`ControlOrMeta`, ⌘F).
+
+#### FE-BUG-12 · Outline bleibt für manche TypeScript-Dateien leer (offen)
+**Ort:** `src/features/editor/monaco/symbols.ts` → `_executeDocumentSymbolProvider` → Monacos eingebauter TS-Worker (`setup.ts`, `documentSymbols: true`).
+**Problem:** Im E2E „editor: three editor groups … an outline“ (`tests/e2e/app.spec.ts:175`) zeigt das Outline für `shared.ts` in etwa jedem zweiten Lauf „No symbols in this file“. Das bleibt so, auch über 30 s und nach Bearbeitungen. Ein Trace in der echten App zeigt: Der Worker liefert für `shared.ts` bei jeder Version 0 Symbole (Version 1 bis 21), für `other.ts` im selben Moment korrekt 1. Der Worker hat also einen falschen Stand genau dieses Modells. Die Datei ist in drei Editor-Gruppen offen. Wiederholte Abfragen helfen nicht, getestet und verworfen.
+**Nächster Schritt:** Den Modell-Sync des TS-Workers für Modelle in mehreren Editoren untersuchen (`createBufferModel` / `setValue` bei schon vorhandenem Modell, `getNavigationTree` direkt über `monaco.typescript.getTypeScriptWorker` prüfen). Notfalls Symbole für TS/JS über den Projekt-tsserver holen (`lsp:symbols`). Der E2E-Test wackelt so lange.
+**Aufwand:** M
+
+#### FE-BUG-10 · xterm wirft „Cannot read properties of undefined (reading 'dimensions')“
+**Ort:** `src/features/terminal/useXterm.ts`, Cleanup.
+**Problem:** `term.open()` plant in xterm 5.5 einen `setTimeout(() => viewport.syncScrollArea())`. Wird das Terminal in derselben Task wieder entsorgt (StrictMode, ein schneller Layoutwechsel, das Neuladen aus FE-QA-06), greift der Timer auf den entsorgten Renderer zu. Im Log steht das 28-mal seit dem 15.10.
+**Fix:** `term.dispose()` läuft eine Task später, nach diesem Timer. Die Tests (`terminal.test.tsx`, `agents-cockpit.test.tsx`) warten darauf.
+
+#### FE-BUG-11 · Web-UI-Transport: ein werfender Listener blockiert die anderen
+**Ort:** `src/shared/ipc/transport.ts`, `onmessage` und `resync`.
+**Problem:** Die Listener liefen ohne Isolierung. Wirft einer, bekommen die folgenden das Event nicht, und ein fälliger Resync (Lücke erkannt) fällt aus.
+**Fix:** Jeder Listener läuft in einem eigenen `try/catch` mit Log. Getestet in `session.test.tsx`.
+
+#### FE-TEST-05 · Wackelnde Tests und zufällige Coverage
+**Problem:**
+- **`tls.test.ts`:** Roh-Sockets, die der Server absichtlich abbricht, melden je nach Timing ein `ECONNRESET`, ohne dass ein Error-Handler da ist. Vitest wertet den Lauf dann als rot (Exit 1), obwohl alle Tests bestehen.
+- **`live.test.ts`:** FSEvents unter macOS liefert die Änderung einer Seite manchmal verspätet oder doppelt. Sie fällt dann ins Fenster der folgenden CSS-Änderung, und der Test sieht „reload“ statt „css“.
+- **`SearchService`:** Der Batch-Timer (`flush` nach `batchMs`) war nur abgedeckt, wenn eine Suche zufällig lang genug lief, etwa mit echtem ripgrep. Sonst fiel die Coverage auf 99,98 %.
+
+**Fix:**
+- `tls.test.ts`: Die Sockets bekommen einen Error-Handler.
+- `live.test.ts`: Der Test lässt die Events abklingen, bevor er die nächste Änderung beobachtet.
+- `SearchService`: Neuer Test mit einem langsamen Fake-ripgrep, der Treffer kommt im eigenen Batch vor dem Ende.
+
+Jeweils mindestens 5 Läufe sind grün.
+
+#### BE-QA-07 · Log-Rauschen beim Beenden
+**Ort:** `electron/main.ts`, `child-process-gone`.
+**Problem:** Beim Beenden beendet Mindeck seine Utility-Prozesse (tsserver, Lint-Worker) selbst. Trotzdem landete jedes Mal „Utility (TypeScript) process gone: killed, exit code 2“ als Warnung im Log.
+**Fix:** `killed` während eines echten Beendens (`lifecycle.isQuitting`) wird nicht mehr gemeldet. Abstürze werden weiter gemeldet. Getestet in `main.test.ts`.
+
+#### BE-QA-08 · Patch-Updates (Empfehlung)
+- **Electron 44.7.2 → 44.9.0:** Patch-Releases bringen Chromium-Sicherheitsfixes. Danach braucht es die volle E2E-Suite und den Rebuild von node-pty (`postinstall`).
+- **DOMPurify 3.4.16 → 3.4.17:** der Sanitizer des Renderers (`src/lib/sanitize.ts`).
+- **`npm audit`:** unverändert 8 moderate Meldungen (nur Packaging: electron-builder → … → sprintf-js) und 2 niedrige (DOMPurify in Monaco, N7).
+- **Major-Updates** (React 19, Vite 8, Vitest 5, TypeScript 7, xterm 6, zustand 5, ESLint 10) sind bewusst nicht Teil dieser Runde.
+
+### Prüfung des Endstands (macOS, Apple Silicon, mit GPU)
+
+| Prüfung | Ergebnis |
+|---|---|
+| `npm run typecheck` | ✅ |
+| `npm run lint` | ✅ |
+| Vitest | ✅ 2188/2188 (1 übersprungen: Abgleich mit echtem ripgrep, nur wenn installiert), 100 % Coverage in allen Kategorien, Exit 0 |
+| E2E mit Playwright (Electron + Web) | ⚠️ 30/31: nur FE-BUG-12 (Outline) wackelt; vorher 25/30 auf diesem Mac (die Suite hat jetzt den neuen Test `app-drag.spec.ts`) |
+| `npm audit` | 0 kritisch, 0 hoch; 8 moderat (Packaging), 2 niedrig (Monaco) |
+
+**Hinweis zur Frage aus dem Dev-Log:** „Re-optimizing dependencies because lockfile has changed“ und „new dependencies optimized … reloading“ stammen vom Vite-Dev-Server. Er baut nur seinen Vorbündel-Cache neu, installiert wird nichts. Bei Nutzern gibt es keinen Vite und damit auch dieses Verhalten nicht.
+
 ---
 
 ## 1. Kurzfazit / Gesamtbewertung
@@ -116,6 +246,8 @@ Außerdem meldet `npm audit` eine neue hohe Lücke in einer Laufzeit-Dependency 
 | 🟡 Mittel | 16 | 8 | **24** |
 | 🟢 Niedrig | 22 | 14 | **36** |
 | **Summe** | 42 | 23 | **65** |
+
+Runde 3 (2026-10-18) kam mit 10 weiteren Punkten dazu: 2 🟠, 3 🟡, 5 🟢 (Backend 3, Frontend 7), siehe Abschnitt 0a.
 
 **Tool-Ergebnisse auf einen Blick:**
 
@@ -780,6 +912,20 @@ Für den Frontend-Teil gibt es kein Problem: Renderer 935/935 grün. Kein `.only
 - [x] **FE-QA-04** (🟢) – Barrierefreiheit: Kleinigkeiten
 - [x] **FE-QA-05** (🟢) – Veraltete Kommentare und Konfiguration
 - [x] **FE-TEST-03** (🟢) – Die vollständige Suite ist nur in einer passenden Umgebung grün
+  - Nachtrag: nur unter Linux geprüft. macOS siehe FE-TEST-04 (Runde 3).
+
+### Phase 4 – Runde 3: Stabilität (2026-10-18)
+
+- [x] **FE-BUG-09** (🟠) – Splitter-Zug endet nicht, wenn das Loslassen verloren geht: Die Abdeckung sperrt den Workspace („Absturz beim Ziehen“)
+- [x] **BE-BUG-09** (🟠) – Exception im node-pty-Exit-Callback beendet die App (SIGABRT)
+- [x] **FE-QA-06** (🟡) – Dev-Server lädt das Fenster mitten in der Sitzung neu (`monaco-vim`, nur Entwicklung)
+- [x] **FE-TEST-04** (🟡) – Suite nur unter Linux grün (macOS: 15 Unit-, 5 E2E-Fehlschläge)
+- [ ] **FE-BUG-12** (🟡) – Outline bleibt für manche TypeScript-Dateien leer (TS-Worker liefert 0 Symbole); E2E `app.spec.ts:175` wackelt
+- [x] **FE-BUG-10** (🟢) – xterm: „reading 'dimensions'“ beim Entsorgen in derselben Task
+- [x] **FE-BUG-11** (🟢) – Web-UI-Transport: Listener ohne Isolierung
+- [x] **FE-TEST-05** (🟢) – Wackelnde Tests (`tls`, `live`) und zufällige Coverage (Batch-Timer der Suche)
+- [x] **BE-QA-07** (🟢) – Log-Rauschen „process gone: killed“ beim Beenden
+- [ ] **BE-QA-08** (🟢) – Patch-Updates: Electron 44.9.0, DOMPurify 3.4.17
 
 ---
 
@@ -878,3 +1024,14 @@ Für den Frontend-Teil gibt es kein Problem: Renderer 935/935 grün. Kein `.only
 7. **`isAppUrl`** (`electron/main.ts:101-103`) prüft per Präfix (`startsWith(file:///…/renderer/index.html)`). Exakter Vergleich ohne Query und Hash wäre robuster. Langfristig ein eigenes Protokoll statt `file://` (siehe FE-SEC-05).
 8. **Tests im Main-Projekt umgebungsabhängig:** node-pty ohne Linux-Prebuild (15 Suiten), `finder.test.ts:290` (echte `/mnt`-Mounts), `createCore.test.ts:174` (gefundener Prettier). Siehe FE-TEST-03.
 9. **`monaco-editor` liefert eigenes DOMPurify 3.4.15 mit** (SECURITY-REVIEW N7): unverändert. Nur relevant, falls Monaco-Markdown jemals `supportHtml` bekommt.
+
+### 7.3 Aus Runde 3 (2026-10-18)
+
+- **mindeck-mobile (TLS, BE-SEC-10 weiterhin offen):**
+  - Android pinnt den SHA-256 des SPKI-DER (`publicKey.encoded`) und passt damit zum `spkiFingerprint` des Cores.
+  - **iOS hasht dagegen die rohe Schlüsseldarstellung** (`SecKeyCopyExternalRepresentation`, ohne ASN.1-SPKI-Kopf) und trifft den Core-Wert nicht.
+  - Der Pairing-Link-Parser wertet `&pk=` noch nicht aus.
+  - Nötig sind: SPKI-Kopf voranstellen (je nach Schlüsseltyp), `pk` aus dem QR übernehmen und als Pin speichern.
+- **mindeck-mobile (Folgearbeit aus Runde 2):** Erledigt ist davon noch nichts. Gemeint sind `npm run sync:shared` (Zugriffsklasse `trusted`, Transport mit Replay), `onResync` in den Stores, `401` bei abgelaufenem Token und die neuen Fehlertexte. Der in mindeck-mobile `develop` gemergte Stand (PR #3) baut auf dem Vertrag von vor Runde 2 auf.
+- **Zusammenführung mit `feature/mobile-remote` (lokal, ungepusht):** Der Branch (Files und Browser für gekoppelte Geräte, Freigabe pro Admin-Gerät) basiert auf `develop` von vor Runde 2. Er berührt `RemoteScope.ts`, `HttpServer.ts`, `router.ts`, `contract.ts`, `schemas.ts` und `createCore.ts`, die Runde 2 stark verändert hat. Vor einem Merge ist ein Rebase auf `feature/claude-remote` mit Konfliktauflösung nötig, dazu die neue Zugriffsklasse `trusted` und das Event-Replay für die Browser-Pushes pro Gerät.
+
