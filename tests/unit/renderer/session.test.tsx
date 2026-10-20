@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { fail, installBridge, installRemote, settle } from './bridge'
-import { currentTransport, ipc, isDesktop, onEvent, setTransport } from '@shared/ipc/client'
+import { currentTransport, ipc, isDesktop, onEvent, onResync, setTransport } from '@shared/ipc/client'
 import {
   bridgeTransport,
   createRemoteTransport,
@@ -61,6 +61,7 @@ class FakeSocket {
 
 beforeEach(() => {
   FakeSocket.all = []
+  jar.cookie = false
   vi.useRealTimers()
 })
 
@@ -71,6 +72,7 @@ describe('remote transport', () => {
     expect(eventsUrl('https://core.lan:7420/')).toBe('wss://core.lan:7420/api/events')
     expect(eventsUrl('', 'http://localhost:5173')).toBe('ws://localhost:5173/api/events')
     expect(eventsUrl('')).toBe('/api/events')
+    expect(eventsUrl('http://core', undefined, { stream: 'a b', since: 3 })).toBe('ws://core/api/events?stream=a%20b&since=3')
     expect(eventsProtocols('mindeck_x')).toEqual(['mindeck', 'mindeck.bearer.mindeck_x'])
   })
 
@@ -128,6 +130,18 @@ describe('remote transport', () => {
     ws.message(JSON.stringify({ channel: 'other' }))
     expect(a).toHaveBeenCalledWith({ paths: [] })
     expect(links).toEqual(['connecting', 'online'])
+    // A listener that throws is logged; the others still get the event.
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const broken = t.on('memory:changed', () => {
+      throw new Error('listener broke')
+    })
+    const later = vi.fn()
+    t.on('memory:changed', later)
+    ws.message(JSON.stringify({ channel: 'memory:changed', payload: { paths: ['b'] } }))
+    expect(later).toHaveBeenCalledWith({ paths: ['b'] })
+    expect(error).toHaveBeenCalledWith('[transport] a listener for memory:changed failed:', expect.any(Error))
+    broken()
+    error.mockRestore()
 
     ws.drop() // after it was open: reconnect without probing
     expect(fetch).not.toHaveBeenCalled()
@@ -144,6 +158,121 @@ describe('remote transport', () => {
     FakeSocket.all[2].drop() // closed transport: no reconnect
     t.on('x', vi.fn()) // closed: no new socket
     expect(FakeSocket.all).toHaveLength(3)
+    vi.useRealTimers()
+  })
+
+  it('tells subscribers to resync whenever the socket is back after an outage — not on the first open', async () => {
+    vi.useFakeTimers()
+    const fetch = fakeFetch(() => ({ status: 200, body: { ok: true } }))
+    const t = createRemoteTransport({ baseUrl: 'http://core', token: 'tok', fetch, WebSocket: FakeSocket, minDelayMs: 100, maxDelayMs: 100 })
+    const resync = vi.fn()
+    const off = t.onResync!(resync)
+    t.on('system:tick', vi.fn())
+    FakeSocket.all[0].open()
+    expect(resync).not.toHaveBeenCalled()
+    FakeSocket.all[0].drop()
+    await vi.advanceTimersByTimeAsync(100)
+    FakeSocket.all[1].drop(1006) // still down
+    await vi.advanceTimersByTimeAsync(100)
+    FakeSocket.all[2].open()
+    expect(resync).toHaveBeenCalledTimes(1)
+    FakeSocket.all[2].message(JSON.stringify({ channel: 'system:tick', payload: {} })) // no resync on messages
+    expect(resync).toHaveBeenCalledTimes(1)
+    off()
+    FakeSocket.all[2].drop()
+    await vi.advanceTimersByTimeAsync(100)
+    FakeSocket.all[3].open()
+    expect(resync).toHaveBeenCalledTimes(1)
+    t.close()
+
+    // A first attempt that fails: the events between loading and the socket coming up are missing too.
+    const t2 = createRemoteTransport({ baseUrl: 'http://core', token: 'tok', fetch, WebSocket: FakeSocket, minDelayMs: 100 })
+    const resync2 = vi.fn()
+    t2.onResync!(resync2)
+    t2.on('system:tick', vi.fn())
+    FakeSocket.all[4].drop(1006)
+    await vi.advanceTimersByTimeAsync(100)
+    FakeSocket.all[5].open()
+    expect(resync2).toHaveBeenCalledTimes(1)
+    t2.close()
+    vi.useRealTimers()
+  })
+
+  it('resumes where it stopped: the core replays the gap (no resync) or says resync-required (FE-BUG-01)', async () => {
+    vi.useFakeTimers()
+    const fetch = fakeFetch(() => ({ status: 200, body: { ok: true } }))
+    const t = createRemoteTransport({ baseUrl: 'http://core', token: 'tok', fetch, WebSocket: FakeSocket, minDelayMs: 100, maxDelayMs: 100 })
+    const resync = vi.fn()
+    t.onResync!(resync)
+    const events: unknown[] = []
+    t.on('memory:changed', (p) => events.push(p))
+    const hello = vi.fn()
+    t.on('hello', hello)
+    const send = (ws: FakeSocket, msg: object) => ws.message(JSON.stringify(msg))
+    const ws = FakeSocket.all[0]
+    expect(ws.url).toBe('ws://core/api/events') // nothing to resume yet
+    ws.open()
+    send(ws, { channel: 'hello', payload: { deviceId: 'd', role: 'member', stream: 's1', seq: 4 } })
+    expect(hello).toHaveBeenCalledWith({ deviceId: 'd', role: 'member', stream: 's1', seq: 4 })
+    send(ws, { channel: 'memory:changed', payload: { n: 5 }, seq: 5 })
+    send(ws, { channel: 'memory:changed', payload: { n: 6 }, seq: 6 })
+    ws.drop()
+    await vi.advanceTimersByTimeAsync(100)
+
+    // Back: it names the last event it saw; the core replays 7 and 8.
+    const again = FakeSocket.all[1]
+    expect(again.url).toBe('ws://core/api/events?stream=s1&since=6')
+    again.open()
+    send(again, { channel: 'hello', payload: { deviceId: 'd', role: 'member', stream: 's1', seq: 8 } })
+    send(again, { channel: 'memory:changed', payload: { n: 7 }, seq: 7 })
+    send(again, { channel: 'memory:changed', payload: { n: 8 }, seq: 8 })
+    send(again, { channel: 'memory:changed', payload: { n: 8 }, seq: 8 }) // seen: dropped
+    send(again, { channel: 'system:tick', payload: {} }) // volatile: no seq
+    expect(events).toEqual([{ n: 5 }, { n: 6 }, { n: 7 }, { n: 8 }])
+    expect(resync).not.toHaveBeenCalled()
+
+    // A gap the core no longer holds: it says so, the stores reload, numbering goes on from its seq.
+    again.drop()
+    await vi.advanceTimersByTimeAsync(100)
+    const third = FakeSocket.all[2]
+    expect(third.url).toBe('ws://core/api/events?stream=s1&since=8')
+    third.open()
+    send(third, { channel: 'hello', payload: { deviceId: 'd', role: 'member', stream: 's1', seq: 40 } })
+    send(third, { channel: 'resync-required', payload: { stream: 's1', seq: 40 } })
+    expect(resync).toHaveBeenCalledTimes(1)
+    send(third, { channel: 'memory:changed', payload: { n: 41 }, seq: 41 })
+    expect(resync).toHaveBeenCalledTimes(1)
+    // An event that skips numbers (something got lost on the way): resync too.
+    send(third, { channel: 'memory:changed', payload: { n: 43 }, seq: 43 })
+    expect(resync).toHaveBeenCalledTimes(2)
+    expect(events.at(-1)).toEqual({ n: 43 })
+
+    // A restarted core: another stream — its resync-required says where to go on from.
+    third.drop()
+    await vi.advanceTimersByTimeAsync(100)
+    const fourth = FakeSocket.all[3]
+    expect(fourth.url).toBe('ws://core/api/events?stream=s1&since=43')
+    fourth.open()
+    send(fourth, { channel: 'hello', payload: { deviceId: 'd', role: 'member', stream: 's2', seq: 0 } })
+    send(fourth, { channel: 'resync-required', payload: { stream: 's2', seq: 0 } })
+    expect(resync).toHaveBeenCalledTimes(3)
+    send(fourth, { channel: 'memory:changed', payload: { n: 1 }, seq: 1 })
+    expect(events.at(-1)).toEqual({ n: 1 })
+    send(fourth, { channel: 'resync-required', payload: {} }) // without where: just reload
+    expect(resync).toHaveBeenCalledTimes(4)
+
+    // Downgraded to a core without replay: its hello names no stream — reload.
+    fourth.drop()
+    await vi.advanceTimersByTimeAsync(100)
+    const fifth = FakeSocket.all[4]
+    expect(fifth.url).toBe('ws://core/api/events?stream=s2&since=1')
+    fifth.open()
+    expect(resync).toHaveBeenCalledTimes(4) // waits for the hello
+    send(fifth, { channel: 'hello', payload: { deviceId: 'd', role: 'member' } })
+    expect(resync).toHaveBeenCalledTimes(5)
+    send(fifth, { channel: 'hello', payload: { deviceId: 'd', role: 'member' } }) // only once per reconnect
+    expect(resync).toHaveBeenCalledTimes(5)
+    t.close()
     vi.useRealTimers()
   })
 
@@ -221,6 +350,8 @@ describe('remote transport', () => {
     expect(await t.invoke('a', 1)).toEqual({ ok: true, data: 1 })
     t.on('e', vi.fn())
     expect(bridge.on).toHaveBeenCalled()
+    // The desktop bridge cannot drop events: nothing to resync, and onResync is a no-op there.
+    expect(t.onResync).toBeUndefined()
   })
 })
 
@@ -230,6 +361,7 @@ describe('client transport selection', () => {
     expect(currentTransport()).toBeNull()
     await expect(ipc('projects:list')).rejects.toMatchObject({ code: 'no-bridge' })
     expect(onEvent('system:tick', vi.fn())).toBeTypeOf('function')
+    expect(onResync(vi.fn())).toBeTypeOf('function')
 
     const remote = installRemote({ 'projects:list': () => ['r'] })
     expect(await ipc('projects:list')).toEqual(['r'])
@@ -248,24 +380,41 @@ describe('client transport selection', () => {
 // --- session -------------------------------------------------------------------
 
 const initialSession = useSession.getState()
-const sessionFetch = (opts: { health?: boolean; pair?: 'ok' | 'bad'; info?: number } = {}) =>
-  fakeFetch((url) => {
+/**
+ * A core that keeps the web UI's token in its cookie jar (`jar.cookie`): pairing with `cookie: true`
+ * and handing over a stored token set it, signing out clears it.
+ */
+const jar = { cookie: false }
+const sessionFetch = (opts: { health?: boolean; pair?: 'ok' | 'bad'; info?: number; session?: 'down'; logout?: 'down' } = {}) =>
+  fakeFetch((url, init) => {
+    const auth = init?.headers?.Authorization
     if (url.endsWith('/api/health')) {
       return opts.health === false ? { status: 0, throws: new Error('down') } : { status: 200, body: { ok: true, name: 'Mindeck', version: '1', mode: 'server' } }
     }
     if (url.endsWith('/api/pair')) {
-      return opts.pair === 'bad'
-        ? { status: 401, body: { ok: false, error: { code: 'bad-code', message: 'Pairing code is invalid or expired' } } }
-        : { status: 200, body: { ok: true, data: { token: 'tok', device: { id: 'dev1', name: 'n', createdAt: '' } } } }
+      if (opts.pair === 'bad') return { status: 401, body: { ok: false, error: { code: 'bad-code', message: 'Pairing code is invalid or expired' } } }
+      jar.cookie = JSON.parse(init!.body!).cookie === true
+      return { status: 200, body: { ok: true, data: { device: { id: 'dev1', name: 'n', createdAt: '' } } } }
+    }
+    if (url.endsWith('/api/session')) {
+      if (opts.session === 'down') return { status: 500, body: { ok: false, error: { code: 'error', message: 'Something went wrong' } } }
+      if (auth !== 'Bearer old') return { status: 401, body: { ok: false, error: { code: 'unauthorized', message: 'nope' } } }
+      jar.cookie = true
+      return { status: 200, body: { ok: true, data: { device: { id: 'dev-old', name: 'n', createdAt: '' } } } }
+    }
+    if (url.endsWith('/api/logout')) {
+      if (opts.logout === 'down') return { status: 0, throws: new Error('ECONNREFUSED') }
+      jar.cookie = false
+      return { status: 200, body: { ok: true } }
     }
     if (url.endsWith('/api/rpc/app:info')) {
-      if (opts.info === 401) return { status: 401, body: { ok: false, error: { code: 'unauthorized', message: 'nope' } } }
       if (opts.info === 0) return { status: 0, throws: new Error('ECONNREFUSED') }
+      if (opts.info === 401 || (!jar.cookie && auth !== 'Bearer old')) return { status: 401, body: { ok: false, error: { code: 'unauthorized', message: 'nope' } } }
       return { status: 200, body: { ok: true, data: { mode: 'server', version: '1', hostname: 'nas', platform: 'linux', remoteTerminal: false } } }
     }
-    if (url.endsWith('/api/rpc/server:revokeDevice')) return { status: 200, body: { ok: true } }
     return { status: 404, body: { ok: false, error: { code: 'nf', message: 'nf' } } }
   })
+const called = (fetch: ReturnType<typeof fakeFetch>, path: string) => fetch.mock.calls.filter(([url]) => String(url).endsWith(path))
 
 function withFetch(fetch: ReturnType<typeof fakeFetch>) {
   ;(globalThis as unknown as { fetch: unknown }).fetch = fetch
@@ -298,47 +447,150 @@ describe('session store', () => {
     expect(useSession.getState().status).toBe('ready')
   })
 
-  it('browser without a token: unpaired when a core answers, else unreachable', async () => {
+  it('a browser that never paired: unpaired (nothing “no longer” about it) when a core answers, else unreachable', async () => {
+    jar.cookie = false
     withFetch(sessionFetch())
     await useSession.getState().init()
-    expect(useSession.getState().status).toBe('unpaired')
+    expect(useSession.getState()).toMatchObject({ status: 'unpaired', error: undefined })
     withFetch(sessionFetch({ health: false }))
     await useSession.getState().init()
     expect(useSession.getState()).toMatchObject({ status: 'unreachable', error: 'No Mindeck core answered at this address' })
   })
 
-  it('pairs, stores the token, reconnects with it, and logs out (revoking the device)', async () => {
-    const fetch = withFetch(sessionFetch({ pair: 'bad' }))
+  it('pairs into the core’s HttpOnly cookie — no token in web storage —, reloads on it, and signs out (FE-SEC-03)', async () => {
+    jar.cookie = false
+    withFetch(sessionFetch({ pair: 'bad' }))
     expect(await useSession.getState().pair(' ABCD-EFGH ', ' Me ')).toBe(false)
     expect(useSession.getState().error).toBe('Pairing code is invalid or expired')
 
-    withFetch(sessionFetch())
+    const fetch = withFetch(sessionFetch())
     expect(await useSession.getState().pair('ABCD-EFGH', 'Me')).toBe(true)
     expect(useSession.getState()).toMatchObject({ status: 'ready', info: { hostname: 'nas' } })
-    expect(localStorage.getItem('mindeck.token')).toBe('tok')
-    expect(fetch).toBeDefined()
+    expect(JSON.parse(called(fetch, '/api/pair')[0][1]!.body!)).toEqual({ code: 'ABCD-EFGH', name: 'Me', cookie: true, remember: true })
+    expect(localStorage.getItem('mindeck.token')).toBeNull()
+    expect(localStorage.getItem('mindeck.deviceId')).toBe('dev1')
+    // Calls and the socket carry no token: the browser sends the cookie.
+    expect(called(fetch, '/api/rpc/app:info')[0][1]!.headers).toEqual({ 'Content-Type': 'application/json' })
+    onEvent('system:tick', vi.fn())
+    expect(FakeSocket.all.at(-1)!.protocols).toEqual(['mindeck'])
 
-    // reload: the stored token is used
-    const revoke = withFetch(sessionFetch())
+    // Reload: the cookie still holds.
     useSession.setState(initialSession, true)
     await useSession.getState().init()
     expect(useSession.getState().status).toBe('ready')
 
+    const out = withFetch(sessionFetch())
     await useSession.getState().logout()
-    expect(revoke.mock.calls.some(([url]) => String(url).endsWith('server:revokeDevice'))).toBe(true)
+    expect(called(out, '/api/logout')).toHaveLength(1)
+    expect(called(out, '/api/logout')[0][1]!.headers).toEqual({ 'Content-Type': 'application/json' })
+    expect(jar.cookie).toBe(false)
     expect(useSession.getState().status).toBe('unpaired')
-    expect(localStorage.getItem('mindeck.token')).toBeNull()
-    await useSession.getState().logout() // nothing to revoke
+    expect(localStorage.getItem('mindeck.deviceId')).toBeNull()
+    await useSession.getState().logout() // signed out already: nothing to tell the core
+    expect(called(out, '/api/logout')).toHaveLength(1)
+
+    // The core can't be reached: signed out here all the same.
+    withFetch(sessionFetch())
+    expect(await useSession.getState().pair('ABCD-EFGH', 'Me')).toBe(true)
+    const down = withFetch(sessionFetch({ logout: 'down' }))
+    await useSession.getState().logout()
+    expect(called(down, '/api/logout')).toHaveLength(1)
+    expect(useSession.getState().status).toBe('unpaired')
+    expect(localStorage.getItem('mindeck.deviceId')).toBeNull()
   })
 
-  it('a rejected token resets to pairing; an unreachable core is reported', async () => {
+  it('"stay paired" off: a session cookie, the device id only for this tab', async () => {
+    sessionStorage.clear()
+    jar.cookie = false
+    const fetch = withFetch(sessionFetch())
+    expect(await useSession.getState().pair('ABCD-EFGH', 'Me', false)).toBe(true)
+    expect(JSON.parse(called(fetch, '/api/pair')[0][1]!.body!)).toMatchObject({ cookie: true, remember: false })
+    expect(localStorage.getItem('mindeck.deviceId')).toBeNull()
+    expect(sessionStorage.getItem('mindeck.deviceId')).toBe('dev1')
+    // pairing again with "stay paired" moves it over
+    expect(await useSession.getState().pair('ABCD-EFGH', 'Me')).toBe(true)
+    expect(sessionStorage.getItem('mindeck.deviceId')).toBeNull()
+    expect(localStorage.getItem('mindeck.deviceId')).toBe('dev1')
+    await useSession.getState().logout()
+    expect(sessionStorage.length + localStorage.length).toBe(0)
+  })
+
+  it('a token kept in web storage from before is handed to the core for the cookie once, then deleted', async () => {
+    sessionStorage.clear()
+    jar.cookie = false
+    // localStorage ("stay paired"): a persistent cookie.
     localStorage.setItem('mindeck.token', 'old')
-    withFetch(sessionFetch({ info: 401 }))
+    let fetch = withFetch(sessionFetch())
+    await useSession.getState().init()
+    const [session] = called(fetch, '/api/session')
+    expect(session[1]!.headers).toEqual({ 'Content-Type': 'application/json', Authorization: 'Bearer old' })
+    expect(JSON.parse(session[1]!.body!)).toEqual({ remember: true })
+    expect(useSession.getState().status).toBe('ready')
+    expect(localStorage.getItem('mindeck.token')).toBeNull()
+    expect(localStorage.getItem('mindeck.deviceId')).toBe('dev-old')
+    // Next time: nothing to hand over.
+    fetch = withFetch(sessionFetch())
+    await useSession.getState().init()
+    expect(called(fetch, '/api/session')).toHaveLength(0)
+
+    // sessionStorage (this tab only): a session cookie.
+    jar.cookie = false
+    localStorage.clear()
+    sessionStorage.setItem('mindeck.token', 'old')
+    fetch = withFetch(sessionFetch())
+    await useSession.getState().init()
+    expect(JSON.parse(called(fetch, '/api/session')[0][1]!.body!)).toEqual({ remember: false })
+    expect(sessionStorage.getItem('mindeck.token')).toBeNull()
+    expect(sessionStorage.getItem('mindeck.deviceId')).toBe('dev-old')
+
+    // A token the core no longer knows: deleted; the browser pairs again — and is told why.
+    jar.cookie = false
+    sessionStorage.clear()
+    localStorage.setItem('mindeck.token', 'revoked')
+    withFetch(sessionFetch())
     await useSession.getState().init()
     expect(useSession.getState()).toMatchObject({ status: 'unpaired', error: 'This device is no longer paired' })
     expect(localStorage.getItem('mindeck.token')).toBeNull()
 
+    // The core can't take it right now: kept, used as before for this visit (and signed out with).
     localStorage.setItem('mindeck.token', 'old')
+    fetch = withFetch(sessionFetch({ session: 'down' }))
+    await useSession.getState().init()
+    expect(useSession.getState().status).toBe('ready')
+    expect(localStorage.getItem('mindeck.token')).toBe('old')
+    expect(called(fetch, '/api/rpc/app:info')[0][1]!.headers).toMatchObject({ Authorization: 'Bearer old' })
+    await useSession.getState().logout()
+    expect(called(fetch, '/api/logout')[0][1]!.headers).toMatchObject({ Authorization: 'Bearer old' })
+    expect(localStorage.getItem('mindeck.token')).toBeNull()
+  })
+
+  it('signing out forgets prompts, drafts, recent files and layouts — theme and language stay', async () => {
+    sessionStorage.clear()
+    withFetch(sessionFetch())
+    expect(await useSession.getState().pair('ABCD-EFGH', 'Me')).toBe(true)
+    const kept = { 'mindeck.theme': 'light', 'mindeck.appearance': '{}', 'mindeck.locale': 'de', 'other.app': 'x' }
+    for (const [k, v] of Object.entries({ ...kept, 'mindeck.agents.history': '["secret token sk-1"]', 'mindeck.agents.draft.s1': '{}', 'mindeck.recentFiles': '[]', 'mindeck.editor.layouts': '{}' })) localStorage.setItem(k, v)
+    sessionStorage.setItem('mindeck.debug', 'x')
+    await useSession.getState().logout()
+    expect(Object.fromEntries(Object.entries(localStorage))).toEqual(kept)
+    expect(sessionStorage.length).toBe(0)
+    // Storage that refuses: signing out still completes.
+    vi.spyOn(Storage.prototype, 'key').mockImplementation(() => {
+      throw new Error('denied')
+    })
+    await useSession.getState().logout()
+    expect(useSession.getState().status).toBe('unpaired')
+  })
+
+  it('a cookie the core no longer accepts resets to pairing; an unreachable core is reported', async () => {
+    localStorage.clear()
+    jar.cookie = true
+    localStorage.setItem('mindeck.deviceId', 'dev1')
+    withFetch(sessionFetch({ info: 401 }))
+    await useSession.getState().init()
+    expect(useSession.getState()).toMatchObject({ status: 'unpaired', error: 'This device is no longer paired' })
+    expect(localStorage.getItem('mindeck.deviceId')).toBeNull()
+
     withFetch(sessionFetch({ info: 0 }))
     await useSession.getState().init()
     expect(useSession.getState().status).toBe('unreachable')
@@ -396,9 +648,16 @@ describe('SessionGate and pairing screens', () => {
     expect(screen.getByText('Pairing code is invalid or expired')).toBeInTheDocument()
 
     withFetch(sessionFetch())
+    const remember = screen.getByRole('checkbox', { name: /Stay paired on this browser/ })
+    expect(remember).toBeChecked()
+    fireEvent.click(remember)
+    sessionStorage.clear()
     fireEvent.click(pairButton)
     await act(settle)
     expect(screen.getByText('APP')).toBeInTheDocument()
+    expect(sessionStorage.getItem('mindeck.deviceId')).toBe('dev1')
+    expect(localStorage.getItem('mindeck.deviceId')).toBeNull()
+    sessionStorage.clear()
   })
 
   it('unreachable core offers a retry', async () => {

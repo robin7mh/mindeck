@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { tempDir } from './helpers'
 import { CATALOG, inDir, llvmBuild, osOf, pythonFor, systemPython, which, type InstallSpec, type LocateContext, type OS } from '../../../electron/main/services/tools/catalog'
-import { loginShellRunner, PS_PRELUDE, ToolsService, userPath, type Runner } from '../../../electron/main/services/tools/ToolsService'
+import { loginShellRunner, PS_PRELUDE, ToolsService, userEnv, userPath, type Runner } from '../../../electron/main/services/tools/ToolsService'
 import type { ToolProgress } from '@shared/types/languages'
 
 /** A machine as locate() sees it: programs on the PATH, files that exist, programs' answers. */
@@ -358,6 +358,18 @@ describe('ToolsService', () => {
     expect(await userPath('win32', { Path: 'C:\\own' }, undefined, async (key) => (key.startsWith('HKCU') ? 'C:\\user' : ''))).toBe('C:\\user;C:\\own')
     expect(await userPath()).toContain(process.env.PATH!.split(':')[0])
   }, 20_000)
+
+  it('the user’s environment: Mindeck’s for a terminal (no ELECTRON_*), with their PATH', async () => {
+    process.env.ELECTRON_RUN_AS_NODE = '1'
+    try {
+      const env = await userEnv(async () => '/login/bin:/usr/bin')
+      expect(env.PATH).toBe('/login/bin:/usr/bin')
+      expect(env.TERM_PROGRAM).toBe('Mindeck')
+      expect(env).not.toHaveProperty('ELECTRON_RUN_AS_NODE')
+    } finally {
+      delete process.env.ELECTRON_RUN_AS_NODE
+    }
+  })
 
   it('the install runner: lines from stdout and stderr, the exit code, a shell that can’t start; PowerShell on Windows', async () => {
     const got: string[] = []

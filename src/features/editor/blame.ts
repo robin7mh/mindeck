@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { UNCOMMITTED, type BlameCommit } from '@shared/types/scm'
-import { getT } from '@/lib/i18n'
+import { getT, intlLocale } from '@/lib/i18n'
 import { relativeTime } from '@/features/agents/format'
 
 /** Characters of the blame view's column (hash, author, date) — monospace, so the code lines up. */
@@ -35,7 +35,7 @@ export const BLAME_BLANK = pad('', BLAME_WIDTH)
 /** The hover over a blame: the commit in full. */
 export function blameHover(commit: BlameCommit): string {
   if (commit.hash === UNCOMMITTED) return getT().blame.uncommitted
-  return `**${commit.summary}**\n\n${commit.author} <${commit.email}> · ${new Date(commit.date).toLocaleString()}\n\n\`${commit.hash.slice(0, 10)}\``
+  return `**${commit.summary}**\n\n${commit.author} <${commit.email}> · ${new Date(commit.date).toLocaleString(intlLocale())}\n\n\`${commit.hash.slice(0, 10)}\``
 }
 
 interface BlameState {

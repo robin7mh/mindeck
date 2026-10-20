@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto'
+import { isAbsolute, resolve, sep } from 'node:path'
 import type { ChatMessage, ToolCallPart, ToolRisk } from '@shared/types/ai'
 import type { PlanItem, SessionStatus } from '@shared/types/agents'
+import { isDeniedName } from '../../server/RemoteAccess'
 
 /** A Claude Code hook event (common fields + whatever the event adds). */
 export interface HookEvent {
@@ -41,6 +43,33 @@ export function toolRisk(name: string): ToolRisk {
   if (READ.has(name) || /^mcp__mindeck__(memory_search|memory_read|memory_list|project_context|browser_(tabs|snapshot|read|screenshot|console))$/.test(name)) return 'read'
   if (WRITE.has(name) || /^mcp__mindeck__/.test(name)) return 'write'
   return 'execute'
+}
+
+/**
+ * A path an agent wants to look at that leaves its folder (`/etc`, `~/.ssh/…`,
+ * `../other`) or names keys and credentials. Without a folder to compare with,
+ * any absolute path does.
+ */
+export function reachesOutside(path: string, cwd?: string): boolean {
+  if (path.startsWith('~') || path.split(/[\\/]+/).some(isDeniedName)) return true
+  if (!cwd) return isAbsolute(path)
+  const root = resolve(cwd)
+  const abs = resolve(root, path)
+  return abs !== root && !abs.startsWith(root.endsWith(sep) ? root : root + sep)
+}
+
+/**
+ * The risk an approval carries: `toolRisk`, except that looking outside the
+ * project (Read/Glob/Grep/LS on `~/.ssh`) and fetching from the web (a way out
+ * for whatever was read) count as changes — a device allows them only with
+ * remote shells, like any change.
+ */
+export function approvalRisk(name: string, input: Record<string, unknown> = {}, cwd?: string): ToolRisk {
+  const risk = toolRisk(name)
+  if (risk !== 'read') return risk
+  if (name === 'WebFetch') return 'write'
+  const paths = ['file_path', 'notebook_path', 'path'].map((k) => input[k]).filter((v): v is string => typeof v === 'string')
+  return paths.some((p) => reachesOutside(p, cwd)) ? 'write' : 'read'
 }
 
 const TITLES: Record<string, string> = {

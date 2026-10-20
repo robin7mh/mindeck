@@ -52,7 +52,7 @@ export function MemoryView() {
     return () => window.removeEventListener('keydown', onKey)
   }, [focused])
 
-  const seg = 'flex items-center gap-1.5 rounded px-2 py-1 font-sans text-[11px] font-medium transition-colors'
+  const seg = 'flex items-center gap-1.5 rounded-sm px-2 py-1 font-sans text-[11px] font-medium transition-colors'
 
   const header = m.status?.exists ? (
     <div className="flex items-center gap-3">
@@ -87,7 +87,7 @@ export function MemoryView() {
           type="button"
           onClick={() => m.startCreate('note', '')}
           className={cn(
-            'flex items-center gap-1.5 border border-cyan/40 bg-cyan/[0.06] px-2.5 py-1 font-sans text-[12px] font-medium text-cyan transition-colors hover:bg-cyan/[0.12]',
+            'flex items-center gap-1.5 border border-cyan/40 bg-cyan/6 px-2.5 py-1 font-sans text-[12px] font-medium text-cyan transition-colors hover:bg-cyan/12',
             templates.length ? 'rounded-l-md' : 'rounded-md'
           )}
         >
@@ -102,7 +102,7 @@ export function MemoryView() {
   return (
     <Panel title={t.memory.title} corners flush className="min-h-0 flex-1" headerRight={header} bodyClassName="flex min-h-0 flex-col">
       {m.error && (
-        <div className="flex items-start gap-2 border-b border-danger/30 bg-danger/[0.06] px-3 py-2">
+        <div className="flex items-start gap-2 border-b border-danger/30 bg-danger/6 px-3 py-2">
           <AlertTriangle size={13} className="mt-0.5 shrink-0 text-danger" />
           <span className="min-w-0 flex-1 font-mono text-[11px] text-text-secondary">{m.error}</span>
           <button type="button" aria-label={t.common.dismiss} onClick={m.clearError} className="text-text-muted hover:text-text-primary">
@@ -255,7 +255,7 @@ function NewFromTemplate({ templates, onPick }: { templates: NoteMeta[]; onPick:
         aria-label={t.memory.fromTemplate}
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
-        className="flex h-full items-center rounded-r-md border border-l-0 border-cyan/40 bg-cyan/[0.06] px-1.5 text-cyan transition-colors hover:bg-cyan/[0.12]"
+        className="flex h-full items-center rounded-r-md border border-l-0 border-cyan/40 bg-cyan/6 px-1.5 text-cyan transition-colors hover:bg-cyan/12"
       >
         <ChevronDown size={13} />
       </button>
@@ -313,7 +313,7 @@ function VaultSetup({
           <button
             type="button"
             onClick={onCreate}
-            className="flex items-center gap-2 rounded-md border border-cyan/40 bg-cyan/[0.08] px-3.5 py-2 font-sans text-[13px] font-medium text-cyan transition-colors hover:bg-cyan/[0.14]"
+            className="flex items-center gap-2 rounded-md border border-cyan/40 bg-cyan/8 px-3.5 py-2 font-sans text-[13px] font-medium text-cyan transition-colors hover:bg-cyan/[0.14]"
           >
             <Sparkles size={14} />
             {t.memory.createVault}

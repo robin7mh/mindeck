@@ -60,6 +60,8 @@ const h = vi.hoisted(() => ({
   ipcOn: new Map<string, (...a: unknown[]) => unknown>(),
   ipcHandle: new Map<string, (...a: unknown[]) => unknown>(),
   quit: vi.fn(),
+  exit: vi.fn(),
+  errorBox: vi.fn(),
   openExternal: vi.fn(async () => {}),
   openPath: vi.fn(async (_path: string) => ''),
   messageBox: vi.fn((): number => 1),
@@ -93,6 +95,8 @@ const h = vi.hoisted(() => ({
   coreOpts: undefined as undefined | Record<string, unknown>,
   hubListener: undefined as undefined | ((channel: string, payload: unknown) => void),
   bound: vi.fn(),
+  guard: vi.fn(),
+  defaultSession: { id: 'default-session' },
   schemes: vi.fn(),
   protocolHandler: undefined as undefined | ((request: unknown) => unknown),
   serveFile: vi.fn(async (_request: unknown, deps: { thumbnail: (path: string, size: number) => Promise<unknown> }) => deps),
@@ -129,6 +133,7 @@ vi.mock('electron', () => ({
     setPath: h.setPath,
     requestSingleInstanceLock: () => h.singleInstance,
     quit: h.quit,
+    exit: h.exit,
     getFileIcon: async (path: string) => {
       if (h.fileIconFails) throw new Error('no icon')
       return `icon:${path}`
@@ -165,6 +170,7 @@ vi.mock('electron', () => ({
     }
   },
   shell: { openExternal: h.openExternal, openPath: h.openPath },
+  session: { defaultSession: h.defaultSession },
   protocol: {
     registerSchemesAsPrivileged: (schemes: unknown) => h.schemes(schemes),
     handle: (_scheme: string, fn: (request: unknown) => unknown) => (h.protocolHandler = fn)
@@ -179,6 +185,7 @@ vi.mock('electron', () => ({
   },
   powerMonitor: { getSystemIdleTime: () => h.idleSeconds },
   dialog: {
+    showErrorBox: (...a: unknown[]) => h.errorBox(...a),
     showMessageBoxSync: (...a: unknown[]) => h.messageBox(...(a as [])),
     showMessageBox: async (...a: unknown[]) => {
       const options = (a.length > 1 ? a[1] : a[0]) as { message: string; buttons: string[]; cancelId: number }
@@ -230,6 +237,7 @@ vi.mock('../../../electron/main/platform/electron', () => ({
   secretsProtected: () => true
 }))
 vi.mock('../../../electron/ipc/registry', () => ({ bindIpc: h.bound }))
+vi.mock('../../../electron/main/platform/sessionGuard', () => ({ guardSession: h.guard }))
 vi.mock('../../../electron/main/platform/browser/host', () => ({ createBrowserHost: (...a: unknown[]) => (h.createHost(...a), h.host) }))
 vi.mock('../../../electron/main/platform/fileProtocol', () => ({ FILE_SCHEME: 'mindeck-file', serveFile: h.serveFile }))
 vi.mock('../../../electron/main/core/createCore', () => ({
@@ -294,6 +302,8 @@ beforeEach(() => {
   h.createHost.mockReset()
   h.openExternal.mockClear()
   h.quit.mockReset()
+  h.exit.mockReset()
+  h.errorBox.mockReset()
   h.answers = []
   h.asked = []
   h.trays = []
@@ -317,6 +327,11 @@ describe('main process boot', () => {
     const trusted = h.bound.mock.calls[0][1] as (url: string) => boolean
     expect(trusted('http://localhost:5173/')).toBe(true)
     expect(trusted('https://evil.example/')).toBe(false)
+    // The window's session answers the web's permission questions: only Mindeck's page reads the clipboard.
+    expect(h.guard).toHaveBeenCalledWith(h.defaultSession, expect.any(Function))
+    const clipboardFor = h.guard.mock.calls.at(-1)![1] as (url: string) => boolean
+    expect(clipboardFor('http://localhost:5173/')).toBe(true)
+    expect(clipboardFor('https://evil.example/')).toBe(false)
     expect(h.core.server.start).toHaveBeenCalled()
     // the browser's web views live in this window
     expect(h.createHost).toHaveBeenCalledWith(win, expect.objectContaining({ events: true }))
@@ -329,6 +344,26 @@ describe('main process boot', () => {
     expect(roles).toContain('"editMenu"')
     expect(roles).toContain('"toggleDevTools"')
     expect(roles).not.toContain('"close"')
+  })
+
+  it('a core that fails to start: the reason (and where the log is), then Mindeck really ends — no window-less process holding the lock', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {})
+    for (const failure of [Object.assign(new Error('EACCES: permission denied, mkdir /h/data'), { code: 'EACCES' }), 'disk full']) {
+      h.core.server.start.mockReset().mockRejectedValue(failure)
+      h.errorBox.mockReset()
+      h.exit.mockReset()
+      FakeWindow.all = []
+      await boot()
+      expect(h.errorBox).toHaveBeenCalledTimes(1)
+      const [title, detail] = h.errorBox.mock.calls[0] as [string, string]
+      expect(title).toBe('Mindeck could not start')
+      expect(detail).toContain(typeof failure === 'string' ? failure : 'EACCES: permission denied')
+      expect(detail).toContain(join(tmpdir(), 'mindeck-main-test', 'logs'))
+      expect(h.exit).toHaveBeenCalledWith(1)
+      expect(FakeWindow.all).toHaveLength(0)
+      expect(h.appHandlers.has('second-instance')).toBe(false)
+    }
+    expect(err).toHaveBeenCalledWith('[app] the core failed to start', 'disk full')
   })
 
   it('updates itself only when packaged, through desktop channels on the core router', async () => {
@@ -732,6 +767,11 @@ describe('stability', () => {
       '[app] GPU process gone: crashed, exit code 1',
       '[app] Utility (Network Service) process gone: killed, exit code 9'
     ])
+    // Quitting ends Mindeck's own helpers: not worth a warning — a crash still is.
+    h.appHandlers.get('before-quit')!({ preventDefault: vi.fn() })
+    h.appHandlers.get('child-process-gone')!({}, { type: 'Utility', name: 'TypeScript', reason: 'killed', exitCode: 2 })
+    h.appHandlers.get('child-process-gone')!({}, { type: 'GPU', reason: 'crashed', exitCode: 1 })
+    expect(warn.mock.calls.slice(3).map((c) => c[0])).toEqual(['[app] GPU process gone: crashed, exit code 1'])
   })
 
   it('a redirect never takes the window away from Mindeck', async () => {

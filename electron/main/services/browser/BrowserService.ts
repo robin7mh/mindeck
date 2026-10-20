@@ -452,7 +452,7 @@ export class BrowserService {
     if (req.url) {
       const target = this.target(req.url)
       if (target?.kind === 'external') {
-        void this.external(target.url)
+        this.external(target.url)
         return this.view(this.active())
       }
       // Mindeck's own pages (history, bookmarks) open once: a second ask shows the open one.
@@ -529,7 +529,7 @@ export class BrowserService {
     const tab = this.require(id)
     const target = this.target(input)
     if (!target) return
-    if (target.kind === 'external') return void this.external(target.url)
+    if (target.kind === 'external') return this.external(target.url, id)
     // Typing an address takes the tab over: no longer the agent's, no earlier sharing choice.
     tab.openedBy = undefined
     tab.agent = undefined
@@ -1178,8 +1178,21 @@ export class BrowserService {
     return { kind: isPageUrl(url) ? 'page' : 'external', url }
   }
 
-  private async external(url: string): Promise<void> {
-    await this.deps.openExternal?.(url).catch(() => {})
+  /**
+   * A link for another app that was typed, or opened from a bookmark or the
+   * history: the OS gets it only once the user said yes (asked like a page's
+   * link, remembered per app) — Chrome asks too. Network shares and Windows'
+   * handlers with a record of running code (ms-msdt:, search-ms: …) never.
+   */
+  private external(url: string, tabId?: string): void {
+    if (NEVER_EXTERNAL.test(url)) return
+    // Nothing on this machine opens it: nothing to ask.
+    const app = this.deps.appForUrl?.(url)
+    if (!app) return
+    const scheme = url.slice(0, url.indexOf(':') + 1).toLowerCase()
+    this.onPermission({ tabId, origin: scheme, kind: 'external', target: url, app }, (allow) => {
+      if (allow) void this.deps.openExternal?.(url).catch(() => {})
+    })
   }
 
   /** After the opener (and the tabs it opened before), else at the end — pinned tabs stay first. */
@@ -1648,6 +1661,9 @@ export class BrowserService {
     )
   }
 }
+
+/** Links that never leave for the OS from the address bar: shares (file:// is a page here), and Windows' risky handlers. */
+const NEVER_EXTERNAL = /^(?:smb|cifs|nfs|afp|ms-[a-z0-9.+-]*|search-ms|search):/i
 
 /** Remembered per permission — and per app for links to other apps (mailto:, zoommtg:, …). */
 function permissionKey(p: { kind: string; target?: string }): string {

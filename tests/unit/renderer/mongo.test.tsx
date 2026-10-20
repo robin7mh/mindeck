@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { fail, installBridge, settle } from './bridge'
 
@@ -341,7 +341,8 @@ describe('collection view', () => {
     render(<MongoView />)
     fireEvent.click(screen.getByRole('button', { name: /Insert document/ }))
     expect(await screen.findByText('New document')).toBeInTheDocument()
-    await act(settle)
+    // The JSON editor is loaded on demand: wait for it, not for a number of turns (slow under load).
+    await waitFor(() => expect(m.models).toHaveLength(1), { timeout: 15_000 })
     expect(m.models[0].value).toBe('{\n  \n}')
     act(() => m.models[0].setValue('{"name": "Cleo"}'))
     expect(s().editing?.text).toBe('{"name": "Cleo"}')

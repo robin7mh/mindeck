@@ -1,11 +1,12 @@
-import { X509Certificate, createPrivateKey, generateKeyPairSync } from 'node:crypto'
+import { X509Certificate, createHash, createPrivateKey, createPublicKey, generateKeyPairSync, type KeyObject } from 'node:crypto'
 import { readFile, stat, writeFile } from 'node:fs/promises'
+import { request as httpRequest } from 'node:http'
 import { request as httpsRequest } from 'node:https'
 import type { Socket } from 'node:net'
 import { connect as netConnect } from 'node:net'
 import { connect as tlsConnect, type TLSSocket } from 'node:tls'
 import { join } from 'node:path'
-import { md, pki } from 'node-forge'
+import { generate } from 'selfsigned'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { WebSocket } from 'ws'
 import { tempDir, tick } from './helpers'
@@ -26,31 +27,33 @@ afterEach(async () => {
   await Promise.all(closers.splice(0).map((c) => c()))
 })
 
+/** SHA-256 of a public key's DER SubjectPublicKeyInfo, `AB:CD:…` — what a client pinning the key compares. */
+const spkiOf = (key: KeyObject) =>
+  createHash('sha256').update(key.export({ type: 'spki', format: 'der' })).digest('hex').toUpperCase().replace(/(..)(?!$)/g, '$1:')
+
 const rsa = () =>
   generateKeyPairSync('rsa', { modulusLength: 2048, publicKeyEncoding: { type: 'spki', format: 'pem' }, privateKeyEncoding: { type: 'pkcs8', format: 'pem' } })
 
 /** A certificate signed by a (test) authority — like one from Let's Encrypt. */
-function caSigned(): { cert: string; key: string } {
+async function caSigned(names = true): Promise<{ cert: string; key: string }> {
   const caKeys = rsa()
   const leafKeys = rsa()
-  const make = (publicKey: string, subject: string) => {
-    const cert = pki.createCertificate()
-    cert.publicKey = pki.publicKeyFromPem(publicKey)
-    cert.serialNumber = '01'
-    cert.validity.notBefore = new Date(Date.now() - DAY)
-    cert.validity.notAfter = new Date(Date.now() + 90 * DAY)
-    cert.setSubject([{ name: 'commonName', value: subject }])
-    return cert
-  }
-  const ca = make(caKeys.publicKey, 'Test CA')
-  ca.setIssuer(ca.subject.attributes)
-  ca.setExtensions([{ name: 'basicConstraints', cA: true }, { name: 'keyUsage', keyCertSign: true }])
-  ca.sign(pki.privateKeyFromPem(caKeys.privateKey), md.sha256.create())
-  const leaf = make(leafKeys.publicKey, 'mindeck.example')
-  leaf.setIssuer(ca.subject.attributes)
-  leaf.setExtensions([{ name: 'subjectAltName', altNames: [{ type: 2, value: 'localhost' }, { type: 7, ip: '127.0.0.1' }] }])
-  leaf.sign(pki.privateKeyFromPem(caKeys.privateKey), md.sha256.create())
-  return { cert: pki.certificateToPem(leaf), key: leafKeys.privateKey }
+  const validity = { algorithm: 'sha256', notBeforeDate: new Date(Date.now() - DAY), notAfterDate: new Date(Date.now() + 90 * DAY) }
+  const ca = await generate([{ name: 'commonName', value: 'Test CA' }], {
+    ...validity,
+    keyPair: caKeys,
+    extensions: [{ name: 'basicConstraints', cA: true }, { name: 'keyUsage', keyCertSign: true }]
+  })
+  const leaf = await generate([{ name: 'commonName', value: 'mindeck.example' }], {
+    ...validity,
+    keyPair: leafKeys,
+    ca: { key: caKeys.privateKey, cert: ca.cert },
+    // Without names: some extension all the same, or selfsigned adds the common name as one.
+    extensions: names
+      ? [{ name: 'subjectAltName', altNames: [{ type: 2, value: 'localhost' }, { type: 7, ip: '127.0.0.1' }, { type: 2, value: 'mindeck.example' }, { type: 2, value: '*.apps.example' }] }]
+      : [{ name: 'basicConstraints', cA: false }]
+  })
+  return { cert: leaf.cert, key: leafKeys.privateKey }
 }
 
 describe('Certificates — self-signed', () => {
@@ -87,7 +90,8 @@ describe('Certificates — self-signed', () => {
       expect((await stat(join(dir, 'key.pem'))).mode & 0o777).toBe(0o600)
       expect((await stat(dir)).mode & 0o777).toBe(0o700)
     }
-    expect(await certs.current()).toEqual({ fingerprint: creds.fingerprint, expiresAt: creds.expiresAt, selfSigned: true })
+    expect(creds.spkiFingerprint).toBe(spkiOf(createPublicKey(creds.key)))
+    expect(await certs.current()).toEqual({ fingerprint: creds.fingerprint, spkiFingerprint: creds.spkiFingerprint, expiresAt: creds.expiresAt, selfSigned: true })
 
     // The same addresses (or fewer): the same certificate, also for the next process.
     expect((await certs.credentials([])).fingerprint).toBe(creds.fingerprint)
@@ -101,6 +105,7 @@ describe('Certificates — self-signed', () => {
     const moved = await certs.credentials(['10.0.0.8'])
     expect(moved.fingerprint).not.toBe(first.fingerprint)
     expect(moved.key).toBe(first.key) // a pinned public key survives
+    expect(moved.spkiFingerprint).toBe(first.spkiFingerprint)
     expect(new X509Certificate(moved.cert).checkIP('10.0.0.8')).toBe('10.0.0.8')
 
     now += 701 * DAY // less than a month left
@@ -145,7 +150,7 @@ describe('Certificates — self-signed', () => {
 describe('Certificates — an own certificate from the environment', () => {
   it('is used as it is, checked against its key', async () => {
     const dir = await tempDir()
-    const own = caSigned()
+    const own = await caSigned()
     const files = { cert: join(dir, 'fullchain.pem'), key: join(dir, 'privkey.pem') }
     await writeFile(files.cert, own.cert)
     await writeFile(files.key, own.key)
@@ -176,9 +181,9 @@ interface Answer {
 }
 
 /** HTTPS that verifies the server against its own (self-signed) certificate — what a client does after TOFU. */
-function httpsCall(port: number, ca: string, path: string, init: { method?: string; body?: string } = {}): Promise<Answer> {
+function httpsCall(port: number, ca: string, path: string, init: { method?: string; body?: string; headers?: Record<string, string> } = {}): Promise<Answer> {
   return new Promise((resolve, reject) => {
-    const req = httpsRequest({ host: '127.0.0.1', port, path, method: init.method ?? 'GET', ca, agent: false }, (res) => {
+    const req = httpsRequest({ host: '127.0.0.1', port, path, method: init.method ?? 'GET', ca, agent: false, headers: init.headers }, (res) => {
       const peer = (res.socket as TLSSocket).getPeerX509Certificate() as X509Certificate
       let body = ''
       res.on('data', (c) => (body += c))
@@ -250,7 +255,7 @@ describe('HttpServer over TLS', () => {
     const { code } = await auth.createPairingCode()
     const paired = await httpsCall(port, tls.cert, '/api/pair', { method: 'POST', body: JSON.stringify({ code, name: 'Phone' }) })
     const result = JSON.parse(paired.body).data
-    expect(result).toMatchObject({ token: expect.stringMatching(/^mindeck_/), fingerprint: tls.fingerprint })
+    expect(result).toMatchObject({ token: expect.stringMatching(/^mindeck_/), fingerprint: tls.fingerprint, spkiFingerprint: tls.spkiFingerprint })
     const calls = await new Promise<Answer>((resolve, reject) => {
       const req = httpsRequest({ host: '127.0.0.1', port, path: '/api/rpc/projects:list', method: 'POST', ca: tls.cert, headers: { Authorization: `Bearer ${result.token}` } }, (res) => {
         let body = ''
@@ -270,6 +275,20 @@ describe('HttpServer over TLS', () => {
     })
     expect(hello).toMatchObject({ channel: 'hello' })
     ws.close()
+  })
+
+  it('the web UI’s cookie is Secure over HTTPS — also the one that deletes it (FE-SEC-03)', async () => {
+    const { tls, port, auth } = await startTls()
+    const own = { 'Content-Type': 'application/json', Origin: `https://127.0.0.1:${port}`, Host: `127.0.0.1:${port}` }
+    const { code } = await auth.createPairingCode()
+    const paired = await httpsCall(port, tls.cert, '/api/pair', { method: 'POST', headers: own, body: JSON.stringify({ code, name: 'Browser', cookie: true }) })
+    expect(JSON.parse(paired.body).data).toEqual({ device: expect.objectContaining({ name: 'Browser' }), fingerprint: tls.fingerprint, spkiFingerprint: tls.spkiFingerprint })
+    const cookie = String(paired.headers['set-cookie'])
+    expect(cookie).toMatch(new RegExp(`^mindeck_${port}=mindeck_[^;]+; Path=/api; HttpOnly; SameSite=Strict; Secure; Max-Age=34560000$`))
+    const jar = cookie.split(';')[0]
+    expect(JSON.parse((await httpsCall(port, tls.cert, '/api/rpc/projects:list', { method: 'POST', headers: { ...own, Cookie: jar }, body: 'null' })).body)).toEqual({ ok: true, data: [] })
+    const out = await httpsCall(port, tls.cert, '/api/logout', { method: 'POST', headers: { ...own, Cookie: jar }, body: '{}' })
+    expect(String(out.headers['set-cookie'])).toBe(`mindeck_${port}=; Path=/api; HttpOnly; SameSite=Strict; Secure; Max-Age=0`)
   })
 
   it('this computer keeps plain HTTP; the network is sent to HTTPS or refused', async () => {
@@ -310,10 +329,16 @@ describe('HttpServer over TLS', () => {
     ).rejects.toThrow('403')
     // HTTPS from the network: as usual.
     expect((await httpsCall(port, tls.cert, '/api/health')).status).toBe(200)
+
+    // A proxy on this computer passes the network on: no plain HTTP for it either (BE-SEC-21).
+    network(false)
+    const proxied = await fetch(`${base}/api/pair`, { method: 'POST', headers: { 'X-Forwarded-For': '192.168.1.77' }, body: '{}' })
+    expect(proxied.status).toBe(403)
+    expect(await proxied.json()).toMatchObject({ error: { code: 'https-required' } })
   })
 
   it('an own certificate from an authority gets HSTS', async () => {
-    const own = caSigned()
+    const own = await caSigned()
     const dir = await tempDir()
     await writeFile(join(dir, 'c.pem'), own.cert)
     await writeFile(join(dir, 'k.pem'), own.key)
@@ -329,6 +354,23 @@ describe('HttpServer over TLS', () => {
       req.end()
     })
     expect(raw.headers['strict-transport-security']).toBe('max-age=31536000')
+    // It answers to the certificate's names (BE-SEC-19): its domain, any name under a wildcard.
+    const named = (host: string) =>
+      new Promise<number>((resolve, reject) => {
+        const req = httpsRequest({ host: '127.0.0.1', port, path: '/api/health', rejectUnauthorized: false, agent: false, headers: { host } }, (res2) => {
+          res2.resume()
+          resolve(res2.statusCode as number)
+        })
+        req.on('error', reject)
+        req.end()
+      })
+    expect(await named('mindeck.example')).toBe(200)
+    expect(await named('web.apps.example')).toBe(200)
+    expect(await named('evil.example')).toBe(403)
+    // A certificate without any names: just the core's own then.
+    const bare = await caSigned(false)
+    const internals = (await startTls({ ...creds, cert: bare.cert, key: bare.key })).http as unknown as { certNames: string[] }
+    expect(internals.certNames).toEqual([])
     // Plain loopback HTTP never gets it.
     expect((await fetch(`http://127.0.0.1:${port}/api/health`)).headers.get('strict-transport-security')).toBeNull()
   })
@@ -337,17 +379,29 @@ describe('HttpServer over TLS', () => {
     const { http, port, dir, tls } = await startTls()
     const next = await new Certificates({ dir: join(dir, 'tls'), hostname: () => 'renamed' }).credentials(['10.1.1.1'])
     expect(next.fingerprint).not.toBe(tls.fingerprint)
+    const plain = (host: string) =>
+      new Promise<number>((resolve, reject) => {
+        const req = httpRequest({ host: '127.0.0.1', port, path: '/api/health', agent: false, headers: { host } }, (res) => {
+          res.resume()
+          resolve(res.statusCode as number)
+        })
+        req.on('error', reject)
+        req.end()
+      })
+    expect(await plain('renamed')).toBe(403)
     http.setTls(next)
     expect((await handshake(port)).peer.fingerprint256).toBe(next.fingerprint)
+    expect(await plain('renamed.local')).toBe(200) // the renewed certificate's names
 
     const internals = http as unknown as { sockets: Set<Socket> }
-    const silent = netConnect(port, '127.0.0.1')
+    // The server cuts these off: depending on timing the client sees a reset (an error) before 'close'.
+    const silent = netConnect(port, '127.0.0.1').on('error', () => {})
     await new Promise((r) => silent.once('connect', r))
     await tick(20)
     const closed = new Promise((r) => silent.once('close', r))
     ;[...internals.sockets].at(-1)!.emit('timeout') // nothing said within the first-byte window
     await closed
-    const broken = netConnect(port, '127.0.0.1')
+    const broken = netConnect(port, '127.0.0.1').on('error', () => {})
     await new Promise((r) => broken.once('connect', r))
     await tick(20)
     const gone = new Promise((r) => broken.once('close', r))
@@ -355,7 +409,7 @@ describe('HttpServer over TLS', () => {
     await gone
 
     // An open TLS connection ends with the server.
-    const open = tlsConnect({ host: '127.0.0.1', port, rejectUnauthorized: false })
+    const open = tlsConnect({ host: '127.0.0.1', port, rejectUnauthorized: false }).on('error', () => {})
     await new Promise((r) => open.once('secureConnect', r))
     const ended = new Promise((r) => open.once('close', r))
     await http.close()
@@ -407,13 +461,14 @@ describe('ServerController — TLS', () => {
     expect(status.urls).toEqual([`http://127.0.0.1:${port}`, `https://192.168.1.5:${port}`])
 
     const pairing = await controller.createPairingCode()
-    const link = parsePairingLink(pairingLink(pairing.urls[1], pairing.code, pairing.fingerprint))!
-    expect(link).toEqual({ baseUrl: `https://192.168.1.5:${port}`, code: pairing.code, fingerprint: status.tls!.fingerprint })
+    const link = parsePairingLink(pairingLink(pairing.urls[1], pairing.code, pairing.fingerprint, pairing.spkiFingerprint))!
+    expect(link).toEqual({ baseUrl: `https://192.168.1.5:${port}`, code: pairing.code, fingerprint: status.tls!.fingerprint, spkiFingerprint: status.tls!.spkiFingerprint })
     const { peer } = await handshake(port)
     expect(peer.fingerprint256).toBe(link.fingerprint) // the client may go on
+    expect(spkiOf(peer.publicKey)).toBe(link.spkiFingerprint) // a client pinning the key, too
     expect(peer.checkIP('192.168.1.5')).toBe('192.168.1.5')
     const paired = await httpsCall(port, peer.toString(), '/api/pair', { method: 'POST', body: JSON.stringify({ code: link.code, name: 'Phone' }) })
-    expect(JSON.parse(paired.body).data.fingerprint).toBe(link.fingerprint)
+    expect(JSON.parse(paired.body).data).toMatchObject({ fingerprint: link.fingerprint, spkiFingerprint: link.spkiFingerprint })
   })
 
   it('renews for a new address before pairing and twice a day; off when switched off', async () => {
@@ -421,6 +476,7 @@ describe('ServerController — TLS', () => {
     const { controller, move } = await setup()
     await controller.start()
     const first = controller.status().tls!.fingerprint
+    const spki = controller.status().tls!.spkiFingerprint
     await controller.renewTls() // nothing changed
     expect(controller.status().tls!.fingerprint).toBe(first)
 
@@ -429,7 +485,11 @@ describe('ServerController — TLS', () => {
     expect(code.fingerprint).not.toBe(first)
     expect(controller.status().tls!.fingerprint).toBe(code.fingerprint)
     const port = Number(controller.status().urls[0].split(':').pop())
-    expect((await handshake(port)).peer.fingerprint256).toBe(code.fingerprint)
+    const renewed = (await handshake(port)).peer
+    expect(renewed.fingerprint256).toBe(code.fingerprint)
+    // A new certificate on the same key: a device that pinned the key still finds it.
+    expect(code.spkiFingerprint).toBe(spki)
+    expect(spkiOf(renewed.publicKey)).toBe(spki)
 
     move(['10.0.0.9'])
     vi.advanceTimersByTime(12 * 60 * 60_000)

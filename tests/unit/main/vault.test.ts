@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events'
 import { existsSync } from 'node:fs'
-import { chmod, mkdir, open, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises'
+import { chmod, lstat, mkdir, open, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises'
 import { join, sep } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { tempDir, tick } from './helpers'
@@ -12,7 +12,9 @@ const h = vi.hoisted(() => ({
   watchers: [] as { root: string; cb: (event: string, filename: string | null) => void; emitter: EventEmitter & { close: () => void } }[],
   watchThrows: false,
   /** Next writeFile to a path ending in this fails with EIO (portable, works as root). */
-  failWrite: null as string | null
+  failWrite: null as string | null,
+  /** Next readdir of a path ending in this fails with EACCES (portable, works as root). */
+  failReaddir: null as string | null
 }))
 vi.mock('electron', () => ({
   clipboard: {},
@@ -43,7 +45,14 @@ vi.mock('node:fs/promises', async (orig) => {
         throw Object.assign(new Error('EIO: i/o error'), { code: 'EIO' })
       }
       return (actual.writeFile as (...a: unknown[]) => Promise<void>)(file, ...rest)
-    }) as typeof actual.writeFile
+    }) as typeof actual.writeFile,
+    readdir: (async (dir: string, ...rest: unknown[]) => {
+      if (h.failReaddir && String(dir).endsWith(h.failReaddir)) {
+        h.failReaddir = null
+        throw Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' })
+      }
+      return (actual.readdir as (...a: unknown[]) => Promise<unknown>)(dir, ...rest)
+    }) as typeof actual.readdir
   }
 })
 
@@ -254,6 +263,19 @@ describe('VaultService — notes', () => {
     await symlink(outside, join(root, 'escape'))
     await expect(v.write('escape/x.md', 'no')).rejects.toMatchObject({ code: 'bad-path' })
   })
+
+  it('a dangling link in the vault is replaced, never written through (BE-SEC-02)', async () => {
+    const { v, root, base, read } = await setup()
+    const outside = join(base, 'outside')
+    await mkdir(outside)
+    await symlink('../outside/pwned.md', join(root, 'Pwned.md'))
+    await v.write('Pwned.md', 'mine')
+    expect(await read('Pwned.md')).toBe('mine')
+    expect((await lstat(join(root, 'Pwned.md'))).isSymbolicLink()).toBe(false)
+    await symlink('../outside/new.md', join(root, 'Taken.md'))
+    expect((await v.create('Taken')).path).toBe('Taken 2.md') // a new note never lands on a link
+    expect(await readdir(outside)).toEqual([])
+  })
 })
 
 describe('VaultService — folders, renames, moves, links', () => {
@@ -262,6 +284,8 @@ describe('VaultService — folders, renames, moves, links', () => {
     expect(await v.createFolder('', 'Archiv')).toBe('Archiv')
     expect(await v.createFolder('Archiv', '2026')).toBe('Archiv/2026')
     expect(await v.folders()).toEqual(['Archiv', 'Archiv/2026', 'Entscheidungen', 'Ich', 'Projekte'])
+    h.failReaddir = 'Archiv' // a folder it can't look into: listed, without what it holds
+    expect(await v.folders()).toEqual(['Archiv', 'Entscheidungen', 'Ich', 'Projekte'])
     await expect(v.createFolder('', 'Archiv')).rejects.toMatchObject({ code: 'exists' })
     expect(await v.createFolder('', '.hidden')).toBe('hidden')
     await expect(v.createFolder('../out', 'x')).rejects.toMatchObject({ code: 'bad-path' })
@@ -341,15 +365,25 @@ describe('VaultService — watcher', () => {
     await writeFile(join(root, 'External.md'), 'from obsidian')
     await mkdir(join(root, 'New/Deep'), { recursive: true })
     await writeFile(join(root, 'New/Deep/In.md'), 'x')
+    await writeFile(join(root, 'New/Deep/pic.png'), 'not a note either')
     await writeFile(join(root, 'notes.txt'), 'not a note')
     await rm(join(root, 'Ich/Vorlieben.md'))
     for (const f of ['External.md', 'New', 'notes.txt', '.obsidian/workspace.json', 'Ich/Vorlieben.md', 'Gone-before.md', '']) fire(f)
-    await tick(FLUSH)
-    expect(onChange).toHaveBeenCalledWith({ paths: ['External.md', 'New/Deep/In.md', 'Ich/Vorlieben.md'] })
+    // A busy machine can take longer than one flush window: wait for the change, not the clock.
+    await vi.waitFor(() => expect(onChange).toHaveBeenCalledWith({ paths: ['External.md', 'New/Deep/In.md', 'Ich/Vorlieben.md'] }), { timeout: 5000 })
     expect((await v.read('New/Deep/In.md')).body).toBe('x')
 
     onChange.mockClear()
     fire('External.md') // unchanged content → no event
+    fire('New') // a folder whose notes are unchanged: neither
+    await tick(FLUSH)
+    expect(onChange).not.toHaveBeenCalled()
+
+    // a new folder it can't read yet: nothing to pick up
+    await mkdir(join(root, 'Locked'))
+    await writeFile(join(root, 'Locked/A.md'), 'a')
+    h.failReaddir = 'Locked'
+    fire('Locked')
     await tick(FLUSH)
     expect(onChange).not.toHaveBeenCalled()
   })
@@ -358,8 +392,8 @@ describe('VaultService — watcher', () => {
     const { v, root } = await setup()
     await writeFile(join(root, 'Willkommen.md'), 'x'.repeat(5 * 1024 * 1024 + 10))
     fire('Willkommen.md')
-    await tick(FLUSH)
-    expect((await v.list()).some((n) => n.path === 'Willkommen.md')).toBe(false)
+    // Reading 5 MB back can outlast one flush window on a busy machine: wait for the index, not the clock.
+    await vi.waitFor(async () => expect((await v.list()).some((n) => n.path === 'Willkommen.md')).toBe(false), { timeout: 5000 })
   })
 
   it('does a full rescan when the OS gives no filename', async () => {
@@ -367,8 +401,8 @@ describe('VaultService — watcher', () => {
     await writeFile(join(root, 'Silent.md'), 'x')
     onChange.mockClear()
     fire(null)
-    await tick(FLUSH)
-    expect(onChange).toHaveBeenCalledWith({})
+    // A busy machine can take longer than one flush window: wait for the change, not the clock.
+    await vi.waitFor(() => expect(onChange).toHaveBeenCalledWith({}), { timeout: 5000 })
   })
 
   it('ignores flushes for a vault that was switched away, and survives flush errors', async () => {
@@ -395,8 +429,8 @@ describe('VaultService — watcher', () => {
     onChange.mockReset()
     await writeFile(join(root, 'After.md'), 'y')
     fire('After.md')
-    await tick(FLUSH)
-    expect(onChange).toHaveBeenCalledWith({ paths: ['After.md'] }) // the chain kept working
+    // A busy machine can take longer than one flush window: wait for the change, not the clock.
+    await vi.waitFor(() => expect(onChange).toHaveBeenCalledWith({ paths: ['After.md'] }), { timeout: 5000 }) // the chain kept working
   })
 
   it('stops watching on watcher errors and works without a watcher', async () => {

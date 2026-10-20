@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { Hourglass, Loader2, LogOut, MailCheck, RefreshCw, ShoppingCart, UserRound, WifiOff } from 'lucide-react'
+import { CirclePause, Hourglass, Loader2, LogOut, MailCheck, RefreshCw, ShoppingCart, UserRound, WifiOff } from 'lucide-react'
 import type { CloudStatus } from '@shared/types/cloud'
 import { Panel } from '@/components/ui/Panel'
 import { TechLabel } from '@/components/ui/TechLabel'
@@ -18,7 +18,7 @@ function Frame({ children, overlay }: { children: ReactNode; overlay?: boolean }
     <div
       className={cn(
         'flex h-screen w-screen items-center justify-center overflow-hidden p-4',
-        overlay ? 'fixed inset-0 z-[200] bg-void/85 backdrop-blur-sm' : 'relative'
+        overlay ? 'fixed inset-0 z-200 bg-void/85 backdrop-blur-xs' : 'relative'
       )}
     >
       {!overlay && <GlowBackground />}
@@ -135,6 +135,17 @@ export function CloudScreen({ status, overlay }: { status: CloudStatus; overlay?
         email={status.account?.email}
         primary={{ label: t.cloud.checkAgain, icon: RefreshCw, run: refresh }}
         secondary={{ label: t.cloud.resend, run: () => void cloud.resend() }}
+      />
+    )
+  } else if (status.state === 'license_suspended') {
+    // A disputed payment (chargeback): nothing to buy — the dispute has to be closed.
+    body = (
+      <Locked
+        icon={CirclePause}
+        title={t.cloud.suspendedTitle}
+        intro={t.cloud.suspendedIntro}
+        email={status.account?.email}
+        primary={{ label: t.cloud.checkAgain, icon: RefreshCw, run: refresh }}
       />
     )
   } else if (status.state === 'trial_expired') {

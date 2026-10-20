@@ -107,6 +107,7 @@ export function Composer({
 
   useEffect(() => {
     if (agent) saveDraft(agent.sessionId, { text, refs })
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only the session id matters, not the agent object
   }, [agent?.sessionId, text, refs])
 
   // Each `@` looks up what can be referenced (files, notes and tabs come and go); the last list shows meanwhile.
@@ -272,7 +273,7 @@ export function Composer({
                   s.pick()
                 }}
                 onMouseEnter={() => setActive(i)}
-                className={cn('flex cursor-pointer items-center gap-2 rounded px-2 py-1', i === active && 'bg-cyan/[0.1]')}
+                className={cn('flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1', i === active && 'bg-cyan/[0.1]')}
               >
                 <s.icon size={12} className="shrink-0 text-cyan" />
                 <span className="shrink-0 font-sans text-[12.5px] text-text-primary">{s.label}</span>
@@ -292,7 +293,7 @@ export function Composer({
               const Icon = REF_ICON[r.kind]
               const label = r.label ?? r.path
               return (
-                <span key={`${r.kind}:${r.path}`} title={r.path} className="flex max-w-[240px] items-center gap-1 rounded border border-cyan/30 bg-cyan/[0.07] px-1.5 py-0.5 font-mono text-[11px] text-text-secondary">
+                <span key={`${r.kind}:${r.path}`} title={r.path} className="flex max-w-[240px] items-center gap-1 rounded-sm border border-cyan/30 bg-cyan/[0.07] px-1.5 py-0.5 font-mono text-[11px] text-text-secondary">
                   <Icon size={11} className="shrink-0 text-cyan" />
                   <span className="truncate">{label}</span>
                   <button type="button" aria-label={t.agents.removeReference(label)} onClick={() => setRefs((list) => list.filter((x) => x !== r))} className="text-text-muted hover:text-text-primary">
@@ -302,7 +303,7 @@ export function Composer({
               )
             })}
             {images.map((img) => (
-              <span key={img.id} className="group relative h-12 w-12 overflow-hidden rounded border border-hud/70">
+              <span key={img.id} className="group relative h-12 w-12 overflow-hidden rounded-sm border border-hud/70">
                 <img src={`data:${img.mimeType};base64,${img.data}`} alt={img.name} className="h-full w-full object-cover" />
                 <button
                   type="button"
@@ -354,7 +355,7 @@ export function Composer({
             onPaste={onPaste}
             onBlur={() => setToken(null)}
             placeholder={placeholder}
-            className="max-h-[220px] min-h-[24px] flex-1 resize-none bg-transparent font-sans text-[13.5px] leading-6 text-text-primary outline-none placeholder:text-text-muted disabled:opacity-50"
+            className="max-h-[220px] min-h-[24px] flex-1 resize-none bg-transparent font-sans text-[13.5px] leading-6 text-text-primary outline-hidden placeholder:text-text-muted disabled:opacity-50"
           />
           {running ? (
             <button
@@ -372,7 +373,7 @@ export function Composer({
               onClick={() => void submit()}
               aria-label={t.agents.send}
               disabled={empty || sending || disabled}
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-cyan/50 bg-cyan/[0.12] text-cyan hover:bg-cyan/20 disabled:opacity-40"
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-cyan/50 bg-cyan/12 text-cyan hover:bg-cyan/20 disabled:opacity-40"
             >
               {sending ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
             </button>

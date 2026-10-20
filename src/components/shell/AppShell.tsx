@@ -170,6 +170,7 @@ export function AppShell() {
       </ModuleBoundary>
     ),
     // What moduleView reads beyond module-level functions.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- moduleView is recreated each render; these are its inputs
     [shellsOff, booted, t]
   )
 

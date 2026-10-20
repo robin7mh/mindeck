@@ -39,6 +39,9 @@ export function slotColor(slot: number): string {
   return `rgb(var(--graph-${GRAPH_COLORS[slot % GRAPH_COLORS.length]}))`
 }
 
+/** Until the canvas is set up there is nothing to draw or fit. */
+const noop = () => {}
+
 /**
  * Obsidian-style force-directed graph on a canvas. Nodes are notes (ghosts =
  * unresolved links), edges are wikilinks. Wheel zooms around the cursor, drag
@@ -52,8 +55,8 @@ export function GraphView({ graph, style, folderSlots, activeId, onOpen, onOpenG
   const positions = useRef(new Map<string, { x: number; y: number }>())
   const camera = useRef<{ x: number; y: number; k: number } | null>(null)
   const props = useRef({ style, folderSlots, activeId, onOpen, onOpenGhost })
-  const redraw = useRef<() => void>(() => {})
-  const fit = useRef<() => void>(() => {})
+  const redraw = useRef<() => void>(noop)
+  const fit = useRef<() => void>(noop)
 
   props.current = { style, folderSlots, activeId, onOpen, onOpenGhost }
   useEffect(() => redraw.current(), [style, folderSlots, activeId])
@@ -364,7 +367,7 @@ export function GraphView({ graph, style, folderSlots, activeId, onOpen, onOpenG
       )}
 
       {legend.length > 0 && (
-        <div className="pointer-events-none absolute bottom-3 left-3 space-y-1 rounded-md border border-hud/50 bg-surface/70 px-2.5 py-2 backdrop-blur-sm">
+        <div className="pointer-events-none absolute bottom-3 left-3 space-y-1 rounded-md border border-hud/50 bg-surface/70 px-2.5 py-2 backdrop-blur-xs">
           {legend.map(([folder, slot]) => (
             <div key={folder || '.'} className="flex items-center gap-2">
               <span className="h-2 w-2 rounded-full" style={{ background: slotColor(slot) }} />

@@ -76,6 +76,8 @@ export class RemoteScope {
         return this.keep(data as PermissionGrant[], (g) => (g.projectId === ALL_PROJECTS ? undefined : g.projectId))
       case 'events:recent':
         return this.keep(data as MindeckEvent[], (e) => this.eventProject(e))
+      case 'liveServer:status':
+        return this.keep(data as LiveServerStatus[], (s) => s.projectId)
       default:
         return data
     }

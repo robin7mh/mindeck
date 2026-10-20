@@ -17,7 +17,7 @@ const NotebookView = lazy(() => import('./NotebookView'))
 const isNotebook = (tab?: { path: string }) => !!tab?.path.toLowerCase().endsWith('.ipynb')
 
 const button = 'flex items-center gap-1.5 rounded-md border px-2.5 py-1 font-sans text-[12px] font-medium transition-colors'
-export const primary = cn(button, 'border-cyan/40 bg-cyan/[0.06] text-cyan hover:bg-cyan/[0.12]')
+export const primary = cn(button, 'border-cyan/40 bg-cyan/6 text-cyan hover:bg-cyan/12')
 export const quiet = cn(button, 'border-hud/60 text-text-secondary hover:border-hud-strong hover:text-text-primary')
 
 export function Banner({ tone, children }: { tone: 'warn' | 'info'; children: ReactNode }) {
@@ -92,12 +92,12 @@ function NotebookLayer({ tab, readOnly }: { tab: EditorTab; readOnly: boolean })
   }
   if (raw)
     return (
-      <button type="button" onClick={toggle} className="absolute right-6 top-2 z-10 flex items-center gap-1 rounded border border-cyan/40 bg-elevated/95 px-2 py-1 font-sans text-[11.5px] text-cyan hover:bg-elevated">
+      <button type="button" onClick={toggle} className="absolute right-6 top-2 z-10 flex items-center gap-1 rounded-sm border border-cyan/40 bg-elevated/95 px-2 py-1 font-sans text-[11.5px] text-cyan hover:bg-elevated">
         <BookOpen size={12} /> {t.notebook.notebook}
       </button>
     )
   return (
-    <div className="absolute inset-0 z-[5]">
+    <div className="absolute inset-0 z-5">
       <Suspense fallback={null}>
         <NotebookView key={tab.id} tab={tab} readOnly={readOnly} onRaw={toggle} />
       </Suspense>
@@ -221,7 +221,7 @@ export function EditorGroup({ id, index, projectNames, readOnly, overlay, onCurs
               <Placeholder tab={tab} />
             </div>
           )}
-          {zone && <div aria-hidden data-zone={zone} className={cn('pointer-events-none absolute z-30 rounded-sm border border-cyan/50 bg-cyan/[0.08]', ZONES[zone])} />}
+          {zone && <div aria-hidden data-zone={zone} className={cn('pointer-events-none absolute z-30 rounded-xs border border-cyan/50 bg-cyan/8', ZONES[zone])} />}
         </div>
       </div>
     </section>

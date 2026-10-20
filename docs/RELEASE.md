@@ -21,7 +21,7 @@ Repository → Settings → Secrets and variables → Actions.
 | Name | Kind | Needed for | What |
 | --- | --- | --- | --- |
 | `MINDECK_CLOUD_URL` | variable | every build | Where Mindeck Cloud lives (baked in) |
-| `MINDECK_CLOUD_KEY` | secret | every build | The cloud's entitlement public key: `curl -s https://api.<domain>/v1/meta \| jq -r .entitlementPublicKey` |
+| `MINDECK_CLOUD_KEY` | secret | every build | The cloud's entitlement public key(s): `curl -s https://api.<domain>/v1/meta \| jq -r .entitlementPublicKey`. After a key rotation a list — PEM or base64 SPKI DER, comma- or line-separated, **the original key first**, the next key (from `keys:generate`) after it (docs/API.md §6.1). The build fails on a key it can't read |
 | `CSC_LINK` | secret | macOS signing | "Developer ID Application" certificate as `.p12`, base64-encoded (`base64 -i cert.p12 \| pbcopy`) |
 | `CSC_KEY_PASSWORD` | secret | macOS signing | The `.p12`'s password |
 | `APPLE_ID` | secret | macOS notarization | The Apple ID of the developer account |
@@ -37,11 +37,13 @@ Repository → Settings → Secrets and variables → Actions.
 
 `GITHUB_TOKEN` (automatic) publishes the release. Windows is signed with `WIN_CSC_LINK` when it is set, else with Azure Trusted Signing when **all** `AZURE_*` secrets are set. Linux packages aren't signed.
 
-**Missing secrets don't stop a release**, they make it worse — the log says so with a warning:
+**Missing signing secrets stop a release** (a tag): the updater would hand the unsigned installers to every user. A manual run (*Run workflow*) still builds without them and says so with a warning:
 
-- no `CSC_LINK`: the macOS app is unsigned and not notarized — Gatekeeper blocks it ("damaged / can't be opened") on every other Mac. Don't ship that.
+- no `CSC_LINK`: the macOS app is unsigned and not notarized — Gatekeeper blocks it ("damaged / can't be opened") on every other Mac.
 - `CSC_LINK` but incomplete `APPLE_*`: signed, not notarized — Gatekeeper still warns.
 - no Windows signing: the installer works, SmartScreen warns ("Windows protected your PC") until it gains reputation.
+
+Before anything is built, the workflow runs `npm run typecheck` and the unit tests (`npm run test:coverage`); the CD workflow does the same before it publishes the Docker image. Make both CI checks required for `main` and `develop` (Settings → Branches → branch protection) so nothing lands there untested.
 
 ## One-time setup
 
@@ -59,16 +61,9 @@ Repository → Settings → Secrets and variables → Actions.
 git tag v1.0.0 && git push origin v1.0.0
 ```
 
-3. The workflow builds the four jobs (macOS ~20 min with notarization), checks that every download and feed above is there, and publishes the release (a tag with `-`, like `v1.1.0-beta.1`, becomes a pre-release — the updater skips those).
+3. The workflow runs the tests, builds the Remote-SSH / Dev Containers server packages (linux x64 + arm64, each started once as a check), then the four app jobs (macOS ~20 min with notarization) with the packages' SHA-256 baked in, checks that every download, feed and server package is there, and publishes the release (a tag with `-`, like `v1.1.0-beta.1`, becomes a pre-release — the updater skips those).
 4. Check once on a second Mac and a Windows PC: download from the website, open — no Gatekeeper / SmartScreen warning — and sign in.
-5. **Remote-SSH / Dev Containers:** build the Linux server packages (Docker; x64 runs emulated on Apple silicon and takes a while) with the same `MINDECK_CLOUD_URL` / `MINDECK_CLOUD_KEY`, and attach them to the same release:
-
-```bash
-npm run remote:bundle
-gh release upload v<version> out/remote/mindeck-server-<version>-linux-x64.tar.gz out/remote/mindeck-server-<version>-linux-arm64.tar.gz
-```
-
-The app downloads the package for the remote machine's architecture from `releases/download/v<version>/` the first time it connects there (kept in `~/Mindeck/data/remote/`), and installs it in `~/.mindeck-server/<version>` on the remote side.
+5. **Remote-SSH / Dev Containers** need nothing by hand: the release carries `mindeck-server-<version>-linux-x64.tar.gz` and `…-linux-arm64.tar.gz`. The app downloads the package for the remote machine's architecture from `releases/download/v<version>/` the first time it connects there (kept in `~/Mindeck/data/remote/`), checks it against the SHA-256 it was built with (`MINDECK_REMOTE_SHA256_X64` / `_ARM64`) every time before it installs it in `~/.mindeck-server/<version>` on the remote side — a package that was replaced, on GitHub or on disk, is refused. That also means a package can't be rebuilt and re-uploaded to an existing release: release a new version. (`npm run remote:bundle` builds them locally for dev runs, which check nothing.)
 
 A manual run (Actions → Release → *Run workflow*) builds everything as workflow artifacts without publishing — to try a build before tagging.
 

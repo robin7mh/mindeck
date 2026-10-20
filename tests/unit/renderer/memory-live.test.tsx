@@ -155,6 +155,8 @@ describe('Live Preview decorations', () => {
     // On the cursor's line nothing is hidden.
     expect(show(stateOf(doc, 3))).toEqual(expect.arrayContaining(['line cm-md-h1 @1']))
     expect(show(stateOf(doc, 3)).filter((d) => d.startsWith('hide')).length).toBe(9)
+    expect(show(stateOf(doc, 13)).filter((d) => d.startsWith('hide'))).toEqual(['hide "# "', 'hide "##"', 'hide "> "']) // on the emphasis line
+    expect(show(stateOf(doc, 44)).filter((d) => d.startsWith('hide')).length).toBe(10) // on the quote: its mark shows
     expect(show(stateOf('Setext\n===\n\n#  x', 0))).toEqual(['line cm-md-h1 @1', 'line cm-md-h1 @4', 'hide "# "'])
   })
 
@@ -206,6 +208,7 @@ describe('Live Preview decorations', () => {
     const active = show(stateOf(doc, 10))
     expect(active).toContain('mark cm-md-link "[Mindeck](https://mindeck.app)" {"data-href":"https://mindeck.app"}')
     expect(active.some((d) => d.startsWith('widget Rule'))).toBe(true)
+    expect(show(stateOf(doc, 1)).some((d) => d.startsWith('widget Rule'))).toBe(false) // on the rule: its dashes show
     expect(show(stateOf('[a\nb](https://x.dev)\n\nz'))).toEqual(['mark cm-md-link "[a\nb](https://x.dev)" {"data-href":"https://x.dev"}'])
   })
 

@@ -17,4 +17,5 @@ export function registerProjectIpc(router: Router, service: ProjectService, remo
   router.register('projects:githubDesktop', () => service.githubDesktop())
   router.register('projects:openInGitHubDesktop', ({ id }) => service.openInGitHubDesktop(id))
   router.register('projects:openFile', ({ id, file, line }) => service.openFile(id, file, line))
+  router.register('projects:trust', ({ id, trusted }) => service.trust(id, trusted))
 }

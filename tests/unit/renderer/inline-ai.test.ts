@@ -180,7 +180,8 @@ describe('suggestions while typing', () => {
   it('the file around the cursor goes out; the answer comes back as ghost text at the cursor', async () => {
     const calls: unknown[] = []
     let answer: unknown = 'a, b)'
-    const b = installBridge({ 'ai:inlineComplete': (p: unknown) => (calls.push(p), typeof answer === 'function' ? (answer as Fn)() : answer), 'ai:inlineCancel': () => undefined })
+    // a cancel that fails is no error: the answer is ignored anyway
+    const b = installBridge({ 'ai:inlineComplete': (p: unknown) => (calls.push(p), typeof answer === 'function' ? (answer as Fn)() : answer), 'ai:inlineCancel': () => Promise.reject(new Error('gone')) })
     useAssistant.setState({ status: STATUS() })
     const model = new mon.Model('mul(a, \nrest')
     const got = await provide(model)
@@ -211,6 +212,24 @@ describe('suggestions while typing', () => {
     useAssistant.setState({ status: STATUS() })
     expect((await provide(new mon.Model('x', { scheme: 'inmemory', path: 'x' }))).items).toEqual([])
     expect(calls).toEqual([])
+  })
+
+  it('takes the status the assistant already has; a status that can\'t be read is no suggestions', async () => {
+    vi.resetModules()
+    const loaded = await import('@/features/editor/monaco/inlineAi')
+    const bridge = installBridge({ 'ai:status': () => STATUS() })
+    ;(await import('@/features/agents/store')).useAssistant.setState({ status: STATUS() })
+    loaded.setupInlineAi()
+    expect(loaded.suggesting()).toBe(true)
+    expect(bridge.invoke).not.toHaveBeenCalledWith('ai:status', undefined)
+
+    vi.resetModules()
+    const offline = await import('@/features/editor/monaco/inlineAi')
+    ;(await import('@/features/agents/store')).useAssistant.setState({ status: undefined })
+    installBridge({ 'ai:status': () => Promise.reject(new Error('offline')) })
+    offline.setupInlineAi()
+    await settle()
+    expect(offline.suggesting()).toBe(false)
   })
 })
 
@@ -364,6 +383,7 @@ describe('⌘K: edit with AI', () => {
     press('Enter')
     await settle()
     const requestId = (b.invoke.mock.calls.find(([c]) => c === 'ai:inlineEdit')![1] as { requestId: string }).requestId
+    b.invoke.mockImplementationOnce(() => Promise.reject(new Error('gone'))) // a cancel that fails changes nothing
     click('Stop')
     expect(b.invoke).toHaveBeenCalledWith('ai:inlineCancel', { requestId })
     finish('function f() {}')
@@ -393,7 +413,7 @@ describe('⌘K: edit with AI', () => {
     }
     press('Enter')
     await settle()
-    expect(note()).toBe('Failed: rate limited')
+    expect(note()).toBe('Failed: Too many requests — please try again in a moment.')
     expect(buttons()).toEqual([])
     // Reject while asking just closes.
     rejectInlineEdit(ed(e))

@@ -6,7 +6,7 @@ import { useT } from '@/lib/i18n'
 import { relativeTime } from '@/features/agents/format'
 import { useScm } from '../scm'
 
-const icon = 'flex h-6 w-6 shrink-0 items-center justify-center rounded text-text-muted transition-colors hover:bg-elevated hover:text-text-primary disabled:opacity-40'
+const icon = 'flex h-6 w-6 shrink-0 items-center justify-center rounded-sm text-text-muted transition-colors hover:bg-elevated hover:text-text-primary disabled:opacity-40'
 const button = 'flex items-center justify-center gap-1 rounded-md border border-hud/60 px-2 py-1 font-sans text-[11.5px] text-text-secondary transition-colors hover:border-cyan/50 hover:text-cyan disabled:opacity-40'
 
 /** "On main: message" → "message"; "WIP on main: abc subject" stays as it is. */
@@ -59,7 +59,7 @@ export function StashSection({ readOnly }: { readOnly: boolean }) {
               if (e.key === 'Enter') void stash()
               if (e.key === 'Escape') setNaming(false)
             }}
-            className="w-full rounded-md border border-hud/60 bg-surface/50 px-2 py-1 font-sans text-[12px] text-text-primary outline-none focus:border-cyan/50"
+            className="w-full rounded-md border border-hud/60 bg-surface/50 px-2 py-1 font-sans text-[12px] text-text-primary outline-hidden focus:border-cyan/50"
           />
           <div className="flex items-center gap-2">
             <label className="flex flex-1 items-center gap-1 font-sans text-[11px] text-text-muted">
@@ -78,7 +78,7 @@ export function StashSection({ readOnly }: { readOnly: boolean }) {
           const files = stashFiles[s.hash]
           return (
             <li key={s.hash}>
-              <div className="group flex items-center gap-1 rounded px-1.5 py-0.5 hover:bg-elevated/50">
+              <div className="group flex items-center gap-1 rounded-sm px-1.5 py-0.5 hover:bg-elevated/50">
                 <button type="button" aria-expanded={!!files} title={s.message} onClick={() => void scm.toggleStash(s.hash)} className="flex min-w-0 flex-1 items-center gap-1 text-left">
                   {files ? <ChevronDown size={12} className="shrink-0 text-text-muted" /> : <ChevronRight size={12} className="shrink-0 text-text-muted" />}
                   <span className="min-w-0 truncate font-sans text-[12px] text-text-primary">{shortMessage(s.message)}</span>
@@ -99,7 +99,7 @@ export function StashSection({ readOnly }: { readOnly: boolean }) {
                 )}
               </div>
               {dropping === s.hash && (
-                <div role="alertdialog" className="mx-1.5 my-1 space-y-1.5 rounded-md border border-danger/40 bg-danger/[0.06] p-2">
+                <div role="alertdialog" className="mx-1.5 my-1 space-y-1.5 rounded-md border border-danger/40 bg-danger/6 p-2">
                   <p className="font-sans text-[11.5px] text-text-primary">{t.stash.confirmDrop(shortMessage(s.message))}</p>
                   <div className="flex gap-1.5">
                     <button
@@ -128,7 +128,7 @@ export function StashSection({ readOnly }: { readOnly: boolean }) {
                           type="button"
                           title={f.from ? `${f.from} → ${f.path}` : f.path}
                           onClick={() => void scm.openDiff(f, { kind: 'stash', hash: s.hash, from: f.from, untracked: f.change === 'untracked' }, `${name} (${t.stash.title}: ${shortMessage(s.message)})`)}
-                          className="flex w-full items-center gap-1.5 rounded px-1.5 py-0.5 text-left hover:bg-elevated/50"
+                          className="flex w-full items-center gap-1.5 rounded-sm px-1.5 py-0.5 text-left hover:bg-elevated/50"
                         >
                           <span className="min-w-0 flex-1 truncate font-sans text-[12px] text-text-primary">{name}</span>
                           <span className="min-w-0 truncate font-mono text-[10px] text-text-muted">{f.path.slice(0, f.path.length - name.length)}</span>

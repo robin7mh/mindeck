@@ -359,6 +359,7 @@ export default function CodeEditor({ tab, readOnly, onCursor, group }: Props) {
     if (view) editor.restoreViewState(view)
     // Only the focused group's editor takes the keyboard (a restored layout switches them all).
     if (switched && useEditor.getState().activeGroup === group) editor.focus()
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- a new tab, revision or text arriving; not every keystroke (the buffer has it)
   }, [views, tab?.id, tab?.revision, text === undefined])
 
   // A search result or a symbol asked for a line: scroll there once its tab is on screen (in its group).
@@ -372,13 +373,14 @@ export default function CodeEditor({ tab, readOnly, onCursor, group }: Props) {
     else editor.setSelection(new monaco.Range(reveal.line, match.column + 1, reveal.line, match.column + 1 + match.length))
     editor.focus()
     useEditor.setState({ reveal: undefined })
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once the asked-for tab is on screen; group is fixed per editor
   }, [reveal, tab?.id, text === undefined])
 
   return (
     <>
       <div ref={hostRef} className="absolute inset-0" />
       {/* Vim's mode, pending keys and `:` command line. */}
-      <div ref={vimRef} aria-label="Vim" className="absolute bottom-1 left-14 z-10 rounded bg-elevated/90 px-2 py-0.5 font-mono text-[11px] text-text-secondary [&_input]:bg-transparent [&_input]:text-text-primary [&_input]:outline-none" />
+      <div ref={vimRef} aria-label="Vim" className="absolute bottom-1 left-14 z-10 rounded-sm bg-elevated/90 px-2 py-0.5 font-mono text-[11px] text-text-secondary [&_input]:bg-transparent [&_input]:text-text-primary [&_input]:outline-hidden" />
     </>
   )
 }

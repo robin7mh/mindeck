@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { tempDir } from './helpers'
@@ -114,6 +114,38 @@ describe('ScmService', () => {
     } finally {
       process.env.PATH = path
     }
+  })
+
+  it('a project that isn’t trusted: the status poll, history and blame run nothing the repository’s config names', { timeout: 30_000 }, async () => {
+    // The attack (BE-SEC-01): a ZIP with .git/config — the editor's status poll alone ran it.
+    const dir = await repo()
+    await writeFile(join(dir, 'fsmonitor.sh'), '#!/bin/sh\ntouch PWNED-fsmonitor\n')
+    execFileSync('chmod', ['+x', join(dir, 'fsmonitor.sh')])
+    sh(dir, 'config', 'core.fsmonitor', './fsmonitor.sh')
+    sh(dir, 'config', 'filter.evil.clean', 'touch PWNED-filter; cat')
+    sh(dir, 'config', 'log.showSignature', 'true')
+    sh(dir, 'config', 'gpg.program', './fsmonitor.sh')
+    await writeFile(join(dir, '.gitattributes'), '* filter=evil\n')
+    await writeFile(join(dir, 'a.txt'), 'changed\n')
+    const pwned = async () => (await readdir(dir)).filter((f) => f.startsWith('PWNED'))
+    let trusted = false
+    const s = new ScmService(() => dir, undefined, () => trusted)
+    expect((await s.status('p')).files.map((f) => f.path)).toContain('a.txt')
+    await s.log('p')
+    await s.blame('p', 'a.txt', 'changed\n')
+    await s.files('p')
+    expect(await pwned()).toEqual([])
+    // The default is restricted, too.
+    await service(dir).status('p')
+    expect(await pwned()).toEqual([])
+    // Trusted: the user's own git, the repository's config included.
+    trusted = true
+    await s.status('p')
+    expect(await pwned()).toContain('PWNED-fsmonitor')
+    // A config that can't be made safe: git stays off, said so.
+    sh(dir, 'config', 'core.gitProxy', 'evil')
+    trusted = false
+    await expect(s.status('p')).rejects.toMatchObject({ code: 'git-untrusted' })
   })
 
   it('stages, unstages (also before the first commit), discards and commits', async () => {
@@ -332,6 +364,8 @@ describe('ScmService', () => {
     await expect(s.blame('p', '../x')).rejects.toMatchObject({ code: 'outside-project' })
     await writeFile(join(dir, 'new.txt'), 'n\n')
     await expect(s.blame('p', 'new.txt')).rejects.toMatchObject({ code: 'git' })
+    // git stops before reading a big buffer: its error, not a broken pipe
+    await expect(s.blame('p', 'new.txt', 'line\n'.repeat(200_000))).rejects.toMatchObject({ code: 'git' })
   })
 
   it('commit details and diffs: working tree, index, commit (also a rename)', async () => {

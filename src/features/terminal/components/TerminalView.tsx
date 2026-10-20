@@ -72,7 +72,7 @@ export function TerminalView({ onNavigate }: { onNavigate?: (module: ModuleId) =
                   type="button"
                   title={tr.browser.devServer(d.label)}
                   onClick={() => void useBrowser.getState().show(d.url)}
-                  className="flex shrink-0 items-center gap-1 rounded-md border border-cyan/40 bg-cyan/[0.06] px-1.5 py-0.5 font-mono text-[10.5px] text-cyan transition-colors hover:bg-cyan/[0.12]"
+                  className="flex shrink-0 items-center gap-1 rounded-md border border-cyan/40 bg-cyan/6 px-1.5 py-0.5 font-mono text-[10.5px] text-cyan transition-colors hover:bg-cyan/12"
                 >
                   <Globe size={11} /> {d.label}
                 </button>
@@ -93,7 +93,7 @@ export function TerminalView({ onNavigate }: { onNavigate?: (module: ModuleId) =
               key={t.id}
               className={cn(
                 'group flex shrink-0 items-center gap-1 rounded-md border pl-2 pr-1 transition-colors',
-                t.id === activeId ? 'border-cyan/40 bg-cyan/[0.06] text-text-primary' : 'border-hud/50 text-text-secondary hover:bg-elevated/50'
+                t.id === activeId ? 'border-cyan/40 bg-cyan/6 text-text-primary' : 'border-hud/50 text-text-secondary hover:bg-elevated/50'
               )}
             >
               <button type="button" onClick={() => setActive(t.id)} className="flex items-center gap-1.5 py-1">
@@ -105,7 +105,7 @@ export function TerminalView({ onNavigate }: { onNavigate?: (module: ModuleId) =
                 aria-label={tr.terminal.close(labels.get(t.id)!)}
                 onClick={() => void close(t.id)}
                 className={cn(
-                  'rounded p-0.5 text-text-muted transition-opacity hover:bg-elevated hover:text-text-primary',
+                  'rounded-sm p-0.5 text-text-muted transition-opacity hover:bg-elevated hover:text-text-primary',
                   t.id === activeId ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
                 )}
               >
@@ -126,7 +126,7 @@ export function TerminalView({ onNavigate }: { onNavigate?: (module: ModuleId) =
               aria-pressed={layout === l.id}
               onClick={() => setLayout(l.id)}
               className={cn(
-                'flex h-6 w-7 items-center justify-center rounded transition-colors',
+                'flex h-6 w-7 items-center justify-center rounded-sm transition-colors',
                 layout === l.id ? 'bg-cyan/10 text-cyan' : 'text-text-muted hover:text-text-secondary'
               )}
             >
@@ -137,7 +137,7 @@ export function TerminalView({ onNavigate }: { onNavigate?: (module: ModuleId) =
       </div>
 
       {error && (
-        <div className="flex items-start gap-2 border-b border-danger/30 bg-danger/[0.06] px-3 py-2">
+        <div className="flex items-start gap-2 border-b border-danger/30 bg-danger/6 px-3 py-2">
           <AlertTriangle size={13} className="mt-0.5 shrink-0 text-danger" />
           <span className="font-mono text-[11px] text-text-secondary">{error}</span>
         </div>
@@ -145,7 +145,7 @@ export function TerminalView({ onNavigate }: { onNavigate?: (module: ModuleId) =
 
       {/* Row height = one screen / rows per screen (container query units of
           the scroll area itself), so the layout fills the screen exactly. */}
-      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto [container-type:size]">
+      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto @container-size">
         {split || tabs.length > 0 ? (
           <div
             className={cn('grid', framed && 'p-1')}
@@ -167,7 +167,7 @@ export function TerminalView({ onNavigate }: { onNavigate?: (module: ModuleId) =
             <button
               type="button"
               onClick={() => void open()}
-              className="rounded-md border border-cyan/40 bg-cyan/[0.06] px-3 py-1.5 font-sans text-[12px] font-medium text-cyan transition-colors hover:bg-cyan/[0.12]"
+              className="rounded-md border border-cyan/40 bg-cyan/6 px-3 py-1.5 font-sans text-[12px] font-medium text-cyan transition-colors hover:bg-cyan/12"
             >
               {tr.terminal.open}
             </button>

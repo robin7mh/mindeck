@@ -110,7 +110,7 @@ function TitleInput({ title, onRename }: { title: string; onRename: (title: stri
       title={t.agents.rename}
       spellCheck={false}
       style={{ width: `${Math.max(value.length, 4) + 2}ch` }}
-      className="-mx-1 min-w-0 max-w-[40%] truncate rounded bg-transparent px-1 font-sans text-[13px] font-semibold text-text-primary outline-none transition-colors hover:bg-elevated/50 focus:bg-elevated/70 focus:ring-1 focus:ring-cyan/40"
+      className="-mx-1 min-w-0 max-w-[40%] truncate rounded-sm bg-transparent px-1 font-sans text-[13px] font-semibold text-text-primary outline-hidden transition-colors hover:bg-elevated/50 focus:bg-elevated/70 focus:ring-1 focus:ring-cyan/40"
     />
   )
 }
@@ -219,7 +219,7 @@ export function SessionPane({ session, messages }: { session: AgentSession; mess
         </p>
       )}
       {(session.error || error) && (
-        <div className="flex items-start gap-2 border-b border-danger/30 bg-danger/[0.06] px-3 py-2">
+        <div className="flex items-start gap-2 border-b border-danger/30 bg-danger/6 px-3 py-2">
           <AlertTriangle size={13} className="mt-0.5 shrink-0 text-danger" />
           <span className="min-w-0 flex-1 font-mono text-[11px] text-text-secondary">{error ?? session.error}</span>
           {error && (

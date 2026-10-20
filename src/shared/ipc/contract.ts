@@ -157,6 +157,8 @@ export interface IpcChannels {
   'projects:githubDesktop': { request: void; response: string | null }
   'projects:openInGitHubDesktop': { request: { id: string }; response: void }
   'projects:openFile': { request: { id: string; file: string; line?: number }; response: void }
+  /** Trust a project (its own tools may run, see Project.trusted) — or restrict it again. */
+  'projects:trust': { request: { id: string; trusted: boolean }; response: Project }
 
   'system:subscribe': { request: void; response: void }
   'system:unsubscribe': { request: void; response: void }
@@ -444,7 +446,10 @@ export interface IpcChannels {
   'cloud:checkout': { request: void; response: { url: string } }
   /** Settings Sync through the account (Profile): status, save to the account (force: over a newer copy), load from it. */
   /** A follower core (Remote-SSH, Dev Container) takes the desktop's entitlement over. */
-  'cloud:adopt': { request: { token: string; account: CloudAccount }; response: CloudStatus }
+  /** `revokedKids`: the signing key ids the desktop knows to be revoked (the follower never asks the cloud). */
+  'cloud:adopt': { request: { token: string; account: CloudAccount; revokedKids?: string[] }; response: CloudStatus }
+  /** A follower core's install id: the desktop asks Mindeck Cloud for a lease bound to it (BE-SEC-09). */
+  'cloud:installId': { request: void; response: { installId: string } }
   'cloud:syncStatus': { request: void; response: SyncStatus }
   'cloud:syncPush': { request: SyncUi & { force?: boolean }; response: SyncStatus }
   'cloud:syncPull': { request: void; response: SyncUi }
@@ -604,12 +609,14 @@ export type IpcChannel = keyof IpcChannels
  * - `terminal` — desktop, or remote clients when remote shells are enabled
  *                (shells, and writing project files — both can run code)
  * - `admin`    — desktop, or paired devices with the admin role: other
- *                devices, the AI key, the Mindeck account
+ *                devices, the AI key, the Mindeck account, global settings
+ * - `trusted`  — desktop, admin devices, or any device while remote shells
+ *                are enabled: data beyond the shared folders (databases)
  *
  * Paired devices also only reach shared folders, and approve changes and
  * commands only with remote shells (see RemoteAccess and PermissionService).
  */
-export type ChannelAccess = 'any' | 'desktop' | 'terminal' | 'admin'
+export type ChannelAccess = 'any' | 'desktop' | 'terminal' | 'admin' | 'trusted'
 
 /** Every channel classified exactly once — a new channel without one is a type error. */
 export const CHANNEL_ACCESS: Record<IpcChannel, ChannelAccess> = {
@@ -623,6 +630,8 @@ export const CHANNEL_ACCESS: Record<IpcChannel, ChannelAccess> = {
   'projects:githubDesktop': 'desktop',
   'projects:openInGitHubDesktop': 'desktop',
   'projects:openFile': 'desktop',
+  // Trusting lets the project's own code run (tsserver, ESLint, git config): never a member device.
+  'projects:trust': 'admin',
   'system:subscribe': 'any',
   'system:unsubscribe': 'any',
   'system:snapshot': 'any',
@@ -650,11 +659,12 @@ export const CHANNEL_ACCESS: Record<IpcChannel, ChannelAccess> = {
   'memory:link': 'any',
   'memory:unlink': 'any',
   'memory:daily': 'any',
-  'memory:setDailyNotes': 'any',
+  // Settings of the desktop user's vault (and the vault itself, below): an admin's to change.
+  'memory:setDailyNotes': 'admin',
   'memory:renderTemplate': 'any',
   'memory:attach': 'any',
   'memory:attachment': 'any',
-  'memory:setVault': 'any',
+  'memory:setVault': 'admin',
   'terminal:create': 'terminal',
   'terminal:list': 'terminal',
   'terminal:attach': 'terminal',
@@ -771,12 +781,12 @@ export const CHANNEL_ACCESS: Record<IpcChannel, ChannelAccess> = {
   'github:merge': 'terminal',
   'github:comment': 'terminal',
   'github:review': 'terminal',
-  // Reading a database is like reading files; changing it (and saving connections) needs remote shells.
-  'mongo:connections': 'any',
-  'mongo:databases': 'any',
-  'mongo:collections': 'any',
-  'mongo:find': 'any',
-  'mongo:indexes': 'any',
+  // Databases are not in the shared folders: reading them is for admins (or with remote shells); changing them needs remote shells.
+  'mongo:connections': 'trusted',
+  'mongo:databases': 'trusted',
+  'mongo:collections': 'trusted',
+  'mongo:find': 'trusted',
+  'mongo:indexes': 'trusted',
   'mongo:add': 'terminal',
   'mongo:remove': 'terminal',
   'mongo:createCollection': 'terminal',
@@ -804,7 +814,8 @@ export const CHANNEL_ACCESS: Record<IpcChannel, ChannelAccess> = {
   'ai:status': 'any',
   'ai:setKey': 'admin',
   'ai:clearKey': 'admin',
-  'ai:configure': 'any',
+  // Model, cloud model and effort hold for everyone (and cost the user): an admin's to change.
+  'ai:configure': 'admin',
   'ai:agents': 'any',
   'ai:tools': 'any',
   'ai:conversations': 'any',
@@ -813,8 +824,9 @@ export const CHANNEL_ACCESS: Record<IpcChannel, ChannelAccess> = {
   'ai:cancel': 'any',
   'ai:deleteConversation': 'any',
   'ai:runs': 'any',
-  'ai:inlineComplete': 'any',
-  'ai:inlineEdit': 'any',
+  // Inline AI is for editing files (a shell's power remotely) — and spends the user's AI credit.
+  'ai:inlineComplete': 'terminal',
+  'ai:inlineEdit': 'terminal',
   'ai:inlineCancel': 'any',
   'permission:pending': 'any',
   'permission:respond': 'any',
@@ -829,7 +841,8 @@ export const CHANNEL_ACCESS: Record<IpcChannel, ChannelAccess> = {
   'agents:send': 'terminal',
   'agents:configure': 'terminal',
   'agents:pushSettings': 'any',
-  'agents:setPushSettings': 'any',
+  // The owner's pushes: an admin's to switch off.
+  'agents:setPushSettings': 'admin',
   'agents:interrupt': 'terminal',
   'agents:stop': 'terminal',
   'agents:resume': 'terminal',
@@ -849,12 +862,15 @@ export const CHANNEL_ACCESS: Record<IpcChannel, ChannelAccess> = {
   'cloud:logout': 'admin',
   'cloud:refresh': 'any',
   'cloud:resendVerification': 'any',
-  'cloud:forgotPassword': 'any',
+  // A reset mail to any address: not something every device may send.
+  'cloud:forgotPassword': 'admin',
   'cloud:checkout': 'any',
   'cloud:adopt': 'admin',
+  'cloud:installId': 'admin',
   'cloud:syncStatus': 'any',
-  'cloud:syncPush': 'any',
-  'cloud:syncPull': 'any',
+  // Overwriting the account's settings copy (or this core's settings from it): admins only.
+  'cloud:syncPush': 'admin',
+  'cloud:syncPull': 'admin',
   // The desktop app updates itself; nothing a remote client should trigger.
   'update:status': 'desktop',
   'update:check': 'desktop',

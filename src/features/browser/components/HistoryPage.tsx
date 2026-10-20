@@ -21,7 +21,7 @@ function ClearMenu({ onPick, onClose }: { onPick(range: 'hour' | 'day' | 'week' 
   const t = useT()
   useOverlay(true)
   return (
-    <div className="fixed inset-0 z-[60]" onMouseDown={onClose}>
+    <div className="fixed inset-0 z-60" onMouseDown={onClose}>
       <div role="menu" aria-label={t.library.clear} className="absolute right-6 top-24 w-52 rounded-lg border border-hud/70 bg-panel/95 p-1 shadow-xl shadow-black/40" onMouseDown={(e) => e.stopPropagation()}>
         {(['hour', 'day', 'week', 'all'] as const).map((r) => (
           <button key={r} type="button" role="menuitem" onClick={() => onPick(r)} className="block w-full rounded-md px-2.5 py-1.5 text-left font-sans text-[12.5px] text-text-primary hover:bg-danger/10 hover:text-danger">
@@ -57,6 +57,7 @@ export function HistoryPage() {
   }
   useEffect(() => {
     void load()
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- a new search, from the top; load itself reads the query
   }, [query])
 
   const forget = async (what: { urls?: string[]; from?: number; to?: number }) => {
@@ -97,7 +98,7 @@ export function HistoryPage() {
             placeholder={t.library.historySearch}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            className="min-w-0 flex-1 bg-transparent font-sans text-[13px] text-text-primary outline-none placeholder:text-text-muted"
+            className="min-w-0 flex-1 bg-transparent font-sans text-[13px] text-text-primary outline-hidden placeholder:text-text-muted"
           />
         </label>
 
@@ -117,7 +118,7 @@ export function HistoryPage() {
                 <li key={e.url} className="group flex items-center gap-3 border-b border-hud/30 px-3 py-1.5 last:border-b-0 hover:bg-elevated/40">
                   <span className="w-12 shrink-0 font-mono text-[11px] text-text-muted">{time(e.lastVisit)}</span>
                   <button type="button" title={e.url} onClick={(ev) => openBookmark(e.url, ev)} onAuxClick={(ev) => ev.button === 1 && openBookmark(e.url, ev)} className="flex min-w-0 flex-1 items-center gap-2.5 text-left">
-                    <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded border border-hud/60 bg-elevated/60 font-sans text-[10px] font-semibold text-cyan">{initial(e.url, e.title)}</span>
+                    <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-sm border border-hud/60 bg-elevated/60 font-sans text-[10px] font-semibold text-cyan">{initial(e.url, e.title)}</span>
                     <span className="min-w-0 truncate font-sans text-[12.5px] text-text-primary">{e.title || displayUrl(e.url)}</span>
                     <span className="shrink-0 truncate font-mono text-[11px] text-text-muted">{hostOf(e.url)}</span>
                   </button>
@@ -125,7 +126,7 @@ export function HistoryPage() {
                     type="button"
                     aria-label={t.library.removeEntry(e.title || displayUrl(e.url))}
                     onClick={() => void forget({ urls: [e.url] })}
-                    className="shrink-0 rounded p-1 text-text-muted opacity-0 transition-opacity hover:bg-elevated hover:text-danger focus:opacity-100 group-hover:opacity-100"
+                    className="shrink-0 rounded-sm p-1 text-text-muted opacity-0 transition-opacity hover:bg-elevated hover:text-danger focus:opacity-100 group-hover:opacity-100"
                   >
                     <X size={12} />
                   </button>

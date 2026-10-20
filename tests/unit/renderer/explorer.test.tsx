@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { fail, installBridge, settle } from './bridge'
-import { FileTree } from '@/features/editor/components/FileTree'
+import { FileTree, flattenTree } from '@/features/editor/components/FileTree'
 import { oneGroup, setBufferHost, tabKey, useEditor, type BufferHost, type EditorTab } from '@/features/editor/store'
 import { useLive } from '@/features/editor/live'
 
@@ -407,4 +407,162 @@ describe('explorer view', () => {
     expect(start).toHaveBeenCalledWith('index.html')
   })
 
+})
+
+describe('explorer: a windowed tree', () => {
+  const many = (n: number) => Array.from({ length: n }, (_, i) => entry(`f${String(i).padStart(5, '0')}.ts`))
+  /** The scroll area as the browser lays it out: `height` px tall, scrolled to `top`. */
+  const layout = (height: number, top = 0) => {
+    const tree = screen.getByRole('tree')
+    Object.defineProperty(tree, 'clientHeight', { value: height, configurable: true })
+    tree.scrollTop = top
+    fireEvent.scroll(tree)
+    return tree
+  }
+  const names = () => screen.getAllByRole('treeitem').map((i) => i.textContent)
+  const gaps = () => [...screen.getByRole('tree').querySelectorAll<HTMLElement>('[aria-hidden]')].map((g) => g.style.height)
+
+  it('flattens open folders into rows: a new name leads its folder, a folder being renamed hides its listing', () => {
+    const tree = { 'p:': [entry('src', 'dir'), entry('README.md')], 'p:src': [entry('src/a.ts')] }
+    const rows = flattenTree('p', tree, { 'p:src': true }, { mode: 'file', dir: 'src' })
+    expect(rows.map((r) => (r.type === 'create' ? `+${r.dir}@${r.depth}` : `${r.entry.path}@${r.depth} ${r.pos}/${r.size}`))).toEqual([
+      'src@0 1/2',
+      '+src@1',
+      'src/a.ts@1 1/1',
+      'README.md@0 2/2'
+    ])
+    expect(flattenTree('p', tree, { 'p:src': true }, { mode: 'rename', dir: '', path: 'src' }).map((r) => r.type === 'entry' && [r.entry.path, r.renaming])).toEqual([
+      ['src', true],
+      ['README.md', false]
+    ])
+    // Open, but not listed yet: nothing below it.
+    expect(flattenTree('p', { 'p:': tree['p:'] }, { 'p:src': true })).toHaveLength(2)
+  })
+
+  it('10 000 entries render only the rows in view — each still says where it sits', () => {
+    useEditor.setState({ tree: { 'p:': many(10_000) } })
+    render(<FileTree projectId="p" />)
+    const first = screen.getAllByRole('treeitem')
+    expect(first.length).toBeGreaterThan(30)
+    expect(first.length).toBeLessThan(60) // no layout yet: a typical window
+    expect(first[0]).toHaveAttribute('aria-level', '1')
+    expect(first[0]).toHaveAttribute('aria-setsize', '10000')
+    expect(first[0]).toHaveAttribute('aria-posinset', '1')
+    expect(first[0]).toHaveAttribute('tabindex', '0') // nothing selected: the first row is the tree's Tab stop
+    expect(first[1]).toHaveAttribute('tabindex', '-1')
+
+    layout(240, 5000 * 24) // ten rows tall, scrolled half-way
+    const items = screen.getAllByRole('treeitem')
+    expect(items.length).toBeLessThan(40)
+    expect(names()).toContain('f05000.ts')
+    expect(names()).toContain('f04992.ts') // a few above and below, for smooth scrolling
+    expect(names()).not.toContain('f04991.ts')
+    expect(names()[0]).toBe('f00000.ts') // the Tab stop stays
+    expect(screen.getByRole('treeitem', { name: 'f05000.ts' })).toHaveAttribute('aria-posinset', '5001')
+    // Spacers stand in for the rows between: the list keeps its full height.
+    expect(gaps()).toEqual([`${4991 * 24}px`, `${(10_000 - 5018) * 24}px`])
+  })
+
+  it('the selection and a name being typed stay mounted when scrolled away', async () => {
+    routes()
+    useEditor.setState({ tree: { 'p:': many(10_000) } })
+    render(<FileTree projectId="p" />)
+    fireEvent.click(screen.getByRole('treeitem', { name: 'f00003.ts' }))
+    const selected = screen.getByRole('treeitem', { name: 'f00003.ts' })
+    selected.focus()
+    expect(selected).toHaveAttribute('tabindex', '0')
+    expect(screen.getByRole('treeitem', { name: 'f00000.ts' })).toHaveAttribute('tabindex', '-1')
+    layout(240, 5000 * 24)
+    expect(screen.getByRole('treeitem', { name: 'f00003.ts' })).toBe(selected)
+    expect(selected).toHaveFocus()
+    expect(screen.queryByRole('treeitem', { name: 'f00000.ts' })).toBeNull()
+    expect(gaps()[0]).toBe(`${3 * 24}px`)
+
+    fireEvent.keyDown(screen.getByRole('tree'), { key: 'F2' })
+    await act(settle)
+    const input = screen.getByRole('textbox', { name: 'Name' }) as HTMLInputElement
+    expect(screen.getByRole('tree').scrollTop).toBe(3 * 24) // brought into view
+    fireEvent.change(input, { target: { value: 'half' } })
+    layout(240, 9000 * 24)
+    expect(screen.getByRole('textbox', { name: 'Name' })).toBe(input)
+    expect(input.value).toBe('half')
+  })
+
+  it('keys: ↑/↓, Home/End move; → opens and steps in, ← folds and steps out; Enter opens — the focus follows, the view scrolls', async () => {
+    const bridge = routes()
+    useEditor.setState({ tree: { 'p:': [entry('src', 'dir'), entry('README.md')], 'p:src': [entry('src/a.ts')] }, expanded: { 'p:src': true } })
+    render(<FileTree projectId="p" readOnly />)
+    const tree = layout(48) // two rows tall
+    const press = (key: string) => {
+      const ev = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true })
+      act(() => void (document.activeElement && tree.contains(document.activeElement) ? document.activeElement : tree).dispatchEvent(ev))
+      return ev.defaultPrevented
+    }
+    const at = () => e().selection?.path
+    expect(screen.getByRole('treeitem', { name: 'a.ts' })).toHaveAttribute('aria-level', '2')
+    expect(screen.getByRole('treeitem', { name: 'README.md' })).toHaveAttribute('aria-posinset', '2')
+
+    expect(press('ArrowDown')).toBe(true) // nothing selected: the first row
+    expect(at()).toBe('src')
+    expect(screen.getByRole('treeitem', { name: 'src' })).toHaveFocus()
+    press('ArrowDown')
+    expect(at()).toBe('src/a.ts')
+    expect(screen.getByRole('treeitem', { name: 'a.ts' })).toHaveFocus()
+    press('End')
+    expect(at()).toBe('README.md')
+    expect(tree.scrollTop).toBe(24) // the third row brought into view
+    expect(press('ArrowDown')).toBe(true) // the last row: stays
+    expect(at()).toBe('README.md')
+    press('ArrowLeft') // a top-level row: no parent to step out to
+    expect(at()).toBe('README.md')
+    press('ArrowUp')
+    expect(at()).toBe('src/a.ts')
+    expect(press('ArrowRight')).toBe(false) // a file: nothing to open
+    press('ArrowLeft') // steps out to its folder
+    expect(at()).toBe('src')
+    expect(screen.getByRole('treeitem', { name: 'src' })).toHaveFocus()
+    press('ArrowUp') // the first row: stays
+    press('ArrowLeft') // folds
+    expect(e().expanded).toEqual({})
+    expect(screen.queryByRole('treeitem', { name: 'a.ts' })).toBeNull()
+    press('ArrowRight') // opens (and lists)
+    await act(settle)
+    expect(bridge.invoke).toHaveBeenCalledWith('files:list', { projectId: 'p', dir: 'src' })
+    expect(e().expanded).toEqual({ 'p:src': true })
+    expect(at()).toBe('src')
+    press('ArrowRight') // open: steps in
+    expect(at()).toBe('src/a.ts')
+    press('Home')
+    expect(at()).toBe('src')
+    press('Enter') // a folder: folds
+    expect(e().expanded).toEqual({})
+    press('End')
+    press('Enter') // a file: opens
+    await act(settle)
+    expect(e().activeId).toBe('p:README.md')
+    expect(press('F2')).toBe(false) // read-only: no renaming
+    expect(press('x')).toBe(false)
+
+    act(() => useEditor.setState({ selection: undefined }))
+    tree.focus()
+    press('ArrowUp') // nothing selected: the first row
+    expect(at()).toBe('src')
+  })
+
+  it('keys pass over the field naming a new entry', () => {
+    useEditor.setState({ tree: { 'p:': [entry('a.ts'), entry('b.ts')] }, naming: { mode: 'file', dir: '' } })
+    render(<FileTree projectId="p" />)
+    fireEvent.keyDown(screen.getByRole('tree'), { key: 'Home' })
+    expect(e().selection?.path).toBe('a.ts')
+    fireEvent.keyDown(screen.getByRole('tree'), { key: 'ArrowUp' })
+    expect(e().selection?.path).toBe('a.ts')
+  })
+
+  it('→ on an open, empty folder at the end stays put', () => {
+    useEditor.setState({ tree: { 'p:': [entry('empty', 'dir')], 'p:empty': [] }, expanded: { 'p:empty': true }, selection: { path: 'empty', kind: 'dir' } })
+    render(<FileTree projectId="p" />)
+    fireEvent.keyDown(screen.getByRole('tree'), { key: 'ArrowRight' })
+    expect(e().selection?.path).toBe('empty')
+    expect(e().expanded).toEqual({ 'p:empty': true })
+  })
 })

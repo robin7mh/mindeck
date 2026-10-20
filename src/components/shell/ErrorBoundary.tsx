@@ -69,7 +69,7 @@ function CrashPanel({ title, intro, action, onAction, details }: { title: string
         </div>
         <details className="rounded-md border border-hud/60 bg-surface/40">
           <summary className="cursor-pointer px-2.5 py-1.5 font-mono text-[11px] text-text-muted">{t.stability.details}</summary>
-          <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words px-2.5 pb-2 font-mono text-[10.5px] text-text-secondary">{details}</pre>
+          <pre className="max-h-64 overflow-auto whitespace-pre-wrap wrap-break-word px-2.5 pb-2 font-mono text-[10.5px] text-text-secondary">{details}</pre>
         </details>
       </div>
     </Panel>

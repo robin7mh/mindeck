@@ -63,7 +63,7 @@ function Place({ icon: Icon, label, path, tone, onRemove }: { icon: LucideIcon; 
       {...dropProps(path, setOver)}
       className={cn(
         'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left font-sans text-[12.5px] transition-colors',
-        active ? 'bg-cyan/[0.08] text-text-primary' : 'text-text-secondary hover:bg-elevated/50 hover:text-text-primary',
+        active ? 'bg-cyan/8 text-text-primary' : 'text-text-secondary hover:bg-elevated/50 hover:text-text-primary',
         over && 'bg-cyan/15 ring-1 ring-cyan/50'
       )}
     >
@@ -81,7 +81,7 @@ function Place({ icon: Icon, label, path, tone, onRemove }: { icon: LucideIcon; 
         aria-label={t.files.removeFromSidebar}
         title={t.files.removeFromSidebar}
         onClick={onRemove}
-        className="absolute right-1 top-1/2 -translate-y-1/2 rounded p-0.5 text-text-muted opacity-0 transition-opacity hover:text-text-primary group-hover:opacity-100"
+        className="absolute right-1 top-1/2 -translate-y-1/2 rounded-sm p-0.5 text-text-muted opacity-0 transition-opacity hover:text-text-primary group-hover:opacity-100"
       >
         <X size={11} />
       </button>

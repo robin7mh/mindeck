@@ -84,7 +84,8 @@ export function createMcpHandler(registry: ToolRegistry, version: string, names:
           return ok({ content: [{ type: 'text', text: 'The user denied this in Mindeck.' }], isError: true })
         }
         try {
-          const toolCtx = { projectId: ctx.projectId, signal: new AbortController().signal, agent: ctx.agent }
+          // An agent works in its session's project: the tools never reach another one (BE-SEC-28).
+          const toolCtx = { projectId: ctx.projectId, onlyProject: true, signal: new AbortController().signal, agent: ctx.agent }
           const content = tool.runContent ? await tool.runContent(parsed.data, toolCtx) : [{ type: 'text', text: await tool.run(parsed.data, toolCtx) }]
           ctx.onCall?.(name, input)
           return ok({ content })

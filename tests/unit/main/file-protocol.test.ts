@@ -71,4 +71,15 @@ describe('mindeck-file:// — local files for previews', () => {
     expect(pathOf(new URL('mindeck-file://local/Users/me/a.png'), 'darwin')).toBe('/Users/me/a.png')
     expect(pathOf(new URL('mindeck-file://local/Users/me/a.png'))).toBe('/Users/me/a.png')
   })
+
+  it('never a network or device path on Windows — looking there would send the user’s credentials (BE-SEC-23)', async () => {
+    for (const u of ['mindeck-file://local//attacker/share/a.png', 'mindeck-file://local/%5C%5Cattacker%5Cshare%5Ca.png', 'mindeck-file://local/%5Cattacker/a.png', 'mindeck-file://local/%5C%5C%3F%5CC%3A%5Ca.png', 'mindeck-file://thumb//attacker/share/a.pdf']) {
+      expect(pathOf(new URL(u), 'win32'), u).toBeNull()
+    }
+    const thumbnail = vi.fn(async () => Buffer.from('png'))
+    expect((await serveFile(new Request('mindeck-file://thumb//attacker/share/a.pdf'), { platform: 'win32', thumbnail })).status).toBe(400)
+    expect(thumbnail).not.toHaveBeenCalled()
+    // Elsewhere `//x` is just `/x`.
+    expect(pathOf(new URL('mindeck-file://local//srv/a.png'), 'linux')).toBe('//srv/a.png')
+  })
 })

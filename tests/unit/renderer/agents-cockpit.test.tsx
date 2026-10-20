@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { fail, installBridge, settle, choose } from './bridge'
+import { fail, installBridge, installRemote, settle, choose } from './bridge'
 import type { AgentAvailability, AgentSession } from '@shared/types/agents'
 import { CLAUDE_MODELS, CLAUDE_MODES } from '@shared/types/claude'
 import type { ChatMessage, PermissionRequest } from '@shared/types/ai'
@@ -120,6 +120,39 @@ describe('useAgents store', () => {
     off1()
     off2()
     expect(bridge.listenerCount('agents:changed')).toBe(0)
+  })
+
+  it('after an outage of the push channel: statuses and the open session reload', async () => {
+    let status: AgentSession['status'] = 'working'
+    let messages = [msg('m1', 'user', 'hi')]
+    const remote = installRemote({ 'agents:list': () => [session({ status })], 'agents:get': () => ({ ...session({ status }), messages }) })
+    const off = ag().connect()
+    await act(settle)
+    // No session open: only the list.
+    status = 'idle'
+    await act(async () => {
+      remote.resync()
+      await settle()
+    })
+    expect(ag().sessions[0].status).toBe('idle')
+    expect(remote.invoke.mock.calls.some((c) => c[0] === 'agents:get')).toBe(false)
+    await ag().open('s1')
+    // The gap swallowed the agent's answer and its status change.
+    status = 'waiting'
+    messages = [msg('m1', 'user', 'hi'), msg('m2', 'assistant', 'done')]
+    await act(async () => {
+      remote.resync()
+      await settle()
+    })
+    expect(ag().sessions[0].status).toBe('waiting')
+    expect(ag().messages.s1.map((m) => m.id)).toEqual(['m1', 'm2'])
+    remote.routes['agents:get'] = () => fail('gone')
+    await act(async () => {
+      remote.resync()
+      await settle()
+    })
+    expect(ag().error).toBe('gone')
+    off()
   })
 
   it('refresh and detect report failures; the dialog detects agents', async () => {
@@ -423,6 +456,7 @@ describe('SessionPane', () => {
     await act(settle)
     expect(xt.terms).toHaveLength(1)
     fireEvent.click(screen.getByLabelText('Hide terminal'))
+    await act(settle) // the view is disposed a task later
     expect(xt.terms[0].disposed).toBe(true)
 
     rerender(<SessionPane session={session({ status: 'idle' })} messages={messages} />)
@@ -513,6 +547,12 @@ describe('SessionPane', () => {
     expect(screen.getByText('git.example.org')).toBeInTheDocument()
     rerender(<SessionPane session={session()} messages={[]} />)
     expect(screen.queryByText('git.example.org')).toBeNull()
+    // A remote with an odd host (from the repo's own config) or no web scheme: no link, no crash.
+    for (const repoUrl of ['https://exa mple/a/b', 'javascript:alert(1)']) {
+      rerender(<SessionPane session={session({ repoUrl })} messages={[]} />)
+      expect(screen.queryByText('exa mple')).toBeNull() // rendering did not throw: no label either
+      expect(document.querySelector(`a[href="${repoUrl}"]`)).toBeNull()
+    }
   })
 })
 
@@ -612,6 +652,7 @@ describe('SessionPane: a shell for agents without a terminal', () => {
     act(() => bridge.emit('terminal:exit', { id: 'sh1', exitCode: 0 }))
     expect(xt.terms[0].written.join('')).toContain('[the shell ended]')
     fireEvent.click(screen.getByLabelText('Hide terminal'))
+    await act(settle) // the view is disposed a task later
     expect(xt.terms[0].disposed).toBe(true)
 
     openShell.mockResolvedValueOnce(undefined as never)

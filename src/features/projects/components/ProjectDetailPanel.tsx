@@ -121,7 +121,7 @@ export function ProjectDetailPanel({ project, onNavigate }: { project: Project; 
                 {s.frameworks.map((f) => (
                   <span
                     key={f}
-                    className="rounded border border-hud/60 bg-elevated/40 px-1.5 py-0.5 text-[10px] text-text-secondary"
+                    className="rounded-sm border border-hud/60 bg-elevated/40 px-1.5 py-0.5 text-[10px] text-text-secondary"
                   >
                     {f}
                   </span>
@@ -142,7 +142,7 @@ export function ProjectDetailPanel({ project, onNavigate }: { project: Project; 
                 {s.packageJson.scripts.slice(0, 8).map((sc) => (
                   <span
                     key={sc}
-                    className="inline-flex items-center gap-1 rounded border border-hud/60 bg-elevated/40 px-1.5 py-0.5 text-[10px] text-text-secondary"
+                    className="inline-flex items-center gap-1 rounded-sm border border-hud/60 bg-elevated/40 px-1.5 py-0.5 text-[10px] text-text-secondary"
                   >
                     <Package size={10} className="text-text-muted" />
                     {sc}

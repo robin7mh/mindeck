@@ -9,7 +9,9 @@ import { useClock } from '@/hooks/useClock'
 import { useBoot } from '@/hooks/useBoot'
 import { NAV_ITEMS } from '@/data/navigation'
 import { BOOT_LINES } from '@/data/bootLines'
-import { errorMessage, ipc, IpcError, onEvent } from '@shared/ipc/client'
+import { errorMessage, ipc, IpcError, onEvent, setTransport } from '@shared/ipc/client'
+import { useLocale } from '@/lib/i18n'
+import { blameHover } from '@/features/editor/blame'
 import { CHANNEL_ACCESS, DESKTOP_EVENTS, IPC_CHANNELS, IPC_EVENTS } from '@shared/ipc/contract'
 import { DEFAULT_GRAPH_STYLE, GRAPH_COLORS } from '@shared/types/memory'
 import { EVENT_CATALOG } from '@shared/types/events'
@@ -285,6 +287,28 @@ describe('ipc client', () => {
     expect(errorMessage(new Error('plain'))).toBe('plain')
     expect(errorMessage('str')).toBe('str')
   })
+
+  it('words the client\'s own failures in the UI language; the core\'s messages stay as they come', async () => {
+    useLocale.getState().setLocale('de')
+    expect(errorMessage(Object.assign(new Error('Mindeck core unreachable: Failed to fetch'), { code: 'offline' }))).toBe('Der Mindeck-Core ist nicht erreichbar.')
+    expect(errorMessage(Object.assign(new Error('Unexpected response (502)'), { code: 'bad-response' }))).toBe('Unerwartete Antwort vom Mindeck-Core (502)')
+    expect(errorMessage(new IpcError('bad-response', 'odd'))).toBe('Unerwartete Antwort vom Mindeck-Core (?)')
+    expect(errorMessage(new IpcError('not-found', 'Note not found'))).toBe('Note not found')
+    expect(errorMessage(new IpcError('rate-limited', 'Too many ai calls from this device — try again in 42 s'))).toBe('Zu viele Anfragen — bitte versuch es in 42 s noch einmal.')
+    expect(errorMessage(new IpcError('rate-limited', 'Too many failed pairing attempts — try again later'))).toBe('Zu viele Anfragen — bitte versuch es gleich noch einmal.')
+    expect(errorMessage(Object.assign(new Error('x'), { code: 7 }))).toBe('x')
+    await expect(ipc('projects:list')).rejects.toThrow('Nicht mit einem Mindeck-Core verbunden')
+    setTransport({ kind: 'remote', invoke: async () => ({ ok: false, error: { code: 'offline', message: 'Mindeck core unreachable: x' } }), on: () => () => {} })
+    await expect(ipc('projects:list')).rejects.toMatchObject({ code: 'offline', message: 'Der Mindeck-Core ist nicht erreichbar.' })
+    // Dates follow the app's language, not the system's.
+    const date = '2026-10-17T09:00:00Z'
+    expect(blameHover({ hash: 'abcdef1234567', summary: 's', author: 'a', email: 'e', date } as never)).toContain(new Date(date).toLocaleString('de-DE'))
+    useLocale.getState().setLocale('en')
+    await expect(ipc('projects:list')).rejects.toThrow('The Mindeck core is not reachable.')
+    expect(errorMessage(new IpcError('rate-limited', 'Too many github calls from this device — try again in 3 s'))).toBe('Too many requests — please try again in 3 s.')
+    expect(errorMessage(new IpcError('rate-limited', 'x'))).toBe('Too many requests — please try again in a moment.')
+    setTransport(null)
+  })
 })
 
 describe('markdown', () => {
@@ -293,10 +317,10 @@ describe('markdown', () => {
       'See [[A]] [[B|Bee]] [[C#Part]] [[Missing]] ![[Embed]] [[]] #tag #123 C#sharp\n\n<a class="wikilink">raw</a><script>x()</script><img src=x onerror=alert(1)>',
       { A: 'A.md', B: 'B.md', C: 'C.md', Embed: 'E.md' }
     )
-    expect(html).toContain('<a class="wikilink" data-target="A">A</a>')
+    expect(html).toContain('<a class="wikilink" href="#" data-target="A">A</a>')
     expect(html).toContain('data-target="B">Bee</a>')
     expect(html).toContain('data-target="C">C › Part</a>')
-    expect(html).toContain('class="wikilink unresolved" data-target="Missing"')
+    expect(html).toContain('class="wikilink unresolved" href="#" data-target="Missing"')
     expect(html).toContain('<a class="wikilink unresolved">raw</a>')
     expect(html).toContain('[[]]')
     expect(html).toContain('<span class="md-tag">#tag</span>')

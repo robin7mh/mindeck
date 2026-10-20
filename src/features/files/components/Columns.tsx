@@ -33,7 +33,7 @@ function Column({ dir, entries, picked, last, handlers }: { dir: string; entries
       role="listbox"
       aria-label={dir}
       {...dropProps(dir, setOver)}
-      className={cn('h-full w-60 shrink-0 overflow-y-auto border-r border-hud/40 p-1', over && 'bg-cyan/[0.05]')}
+      className={cn('h-full w-60 shrink-0 overflow-y-auto border-r border-hud/40 p-1', over && 'bg-cyan/5')}
     >
       <div style={{ height: w.before }} />
       {entries.slice(w.start, w.end).map((entry) => {
@@ -57,8 +57,8 @@ function Column({ dir, entries, picked, last, handlers }: { dir: string; entries
               handlers.menu(entry, e)
             }}
             className={cn(
-              'flex h-[26px] cursor-default items-center gap-2 rounded px-2 font-sans text-[12.5px]',
-              selected ? (last ? 'bg-cyan/[0.16] text-text-primary' : 'bg-elevated/80 text-text-primary') : 'text-text-secondary hover:bg-elevated/40',
+              'flex h-[26px] cursor-default items-center gap-2 rounded-sm px-2 font-sans text-[12.5px]',
+              selected ? (last ? 'bg-cyan/16 text-text-primary' : 'bg-elevated/80 text-text-primary') : 'text-text-secondary hover:bg-elevated/40',
               entry.hidden && 'opacity-60'
             )}
           >
@@ -101,6 +101,7 @@ export function Columns({ handlers }: { handlers: EntryHandlers }) {
     return () => {
       alive = false
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- key stands for the chain and the hidden-files setting
   }, [key])
 
   return (

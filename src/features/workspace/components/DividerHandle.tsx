@@ -1,6 +1,7 @@
-import { useState, type KeyboardEvent, type PointerEvent, type RefObject } from 'react'
+import type { KeyboardEvent, RefObject } from 'react'
 import { cn } from '@/lib/cn'
 import { useT } from '@/lib/i18n'
+import { usePointerDrag, type DragPoint } from '@/lib/pointerDrag'
 import { clampFraction, MIN_HEIGHT, MIN_WIDTH, type Divider } from '../layout'
 import { useWorkspace } from '../store'
 
@@ -24,7 +25,6 @@ export function DividerHandle({
   onDrag: (key: Divider['key'] | null) => void
 }) {
   const t = useT()
-  const [dragging, setDragging] = useState(false)
   const vertical = divider.key === 'x'
 
   const set = (value: number) => {
@@ -32,17 +32,16 @@ export function DividerHandle({
     const total = vertical ? box.width : box.height
     useWorkspace.getState().resize(divider.key, clampFraction(value, total, vertical ? MIN_WIDTH : MIN_HEIGHT))
   }
-  const fromPointer = (e: PointerEvent) => {
+  const fromPointer = (at: DragPoint) => {
     const box = stage.current!.getBoundingClientRect()
-    const [offset, total] = vertical ? [e.clientX - box.left, box.width] : [e.clientY - box.top, box.height]
+    const [offset, total] = vertical ? [at.clientX - box.left, box.width] : [at.clientY - box.top, box.height]
     return total > 0 ? offset / total : divider.at
   }
-  const end = (e: PointerEvent<HTMLDivElement>) => {
-    if (!dragging) return
-    e.currentTarget.releasePointerCapture?.(e.pointerId)
-    setDragging(false)
-    onDrag(null)
-  }
+  const { dragging, onPointerDown } = usePointerDrag({
+    onStart: () => onDrag(divider.key),
+    onMove: (at) => set(fromPointer(at)),
+    onEnd: () => onDrag(null)
+  })
   const onKeyDown = (e: KeyboardEvent) => {
     const keys: Record<string, number> = vertical ? { ArrowLeft: -STEP, ArrowRight: STEP } : { ArrowUp: -STEP, ArrowDown: STEP }
     if (e.key in keys) set(divider.at + keys[e.key])
@@ -66,18 +65,10 @@ export function DividerHandle({
       aria-valuenow={Math.round(divider.at * 100)}
       title={t.workspace.dividerHint}
       style={style}
-      onPointerDown={(e) => {
-        e.preventDefault()
-        e.currentTarget.setPointerCapture?.(e.pointerId)
-        setDragging(true)
-        onDrag(divider.key)
-      }}
-      onPointerMove={(e) => dragging && set(fromPointer(e))}
-      onPointerUp={end}
-      onPointerCancel={end}
+      onPointerDown={onPointerDown}
       onDoubleClick={() => set(0.5)}
       onKeyDown={onKeyDown}
-      className={cn('group absolute z-20 flex items-center justify-center outline-none', vertical ? 'cursor-col-resize' : 'cursor-row-resize')}
+      className={cn('group absolute z-20 flex items-center justify-center outline-hidden', vertical ? 'cursor-col-resize' : 'cursor-row-resize')}
     >
       <span
         className={cn(

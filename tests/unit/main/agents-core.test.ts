@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { tempDir } from './helpers'
 import { detectAgents, loginShellProbe, type Probe } from '../../../electron/main/services/agents/detect'
 import { claudeArgs, claudeEnv, HOOK_RELAY, hookSettings, MCP_BROWSER_READ_TOOLS, mcpConfig, MEMORY_READ_TOOLS, SYSTEM_HINT } from '../../../electron/main/services/agents/claudeLaunch'
-import { applyHook, toolRisk, toolSummary, toolTitle, type SessionState } from '../../../electron/main/services/agents/transcript'
+import { applyHook, approvalRisk, reachesOutside, toolRisk, toolSummary, toolTitle, type SessionState } from '../../../electron/main/services/agents/transcript'
 import type { ChatMessage, ToolCallPart } from '../../../src/shared/types/ai'
 import type { AgentSession } from '../../../src/shared/types/agents'
 import { journalBody, journalTitle, vaultJournal } from '../../../electron/main/services/agents/journal'
@@ -207,6 +207,30 @@ describe('hook events → chat, status and plan', () => {
     applyHook(s, { hook_event_name: 'SomethingNew' })
     applyHook(s, { hook_event_name: 'SessionEnd', reason: 'other' })
     expect(s.status).toBe('ended')
+  })
+
+  it('approvals: looking outside the project or fetching from the web count as changes (BE-SEC-17)', () => {
+    const cwd = '/work/app'
+    expect(approvalRisk('Read', { file_path: '/work/app/src/a.ts' }, cwd)).toBe('read')
+    expect(approvalRisk('Read', { file_path: 'src/a.ts' }, cwd)).toBe('read')
+    expect(approvalRisk('Glob', { pattern: '**/*.ts' }, cwd)).toBe('read')
+    expect(approvalRisk('Read', { file_path: '/home/me/.ssh/id_ed25519' }, cwd)).toBe('write')
+    expect(approvalRisk('Read', { file_path: '~/.aws/credentials' }, cwd)).toBe('write')
+    expect(approvalRisk('Read', { file_path: '/work/app-other/x' }, cwd)).toBe('write') // a sibling, not inside
+    expect(approvalRisk('Grep', { pattern: 'x', path: '../../etc' }, cwd)).toBe('write')
+    expect(approvalRisk('Read', { file_path: '.env' }, cwd)).toBe('write') // keys and credentials, even inside
+    expect(approvalRisk('LS', { path: '/work/app' }, cwd)).toBe('read')
+    expect(approvalRisk('WebFetch', { url: 'https://example.com/?q=secret' }, cwd)).toBe('write')
+    expect(approvalRisk('WebSearch', { query: 'x' }, cwd)).toBe('read')
+    expect(approvalRisk('Bash', { command: 'ls' }, cwd)).toBe('execute')
+    expect(approvalRisk('Edit', { file_path: 'a.ts' }, cwd)).toBe('write')
+    expect(approvalRisk('Read')).toBe('read')
+    // Without a folder to compare with, any absolute path reaches outside.
+    expect(reachesOutside('/etc/passwd')).toBe(true)
+    expect(reachesOutside('src/a.ts')).toBe(false)
+    expect(reachesOutside('/work/app/', '/work/app/')).toBe(false)
+    expect(reachesOutside('/work/app/x', '/work/app/')).toBe(false)
+    expect(reachesOutside('/etc/hosts', '/')).toBe(false) // a session at the disk's root: nothing is outside
   })
 
   it('tool titles, risks and one-line summaries', () => {

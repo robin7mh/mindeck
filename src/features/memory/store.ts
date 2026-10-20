@@ -120,6 +120,7 @@ interface MemoryState {
 
 let saveTimer: number | undefined
 let searchSeq = 0
+let openSeq = 0
 /** Pictures by note + target; dropped on every vault change (a picture may have come or gone). */
 let images = new Map<string, Promise<string | null>>()
 
@@ -242,9 +243,12 @@ export const useMemory = create<MemoryState>((set, get) => {
     },
 
     open: async (path, mode) => {
+      // Two quick clicks: the note clicked last wins, not the one answered last.
+      const seq = ++openSeq
       try {
         await get().save()
         const note = await ipc('memory:read', { path })
+        if (seq !== openSeq) return
         set({ note, draft: note.body, view: 'note', mode: mode ?? get().mode, error: undefined })
       } catch (err) {
         fail(err)
@@ -273,8 +277,9 @@ export const useMemory = create<MemoryState>((set, get) => {
       try {
         await ipc('memory:writeBody', { path: note.path, body: draft })
         const fresh = await ipc('memory:read', { path: note.path })
-        // Keep typing that happened while the write was in flight.
-        set((s) => ({ note: fresh, draft: s.draft === draft ? fresh.body : s.draft, saving: false }))
+        // Another note was opened meanwhile: its draft must not land in this one.
+        // Else keep typing that happened while the write was in flight.
+        set((s) => (s.note?.path !== note.path ? { saving: false } : { note: fresh, draft: s.draft === draft ? fresh.body : s.draft, saving: false }))
       } catch (err) {
         fail(err)
       }

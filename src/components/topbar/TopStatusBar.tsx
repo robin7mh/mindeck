@@ -3,6 +3,7 @@ import { LogOut, Wifi, WifiOff, ShieldCheck } from 'lucide-react'
 import { Clock } from './Clock'
 import { StatusIndicator } from './StatusIndicator'
 import { UpdateChip } from '@/features/update/components/UpdateChip'
+import { OfflineChip } from '@/features/cloud/components/OfflineChip'
 import { WindowControls } from './WindowControls'
 import { TechLabel } from '@/components/ui/TechLabel'
 import { StatusDot } from '@/components/ui/StatusDot'
@@ -61,7 +62,7 @@ export function TopStatusBar({ since, showClock = true }: { since?: number; show
           </div>
           <TechLabel className="text-text-muted">{t.topbar.commandCenter}</TechLabel>
         </div>
-        <span className="ml-1 hidden items-center gap-1.5 rounded border border-hud/60 bg-surface/60 px-1.5 py-0.5 md:flex">
+        <span className="ml-1 hidden items-center gap-1.5 rounded-sm border border-hud/60 bg-surface/60 px-1.5 py-0.5 md:flex">
           <StatusDot tone="ok" />
           <span className="font-mono text-[10px] text-text-secondary">v{info?.version ?? '0.1.0'}</span>
         </span>
@@ -76,6 +77,7 @@ export function TopStatusBar({ since, showClock = true }: { since?: number; show
 
       {/* Right cluster */}
       <div className="ml-auto flex items-center gap-2 lg:ml-0">
+        <OfflineChip />
         <UpdateChip />
         <PaletteButton />
         <SplitButton />

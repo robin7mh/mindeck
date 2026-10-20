@@ -1,10 +1,13 @@
-import { X509Certificate, createPrivateKey, createPublicKey, generateKeyPair } from 'node:crypto'
+import { X509Certificate, createHash, createPrivateKey, createPublicKey, generateKeyPair } from 'node:crypto'
 import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { isIP } from 'node:net'
 import { hostname as osHostname } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { generate } from 'selfsigned'
+
+/** One extension of `generate` (selfsigned names its type but does not export it). */
+type CertificateExtension = NonNullable<NonNullable<Parameters<typeof generate>[1]>['extensions']>[number]
 import type { TlsInfo } from '@shared/types/server'
 
 const DAY_MS = 24 * 60 * 60_000
@@ -41,10 +44,14 @@ function parse(cert: string): X509Certificate | null {
   }
 }
 
-/** Fingerprint, end and origin of a certificate. */
+/** `AB:CD:…`, the way `X509Certificate.fingerprint256` writes it. */
+const colonHex = (digest: Buffer) => digest.toString('hex').toUpperCase().replace(/(..)(?!$)/g, '$1:')
+
+/** Fingerprints (of the certificate and of its public key), end and origin of a certificate. */
 function infoOf(x509: X509Certificate): TlsInfo {
   return {
     fingerprint: x509.fingerprint256,
+    spkiFingerprint: colonHex(createHash('sha256').update(x509.publicKey.export({ type: 'spki', format: 'der' })).digest()),
     expiresAt: new Date(Date.parse(x509.validTo)).toISOString(),
     // Issued by itself (and signed with its own key): nobody vouches for it but the fingerprint.
     selfSigned: x509.issuer === x509.subject && x509.verify(x509.publicKey)
@@ -133,7 +140,7 @@ export class Certificates {
       return { cert, key, ...infoOf(x509) }
     }
     const nextKey = key ?? (await newKey())
-    const nextCert = this.issue(hosts, nextKey)
+    const nextCert = await this.issue(hosts, nextKey)
     await mkdir(this.opts.dir, { recursive: true, mode: 0o700 })
     await writePrivate(keyFile, nextKey)
     await writePrivate(certFile, nextCert)
@@ -155,27 +162,29 @@ export class Certificates {
     return hosts.every((h) => (isIP(h) ? x509.checkIP(h) : x509.checkHost(h)) !== undefined)
   }
 
-  private issue(hosts: string[], key: string): string {
+  private async issue(hosts: string[], key: string): Promise<string> {
     const host = this.hostname()
     const publicKey = createPublicKey(key).export({ type: 'spki', format: 'pem' }) as string
-    const options = {
-      days: VALID_DAYS,
-      algorithm: 'sha256',
-      // A little in the past: a phone whose clock is a few minutes behind still accepts it.
-      notBeforeDate: new Date(Date.now() - 60 * 60_000),
-      keyPair: { privateKey: key, publicKey },
-      extensions: [
-        { name: 'basicConstraints', cA: false },
-        { name: 'keyUsage', critical: true, digitalSignature: true, keyEncipherment: true },
-        { name: 'extKeyUsage', serverAuth: true },
-        { name: 'subjectAltName', altNames: hosts.map((h) => (isIP(h) ? { type: 7, ip: h } : { type: 2, value: h })) }
-      ]
-    }
+    // A little in the past: a phone whose clock is a few minutes behind still accepts it.
+    const notBeforeDate = new Date(Date.now() - 60 * 60_000)
+    const extensions: CertificateExtension[] = [
+      { name: 'basicConstraints', cA: false },
+      { name: 'keyUsage', critical: true, digitalSignature: true, keyEncipherment: true },
+      { name: 'extKeyUsage', serverAuth: true },
+      { name: 'subjectAltName', altNames: hosts.map((h) => (isIP(h) ? { type: 7, ip: h } : { type: 2, value: h })) }
+    ]
     const attrs = [
       { name: 'commonName', value: `Mindeck (${host})` },
       { name: 'organizationName', value: 'Mindeck self-signed' }
     ]
-    return generate(attrs, options as Parameters<typeof generate>[1]).cert
+    const { cert } = await generate(attrs, {
+      algorithm: 'sha256',
+      notBeforeDate,
+      notAfterDate: new Date(notBeforeDate.getTime() + VALID_DAYS * DAY_MS),
+      keyPair: { privateKey: key, publicKey },
+      extensions
+    })
+    return cert
   }
 }
 

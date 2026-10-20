@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { fail, installBridge, settle } from './bridge'
+import { fail, installBridge, installRemote, settle } from './bridge'
 import type { TerminalInfo } from '@shared/types/terminal'
 
 // --- xterm.js and its addons as fakes (jsdom has no canvas/WebGL/layout) -----
@@ -233,7 +233,81 @@ describe('XtermPane', () => {
 
     const open = vi.spyOn(window, 'open').mockReturnValue(null)
     x.links[0]({}, 'https://example.com')
-    expect(open).toHaveBeenCalledWith('https://example.com', '_blank')
+    expect(open).toHaveBeenCalledWith('https://example.com', '_blank', 'noopener,noreferrer')
+    // OSC 8 hyperlinks take the same way out — web addresses only.
+    const osc = term.options.linkHandler as { activate: (e: unknown, uri: string) => void; allowNonHttpProtocols: boolean }
+    expect(osc.allowNonHttpProtocols).toBe(false)
+    osc.activate({}, 'https://osc.dev/x')
+    osc.activate({}, 'file:///etc/passwd')
+    expect(open).toHaveBeenLastCalledWith('https://osc.dev/x', '_blank', 'noopener,noreferrer')
+    expect(open).toHaveBeenCalledTimes(2)
+  })
+
+  it('a gap in the output (events lost while the push channel was down) is fetched from the scrollback', async () => {
+    const tab = info()
+    // The core's scrollback: everything so far, as a ring buffer of the last 6 characters.
+    let output = 'abcd'
+    const scrollback = () => ({ buffer: output.slice(-6), end: output.length, info: tab })
+    const remote = installRemote({ 'terminal:attach': () => scrollback() })
+    render(<XtermPane tab={tab} label="~" active={false} framed={false} />)
+    await act(settle)
+    const term = x.terms[0]
+    expect(term.written).toEqual(['abcd'])
+    // "ef" never arrived; "gh" does: the view asks for what it missed instead of writing past the hole.
+    output = 'abcdefgh'
+    await act(async () => {
+      remote.emit('terminal:data', { id: tab.id, data: 'gh', end: 8 })
+      await settle()
+    })
+    expect(term.written).toEqual(['abcd', 'efgh'])
+    // Live output during the re-attach is queued and not written twice.
+    output = 'abcdefghij'
+    await act(async () => {
+      remote.emit('terminal:data', { id: tab.id, data: 'j', end: 10 }) // gap again (i is missing)
+      remote.emit('terminal:data', { id: tab.id, data: 'ij', end: 10 })
+      await settle()
+    })
+    expect(term.written).toEqual(['abcd', 'efgh', 'ij'])
+
+    // The socket is back: what came meanwhile is fetched — also when no new chunk shows the gap.
+    output = 'abcdefghijkl'
+    await act(async () => {
+      remote.resync()
+      await settle()
+    })
+    expect(term.written.at(-1)).toBe('kl')
+    // Nothing new: nothing is written.
+    await act(async () => {
+      remote.resync()
+      await settle()
+    })
+    expect(term.written).toHaveLength(4)
+    // More was lost than the scrollback keeps: what is still there.
+    output = 'abcdefghijklmnopqrstu'
+    await act(async () => {
+      remote.resync()
+      await settle()
+    })
+    expect(term.written.at(-1)).toBe('pqrstu')
+    // The session is gone: a gap is then written as it is, without asking again and again.
+    remote.routes['terminal:attach'] = () => fail('no session')
+    await act(async () => {
+      remote.emit('terminal:data', { id: tab.id, data: 'yz', end: 26 })
+      await settle()
+    })
+    expect(term.written.at(-1)).toBe('yz')
+    expect(remote.invoke.mock.calls.filter((c) => c[0] === 'terminal:attach')).toHaveLength(7)
+  })
+
+  it('back online while still attaching: no second fetch', async () => {
+    const tab = info()
+    const remote = installRemote({ 'terminal:attach': pending })
+    render(<XtermPane tab={tab} label="~" active={false} framed={false} />)
+    await act(async () => {
+      remote.resync()
+      await settle()
+    })
+    expect(remote.invoke.mock.calls.filter((c) => c[0] === 'terminal:attach')).toHaveLength(1)
   })
 
   it('a failed attach still flushes live output; exit marks the tab and Enter restarts', async () => {
@@ -308,6 +382,9 @@ describe('XtermPane', () => {
     rerender(<XtermPane tab={tab} label="~" active={false} framed={false} />)
 
     unmount()
+    // Disposed a task later — after the timer xterm's open() left (it would hit a disposed view).
+    expect(term.disposed).toBe(false)
+    await act(() => new Promise((r) => setTimeout(r)))
     expect(term.disposed).toBe(true)
     restore()
   })
@@ -444,6 +521,9 @@ describe('useXterm extras', () => {
     await act(async () => void term.key({ key: 'V', ctrlKey: true, shiftKey: true }))
     await act(async () => void term.key({ key: 'Insert', shiftKey: true }))
     expect(term.paste.mock.calls).toEqual([['pasted'], ['pasted']])
+    board.readText.mockRejectedValueOnce(new Error('not allowed')) // the browser says no: nothing pasted
+    await act(async () => void term.key({ key: 'V', ctrlKey: true, shiftKey: true }))
+    expect(term.paste).toHaveBeenCalledTimes(2)
     act(() => void term.key({ key: 'f', ctrlKey: true, shiftKey: true }))
     expect(screen.getByRole('search')).toBeInTheDocument()
   })
@@ -467,13 +547,18 @@ describe('useXterm extras', () => {
   })
 
   it('agents’ terminals: find goes to the program, no file links, nothing saved', async () => {
-    installBridge({ 'terminal:attach': pending })
+    const bridge = installBridge({ 'terminal:attach': () => ({ buffer: '', end: 0, info: info() }) })
     const { SessionTerminalProbe } = await import('./terminalProbe')
     render(<SessionTerminalProbe id="a1" />)
+    await act(settle)
     const term = x.terms[0]
     expect(term.key({ key: 'f', ctrlKey: true, shiftKey: true }).handled).toBe(false)
     expect(term.linkProviders).toHaveLength(0)
     expect(serializers.has('a1')).toBe(false)
+    // its output shows (and is not kept); its end is the session's to tell, not the terminal's
+    act(() => bridge.emit('terminal:data', { id: 'a1', data: 'working', end: 7 }))
+    act(() => bridge.emit('terminal:exit', { id: 'a1', exitCode: 0 }))
+    expect(term.written.at(-1)).toBe('working')
   })
 
   it('restored output shows greyed above; the tab’s output is kept for the next start', async () => {

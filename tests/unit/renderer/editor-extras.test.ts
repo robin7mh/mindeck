@@ -115,9 +115,10 @@ describe('editor actions and text edits', () => {
     const model = {
       getValue: () => value,
       getFullModelRange: () => 'all',
-      pushEditOperations: (_s: unknown, edits: { text: string }[]) => {
+      pushEditOperations: (_s: unknown, edits: { text: string }[], cursor?: (inverse: unknown[]) => unknown) => {
         pushes.push(edits)
         value = edits[0].text
+        return cursor?.([]) ?? null // like Monaco: the cursor afterwards comes from the caller
       }
     }
     replaceText(model as never, 'a\n\n\nb')

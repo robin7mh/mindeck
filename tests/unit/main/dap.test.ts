@@ -203,18 +203,35 @@ describe('DapSession', () => {
 
   it('pause before any stop asks for the threads; many frames load scopes only at the top', async () => {
     const many = Array.from({ length: 25 }, (_, i) => ({ id: i, name: `f${i}`, line: 1, column: 1, source: i === 1 ? { name: '<string>' } : { path: `/root/f${i}.py` } }))
-    const s = session({ stackTrace: () => ({ stackFrames: many }), scopes: (a: { frameId: number }) => (a.frameId === 2 ? {} : { scopes: [{ name: 'Locals', variablesReference: 1 }] }) })
+    const s = session({
+      stackTrace: () => ({ stackFrames: many }),
+      // frame 2 has none, frame 3's can't be read: both show without scopes
+      scopes: (a: { frameId: number }) => (a.frameId === 3 ? Promise.reject(new Error('gone')) : a.frameId === 2 ? {} : { scopes: [{ name: 'Locals', variablesReference: 1 }] }),
+      // an adapter that fails to disconnect is closed all the same
+      disconnect: () => Promise.reject(new Error('already gone'))
+    })
     await s.dap.start([], false)
     await s.dap.control('pause')
     expect(s.adapter.received.at(-1)).toMatchObject({ command: 'pause', arguments: { threadId: 1 } })
     s.adapter.event('stopped', { reason: 'pause' })
     await tick(60)
-    expect(s.last().frames.filter((f) => f.scopes.length)).toHaveLength(19)
+    expect(s.last().frames.filter((f) => f.scopes.length)).toHaveLength(18)
     expect(s.last().frames[1]).toMatchObject({ url: '<string>', path: undefined })
     await s.dap.stop()
     expect(s.adapter.commands()).toContain('disconnect')
     expect(s.last().status).toBe('exited')
     expect(s.output.at(-1)!.text).toBe('exit -\n')
+  })
+
+  it('a program that stops on entry before the handshake is answered stays paused', async () => {
+    const s = session({
+      configurationDone: (_a, ad) => {
+        ad.event('stopped', { reason: 'entry', threadId: 1 })
+        return new Promise((r) => setTimeout(() => r({}), 30))
+      }
+    })
+    await s.dap.start([], true)
+    expect(s.last()).toMatchObject({ status: 'paused', reason: 'entry' })
   })
 
   it('a launch the adapter refuses ends the session with the reason; the adapter going away ends it too', async () => {
@@ -457,14 +474,34 @@ describe('starting debug adapters: LLDB, PHP, Java, Kotlin', () => {
     }
   })
 
-  it('PHP: Xdebug’s adapter on Mindeck’s own Node; php gets Xdebug pointed at the adapter’s port', async () => {
+  it('PHP: Xdebug’s adapter as a Node program (no ELECTRON_RUN_AS_NODE); php gets Xdebug pointed at the adapter’s port', async () => {
     const proc = new FakeProc()
-    const calls: Parameters<Spawn>[] = []
-    const { launch } = await startAdapter('php', { ...base, program: '/r/index.php', debugger: '/tools/php-debug/extension/out/phpDebug.js' }, (...a) => (calls.push(a), proc as never))
-    expect(calls[0]).toEqual([process.execPath, ['/tools/php-debug/extension/out/phpDebug.js'], '/r', { ELECTRON_RUN_AS_NODE: '1' }])
+    const node = vi.fn(() => proc as never)
+    const run = vi.fn()
+    const { launch } = await startAdapter('php', { ...base, program: '/r/index.php', debugger: '/tools/php-debug/extension/out/phpDebug.js', node }, run)
+    expect(run).not.toHaveBeenCalled()
+    const [args, opts] = (node.mock.calls[0] as unknown as [string[], { cwd: string; env: Record<string, string>; name: string }])
+    expect(args).toEqual(['/tools/php-debug/extension/out/phpDebug.js'])
+    expect(opts).toMatchObject({ cwd: '/r', name: 'PHP Debug' })
+    // php comes from the user's PATH (their login shell's), as in their terminal.
+    expect(opts.env.PATH).toContain(process.env.PATH)
+    expect(opts.env).not.toHaveProperty('ELECTRON_RUN_AS_NODE')
     expect(launch.arguments).toMatchObject({ type: 'php', program: '/r/index.php', port: 0, runtimeArgs: ['-dxdebug.mode=debug', '-dxdebug.start_with_request=yes', '-dxdebug.client_port=${port}'] })
     launch.kill()
     expect(proc.killed).toBe(1)
+  })
+
+  it('PHP without a platform launcher (the headless core): the adapter runs on this Node, speaking over stdio', async () => {
+    const dir = await tempDir()
+    const adapter = join(dir, 'phpDebug.js')
+    await writeFile(adapter, "process.stdin.on('data', (d) => process.stdout.write('echo:' + d))")
+    const { transport, launch } = await startAdapter('php', { ...base, root: dir, program: join(dir, 'index.php'), debugger: adapter })
+    const got = new Promise<string>((r) => transport.onData((d) => r(d.toString())))
+    transport.write(Buffer.from('ping'))
+    expect(await got).toBe('echo:ping')
+    const closed = new Promise<void>((r) => transport.onClose(() => r()))
+    launch.kill()
+    await closed
   })
 
   it('Java: jdtls resolves the main class and classpath, then opens the DAP port', async () => {
@@ -591,6 +628,20 @@ describe('DebugService: compiled languages, the build step, other languages', ()
     await killed.svc.stop()
     fail(new Error('Build failed: clang (exit 1)'))
     expect(await run).toMatchObject({ status: 'exited', error: undefined })
+
+    // Started again while building: the first build's end leaves the second one alone.
+    const builds: ((v: string) => void)[] = []
+    const again = await setup({ 'main.c': '' }, { build: () => new Promise((r) => builds.push(r)) })
+    const first = again.svc.start({ projectId: 'p', program: 'main.c', breakpoints: [] })
+    await tick()
+    const second = again.svc.start({ projectId: 'p', program: 'main.c', breakpoints: [] })
+    while (builds.length < 2) await tick()
+    builds[0]('/built')
+    expect(await first).toMatchObject({ status: 'exited', error: undefined })
+    expect(again.svc.session()).toMatchObject({ status: 'starting' })
+    builds[1]('/built')
+    expect((await second).error).toBeUndefined()
+    expect(again.adapters).toHaveLength(1) // only the second build reached the debugger
   })
 
   it('a built program goes to LLDB as it is (nothing to compile)', async () => {

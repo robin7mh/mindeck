@@ -80,7 +80,9 @@ describe('extension packages (CRX3)', () => {
 
   it('checks every signature and the developer key behind the id', () => {
     const dev = keyPair()
-    const pkg = parseCrx(crx(archive, { keys: [dev, keyPair('ec')], extra: Buffer.concat([varintField(4, 300), Buffer.from([0x2d, 1, 2, 3, 4]), Buffer.from([0x29, 0, 0, 0, 0, 0, 0, 0, 0])]) }))
+    // fields it doesn't know — in the header and in a proof — are skipped
+    const extra = Buffer.concat([varintField(4, 300), Buffer.from([0x2d, 1, 2, 3, 4]), Buffer.from([0x29, 0, 0, 0, 0, 0, 0, 0, 0]), field(7, Buffer.from('later'))])
+    const pkg = parseCrx(crx(archive, { keys: [dev, keyPair('ec')], extra, proofExtra: field(9, Buffer.from('x')) }))
     expect(pkg.id).toBe(idOf(dev.spki))
     expect(pkg.id).toBe(idFromKey(dev.spki))
     expect(pkg.id).toMatch(/^[a-p]{32}$/)

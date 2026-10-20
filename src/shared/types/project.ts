@@ -31,4 +31,11 @@ export interface Project {
   pinned?: boolean
   /** Added by a paired device: reachable remotely only inside the shared folders. */
   addedRemotely?: boolean
+  /**
+   * The user trusts the project's authors: Mindeck may run the project's own
+   * tools — its TypeScript, ESLint / Prettier and their configs, its Python,
+   * its git config and hooks, its .vscode/sftp.json. Not true (every newly
+   * added project): restricted, Mindeck's own tools only (BE-SEC-01).
+   */
+  trusted?: boolean
 }

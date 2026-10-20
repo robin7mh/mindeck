@@ -71,6 +71,32 @@ const SECRET = 'mongo.connections'
 const COUNT_CAP = 100_000
 const MAX_LIMIT = 1000
 
+/**
+ * Operators that run JavaScript on the database server (`$where`,
+ * `$function`, `$accumulator` and the old `$eval`): a filter or pipeline from
+ * a paired device must not load the database with code of its own. A BSON
+ * `Code` value (`{"$code": …}` in Extended JSON) is JavaScript, too.
+ */
+const SERVER_JS = new Set(['$where', '$function', '$accumulator', '$eval'])
+
+/** Whether a query or pipeline may run JavaScript on the server: typed at the desktop yes, from a device no. */
+export interface MongoCallOptions {
+  serverJs?: boolean
+}
+
+/** The first server-side JavaScript in a parsed filter, projection, sort or pipeline (at any depth), or null. */
+export function serverScript(value: unknown, seen = new Set<object>()): string | null {
+  if (!value || typeof value !== 'object' || seen.has(value)) return null
+  seen.add(value)
+  if ((value as { _bsontype?: unknown })._bsontype === 'Code') return '$code'
+  for (const [key, inner] of Object.entries(value)) {
+    if (SERVER_JS.has(key)) return key
+    const found = serverScript(inner, seen)
+    if (found) return found
+  }
+  return null
+}
+
 /** mongodb://user:pass@host/db?x → mongodb://host/db (no credentials, no options). */
 export function hostOf(uri: string): string {
   const m = /^(mongodb(?:\+srv)?:\/\/)(?:[^@/]*@)?([^/?]*)(\/[^?]*)?/.exec(uri)
@@ -128,13 +154,13 @@ export class MongoService {
     await (await this.client(id)).db(db).dropCollection(name)
   }
 
-  async find(id: string, db: string, collection: string, query: MongoQuery = {}): Promise<MongoDocuments> {
+  async find(id: string, db: string, collection: string, query: MongoQuery = {}, opts: MongoCallOptions = {}): Promise<MongoDocuments> {
     const c = (await this.client(id)).db(db).collection(collection)
     const driver = await this.loadDriver()
-    const filter = this.object(driver, query.filter, 'filter')
+    const filter = this.object(driver, query.filter, 'filter', opts)
     let cursor = c.find(filter)
-    if (query.sort?.trim()) cursor = cursor.sort(this.object(driver, query.sort, 'sort'))
-    if (query.projection?.trim()) cursor = cursor.project(this.object(driver, query.projection, 'projection'))
+    if (query.sort?.trim()) cursor = cursor.sort(this.object(driver, query.sort, 'sort', opts))
+    if (query.projection?.trim()) cursor = cursor.project(this.object(driver, query.projection, 'projection', opts))
     if (query.skip) cursor = cursor.skip(query.skip)
     cursor = cursor.limit(Math.min(query.limit || 50, MAX_LIMIT))
     const [docs, total] = await Promise.all([cursor.toArray(), c.countDocuments(filter, { limit: COUNT_CAP })])
@@ -164,10 +190,11 @@ export class MongoService {
     if (!deletedCount) throw coded('not-found', 'The document is gone (deleted elsewhere?)')
   }
 
-  async aggregate(id: string, db: string, collection: string, pipeline: string): Promise<string[]> {
+  async aggregate(id: string, db: string, collection: string, pipeline: string, opts: MongoCallOptions = {}): Promise<string[]> {
     const driver = await this.loadDriver()
     const stages = driver.parse(pipeline || '[]')
     if (!Array.isArray(stages)) throw coded('bad-json', 'A pipeline is a list of stages: [{ "$match": … }]')
+    this.noScript(stages, 'pipeline', opts)
     const docs = await (await this.client(id)).db(db).collection(collection).aggregate([...(stages as object[]), { $limit: MAX_LIMIT }]).toArray()
     return docs.map((d) => driver.stringify(d))
   }
@@ -214,8 +241,14 @@ export class MongoService {
     await client?.then((c) => c.close()).catch(() => {})
   }
 
+  /** Server-side JavaScript refused unless the call allows it (the desktop's own). */
+  private noScript(value: unknown, what: string, opts: MongoCallOptions): void {
+    const found = opts.serverJs === false ? serverScript(value) : null
+    if (found) throw coded('remote-forbidden', `${found} runs JavaScript on the database server: not from a paired device (the ${what} uses it)`)
+  }
+
   /** Extended JSON that must be an object ('' → {}). */
-  private object(driver: MongoDriver, text: string | undefined, what: string): object {
+  private object(driver: MongoDriver, text: string | undefined, what: string, opts: MongoCallOptions = {}): object {
     if (!text?.trim()) return {}
     let value: unknown
     try {
@@ -224,6 +257,7 @@ export class MongoService {
       throw coded('bad-json', `The ${what} isn't valid JSON: ${(err as Error).message}`)
     }
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw coded('bad-json', `The ${what} must be an object: { … }`)
+    this.noScript(value, what, opts)
     return value
   }
 

@@ -1,10 +1,11 @@
-import { chmod, mkdir, readFile, readdir as realReaddir, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir as realReaddir, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { tempDir } from './helpers'
 
 // Pass-through fs, with switches to fail one call the way a real disk sometimes does.
-const fsFail = vi.hoisted(() => ({ readdir: null as null | NodeJS.ErrnoException, rename: null as null | NodeJS.ErrnoException, mkdir: null as null | NodeJS.ErrnoException }))
+const fsFail = vi.hoisted(() => ({ readdir: null as null | NodeJS.ErrnoException, rename: null as null | NodeJS.ErrnoException, mkdir: null as null | NodeJS.ErrnoException, lstat: null as null | NodeJS.ErrnoException }))
+const mountsRead = vi.hoisted(() => [] as string[])
 vi.mock('node:fs/promises', async (importOriginal) => {
   const real = await importOriginal<typeof import('node:fs/promises')>()
   const once = <T extends (...a: never[]) => unknown>(key: keyof typeof fsFail, fn: T) =>
@@ -16,7 +17,16 @@ vi.mock('node:fs/promises', async (importOriginal) => {
       }
       return fn(...args)
     }) as T
-  return { ...real, readdir: once('readdir', real.readdir), rename: once('rename', real.rename), mkdir: once('mkdir', real.mkdir) }
+  // Where the OS mounts drives (/mnt, /media/<user>, /Volumes): never the machine's real ones — they
+  // differ per machine (a container has its own /mnt). Reads there are recorded and come back empty.
+  const readdir = ((path: unknown, ...rest: never[]) => {
+    if (typeof path === 'string' && (path === '/mnt' || path === '/Volumes' || /^\/(run\/)?media\//.test(path))) {
+      mountsRead.push(path)
+      return Promise.resolve([])
+    }
+    return (real.readdir as (...a: unknown[]) => Promise<unknown>)(path, ...rest)
+  }) as typeof real.readdir
+  return { ...real, readdir: once('readdir', readdir), rename: once('rename', real.rename), mkdir: once('mkdir', real.mkdir), lstat: once('lstat', real.lstat) }
 })
 const exec = vi.hoisted(() => ({ fn: vi.fn() }))
 vi.mock('node:child_process', async (importOriginal) => ({ ...(await importOriginal<typeof import('node:child_process')>()), execFile: (...a: unknown[]) => exec.fn(...a) }))
@@ -44,6 +54,7 @@ async function world() {
   await mkdir(join(volumes, '.Spotlight'))
   await writeFile(join(volumes, 'notes.txt'), '')
   await symlink('/', join(volumes, 'Macintosh HD'))
+  await symlink(join(volumes, 'unplugged'), join(volumes, 'Gone')) // a link to nothing is no drive
   const trash = vi.fn(async () => {})
   const finder = new FinderService({ home, writableRoots: [home], volumeDirs: [volumes, join(volumes, 'missing')], trash, openPath: vi.fn(async () => {}), revealPath: vi.fn() })
   return { home, volumes, trash, finder }
@@ -145,6 +156,9 @@ describe('FinderService · reading', () => {
     expect(await finder.search(home, '  ')).toEqual([])
     const walked = await finder.search(home, 'REPORT')
     expect(walked.map((e) => e.name).sort()).toEqual(['report 10.md', 'report 2.md', 'report-tool.ts'])
+    // a folder it may not read is passed over
+    fsFail.readdir = errno('EACCES')
+    expect(await finder.search(join(home, 'Project', 'src'), 'tool')).toEqual([])
 
     const spotlight = vi.fn(async () => [join(home, 'Documents', 'report 2.md'), join(home, '.hidden', 'report.md'), '/elsewhere/report.md', join(home, 'Documents', 'vanished.md')])
     const indexed = new FinderService({ home, trash, spotlight })
@@ -186,9 +200,11 @@ describe('FinderService · reading', () => {
     // a folder Mindeck may not read still previews, without a count
     const locked = join(home, 'Locked')
     await mkdir(locked)
-    await chmod(locked, 0o000)
+    fsFail.readdir = errno('EACCES')
     expect(await finder.preview(locked)).toMatchObject({ type: 'dir', items: 0 })
-    await chmod(locked, 0o755)
+    // a file whose link status can't be read counts as no link
+    fsFail.lstat = errno('EIO')
+    expect((await finder.preview(join(docs, 'report 2.md'))).entry).not.toHaveProperty('link')
   })
 })
 
@@ -286,14 +302,19 @@ describe('FinderService · changes', () => {
 describe('FinderService · per platform', () => {
   it('finds drives where each OS mounts them, and writes in Home by default', async () => {
     const home = await tempDir('mindeck-home-')
+    const user = home.slice(home.lastIndexOf('/') + 1)
+    mountsRead.length = 0
     Object.defineProperty(process, 'platform', { value: 'linux' })
     expect((await new FinderService({ home, trash: vi.fn() }).places()).volumes).toEqual([])
+    expect(mountsRead.splice(0)).toEqual([`/media/${user}`, `/run/media/${user}`, '/mnt'])
     Object.defineProperty(process, 'platform', { value: 'win32' })
     expect((await new FinderService({ home, trash: vi.fn() }).places()).volumes).toEqual([])
+    expect(mountsRead.splice(0)).toEqual([])
     Object.defineProperty(process, 'platform', { value: 'darwin' })
     const mac = new FinderService({ home, trash: vi.fn() })
     expect(await mac.mkdir(home, 'Made')).toBe(join(home, 'Made'))
-    expect(Array.isArray((await mac.places()).volumes)).toBe(true)
+    expect((await mac.places()).volumes).toEqual([])
+    expect(mountsRead.splice(0)).toEqual(['/Volumes'])
     // the home folder of the machine, when none is given
     expect((await new FinderService({ trash: vi.fn() }).places()).home).toBeTruthy()
   })

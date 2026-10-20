@@ -81,7 +81,7 @@ export function BootSequence({ onSkip }: { onSkip: () => void }) {
           </div>
           <div className="h-1 overflow-hidden rounded-full bg-elevated">
             <motion.div
-              className="h-full rounded-full bg-gradient-to-r from-cyan via-blue to-purple"
+              className="h-full rounded-full bg-linear-to-r from-cyan via-blue to-purple"
               animate={{ width: `${progress}%` }}
               transition={{ duration: total / 1000 / BOOT_LINES.length, ease: 'linear' }}
               style={{ boxShadow: '0 0 12px rgb(var(--accent-cyan) / 0.6)' }}

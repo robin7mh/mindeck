@@ -113,10 +113,14 @@ export function Workspace({ render, keep }: WorkspaceProps) {
   }, [])
 
   // Kept modules stay mounted from their first time on screen.
+  const onScreen = visible.map((p) => p.module).join(' ')
   useEffect(() => {
-    const add = keep.filter((id) => shown.has(id) && !kept.includes(id))
-    if (add.length) setKept([...kept, ...add])
-  })
+    const ids = onScreen.split(' ')
+    setKept((prev) => {
+      const add = keep.filter((id) => ids.includes(id) && !prev.includes(id))
+      return add.length ? [...prev, ...add] : prev
+    })
+  }, [keep, onScreen])
 
   // Native views (the browser's page) follow every move; dialogs over them, and a divider being dragged across, freeze them.
   useLayoutEffect(() => relayout())
@@ -166,7 +170,7 @@ export function Workspace({ render, keep }: WorkspaceProps) {
               rememberFocus(pane.id, e.target as HTMLElement)
               useWorkspace.getState().focus(pane.id)
             }}
-            className={cn('absolute flex min-h-0 min-w-0 flex-col outline-none', chrome && '[&>*]:rounded-t-none')}
+            className={cn('absolute flex min-h-0 min-w-0 flex-col outline-hidden', chrome && '*:rounded-t-none')}
           >
             <PaneContext.Provider value={focused ? FOCUSED : UNFOCUSED}>
               <ModuleSlot id={id} visible render={render} />

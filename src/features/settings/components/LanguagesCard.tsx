@@ -28,7 +28,7 @@ function Tool({ tool, part, busy, onInstall }: { tool: ToolState; part: Part; bu
           aria-label={l.installTool(tool.name)}
           disabled={busy}
           onClick={onInstall}
-          className="flex shrink-0 items-center gap-1 rounded border border-cyan/40 px-1.5 py-px font-sans text-[11px] text-cyan hover:bg-cyan/10 disabled:opacity-50"
+          className="flex shrink-0 items-center gap-1 rounded-sm border border-cyan/40 px-1.5 py-px font-sans text-[11px] text-cyan hover:bg-cyan/10 disabled:opacity-50"
         >
           {busy ? <Loader2 size={10} className="animate-spin" /> : <Download size={10} />} {l.install}
         </button>
@@ -98,14 +98,14 @@ export function LanguagesCard() {
       {!list && !error && <Loader2 size={14} aria-label={t.common.loading} className="animate-spin text-text-muted" />}
       <ul className="grid gap-x-4 gap-y-1 sm:grid-cols-2">
         {list?.map((lang) => (
-          <li key={lang.id} className="rounded border border-hud/40 px-2 py-1.5">
+          <li key={lang.id} className="rounded-sm border border-hud/40 px-2 py-1.5">
             <p className="font-sans text-[12.5px] font-medium text-text-primary">{lang.name}</p>
             <div className="mt-0.5 space-y-0.5">
               <Tool tool={lang.server} part="server" busy={busy === `${lang.id}:server`} onInstall={() => void install(lang.id, 'server')} />
               {lang.debugger && <Tool tool={lang.debugger} part="debugger" busy={busy === `${lang.id}:debugger`} onInstall={() => void install(lang.id, 'debugger')} />}
             </div>
             {log && log.key.startsWith(`${lang.id}:`) && log.lines.length > 0 && (
-              <pre aria-label={l.log} className="mt-1 max-h-24 overflow-y-auto whitespace-pre-wrap rounded bg-void/60 p-1.5 font-mono text-[10.5px] text-text-muted">
+              <pre aria-label={l.log} className="mt-1 max-h-24 overflow-y-auto whitespace-pre-wrap rounded-sm bg-void/60 p-1.5 font-mono text-[10.5px] text-text-muted">
                 {log.lines.join('\n')}
               </pre>
             )}

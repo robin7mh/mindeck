@@ -53,6 +53,9 @@ const text = (status: number, body = '', headers: Record<string, string> = {}) =
 const SANDBOX = "default-src 'none'; img-src data:; style-src 'unsafe-inline'; sandbox"
 
 
+/** A Windows path to another machine or a device (`\\host\share`, `//host/share`, `\\?\C:\…`). */
+const NETWORK_PATH = /^[\\/]{2}/
+
 /** The absolute path a protocol URL stands for (null when it is none). */
 export function pathOf(url: URL, platform: NodeJS.Platform = process.platform): string | null {
   let path: string
@@ -63,6 +66,8 @@ export function pathOf(url: URL, platform: NodeJS.Platform = process.platform): 
   }
   // Windows: /C:/Users/… → C:/Users/…
   if (platform === 'win32' && /^\/[a-z]:\//i.test(path)) path = path.slice(1)
+  // …and never `\\host\share` or `\\?\…` (either slash): merely looking there sends the user's credentials (NTLM).
+  if (platform === 'win32' && NETWORK_PATH.test(path)) return null
   const absolute = platform === 'win32' ? win32.isAbsolute(path) : posix.isAbsolute(path)
   return absolute && !path.includes('\0') ? path : null
 }

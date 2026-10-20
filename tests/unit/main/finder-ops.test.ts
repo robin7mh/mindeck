@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process'
 import { createServer } from 'node:net'
 import { existsSync } from 'node:fs'
 import { chmod, mkdir, readFile, readdir, readlink, rm, stat, symlink, truncate, writeFile } from 'node:fs/promises'
@@ -12,13 +13,14 @@ const fsFail = vi.hoisted(() => ({
   rename: null as null | NodeJS.ErrnoException,
   readdir: null as null | NodeJS.ErrnoException,
   readlink: null as null | NodeJS.ErrnoException,
+  unlink: null as null | NodeJS.ErrnoException,
   statfs: null as null | { bavail: number; bsize: number },
   readStream: null as null | string,
   writeStream: null as null | string
 }))
 vi.mock('node:fs/promises', async (importOriginal) => {
   const real = await importOriginal<typeof import('node:fs/promises')>()
-  const once = <T extends (...a: never[]) => unknown>(key: 'rename' | 'readdir' | 'readlink', fn: T) =>
+  const once = <T extends (...a: never[]) => unknown>(key: 'rename' | 'readdir' | 'readlink' | 'unlink', fn: T) =>
     ((...args: Parameters<T>) => {
       const err = fsFail[key]
       if (err) {
@@ -32,6 +34,7 @@ vi.mock('node:fs/promises', async (importOriginal) => {
     rename: once('rename', real.rename),
     readdir: once('readdir', real.readdir),
     readlink: once('readlink', real.readlink),
+    unlink: once('unlink', real.unlink),
     statfs: (async (p: string) => fsFail.statfs ?? real.statfs(p)) as typeof real.statfs
   }
 })
@@ -294,6 +297,10 @@ describe('undo: restore moves and the trash', () => {
     const t = freedesktopTrash(data)
     await expect(t.trash(join(data, 'missing.txt'))).rejects.toMatchObject({ code: 'ENOENT' })
     expect(await readdir(join(data, 'Trash', 'info'))).toEqual([])
+    // Even when the record won't go, the move's error is the one reported.
+    fsFail.unlink = errno('EIO')
+    await expect(t.trash(join(data, 'missing.txt'))).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(await readdir(join(data, 'Trash', 'info'))).toEqual(['missing.txt.trashinfo'])
     // A name the record cannot have (too long with ".trashinfo") — reported.
     const long = 'n'.repeat(250)
     await writeFile(join(data, long), '')
@@ -392,6 +399,14 @@ describe('archives', () => {
     expect((await readdir(home)).filter((n) => n.startsWith('.'))).toEqual([]) // no leftovers
 
     await expect(finder.extract(join(home, 'A', 'one.txt'), 'u3')).rejects.toMatchObject({ code: 'not-archive' })
+  })
+
+  it('leaves out what is neither file, folder nor link (a FIFO)', async () => {
+    const { finder, home } = await world()
+    execFileSync('mkfifo', [join(home, 'A', 'pipe')])
+    const zip = await finder.compress([join(home, 'A')], 'z4')
+    const out = await finder.extract(zip, 'u4')
+    expect((await readdir(out)).sort()).toEqual(['Sub', 'one.txt', 'two.txt'])
   })
 
   it('cleans up when compressing fails (unreadable file, unreadable link, full disk)', async () => {

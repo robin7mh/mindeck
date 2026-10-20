@@ -2,7 +2,7 @@
 #
 # Mindeck core image — the same core as the desktop app, headless: API
 # (HTTP + WebSocket, device pairing) and the web UI on one port. The mobile
-# app and browsers connect here. The database runs from docker-compose.yml.
+# app and browsers connect here. All state lives as files under /data.
 #
 #   docker build -t mindeck .
 #   docker run -p 127.0.0.1:7420:7420 -v mindeck-data:/data mindeck
@@ -10,7 +10,11 @@
 
 # The full image ships python3/make/g++: node-pty has no Linux prebuilds and
 # compiles here. Electron itself is not needed.
-FROM node:22-bookworm AS build
+# Base images are pinned by digest (the multi-arch index of the tag named in
+# front of it): a rebuild gets the same bytes. To update, take the new digest of
+# the tag (`docker buildx imagetools inspect node:22-bookworm`) — Dependabot
+# proposes it (.github/dependabot.yml).
+FROM node:22-bookworm@sha256:0e5f906573693feaa1e21057ebdcfdb5bd5021f050b2dc7c9deceb629c7da2a8 AS build
 WORKDIR /app
 ENV ELECTRON_SKIP_BINARY_DOWNLOAD=1
 COPY package.json package-lock.json ./
@@ -24,7 +28,7 @@ ARG MINDECK_CLOUD_URL=
 ARG MINDECK_CLOUD_KEY=
 RUN npm run web:build && npm run server:build && npm prune --omit=dev
 
-FROM node:22-bookworm-slim
+FROM node:22-bookworm-slim@sha256:c3de60bf2f9dd0ac6370e6117950ff62d6e339527e7472301c9c78a017978392
 WORKDIR /app
 # git for project detection (and the opt-in remote terminal). Overridable,
 # e.g. --build-arg APT_PACKAGES= where no Debian mirror is reachable.

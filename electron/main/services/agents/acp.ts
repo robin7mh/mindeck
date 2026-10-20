@@ -6,7 +6,8 @@ import type { AvailableCommand, PermissionOption, SessionConfigOption, SessionMo
 import type { ApprovalDecision, ChatMessage, ToolCallPart, ToolCallStatus, ToolRisk } from '@shared/types/ai'
 import type { AgentCommand, AgentSession, SessionOption } from '@shared/types/agents'
 import { shellCommand, shellQuote } from '../terminal/TerminalService'
-import type { Applied, SessionState } from './transcript'
+import { spawnProgram } from '../../lib/executables'
+import { reachesOutside, type Applied, type SessionState } from './transcript'
 
 /** How Mindeck starts each ACP agent (the user's own CLI, signed in their way). */
 export type AcpKind = 'codex' | 'gemini'
@@ -14,6 +15,8 @@ export type AcpKind = 'codex' | 'gemini'
 export const ACP_AGENTS: Record<AcpKind, { name: string; file: string; args: string[] }> = {
   // OpenAI's Codex through Zed's ACP adapter; uses the Codex sign-in (ChatGPT plan or API key).
   // An exact version: npx fetches it at run time, and a range would run whatever was published last.
+  // npm never lets a version be published twice, and the adapter pins its platform binaries exactly:
+  // with npm's integrity check of the tarball this runs exactly what was released (see isolatedNpx).
   codex: { name: 'Codex', file: 'npx', args: ['-y', '@zed-industries/codex-acp@0.16.0'] },
   gemini: { name: 'Gemini CLI', file: 'gemini', args: ['--experimental-acp'] }
 }
@@ -25,26 +28,55 @@ export interface AcpProcess {
   onExit(cb: (code: number) => void): void
 }
 
-/** Start an agent through the user's login shell (their PATH), talking ACP over stdio. */
-export function spawnAcp(command: { file: string; args: string[] }, cwd: string, env: Record<string, string>): AcpProcess {
-  const line = [command.file, ...command.args].map(shellQuote).join(' ')
-  const child =
-    process.platform === 'win32'
-      ? spawn(command.file, command.args, { cwd, env, windowsHide: true })
-      : spawn(shellCommand().file, ['-lc', `exec ${line}`], { cwd, env })
-  child.stderr.resume() // agents log there; never let the pipe fill up
+/**
+ * npx's arguments with its project set to `prefix`, a folder of Mindeck's:
+ * in the agent's folder (a cloned repository) npx would run a package of
+ * the same name from its node_modules and fetch from the registry its
+ * .npmrc names. The adapter still runs in the agent's folder.
+ */
+export function isolatedNpx(command: { file: string; args: string[] }, prefix?: string): { file: string; args: string[] } {
+  return prefix && command.file === 'npx' ? { ...command, args: ['--prefix', prefix, ...command.args] } : command
+}
+
+/**
+ * Start an agent through the user's login shell (their PATH), talking ACP
+ * over stdio. Windows: directly, the program from the PATH (spawnProgram).
+ * `npmPrefix`: see isolatedNpx.
+ */
+export function spawnAcp(command: { file: string; args: string[] }, cwd: string, env: Record<string, string>, npmPrefix?: string): AcpProcess {
+  const { file, args } = isolatedNpx(command, npmPrefix)
+  const line = [file, ...args].map(shellQuote).join(' ')
+  const child = process.platform === 'win32' ? spawnProgram(file, args, { cwd, env }) : spawn(shellCommand().file, ['-lc', `exec ${line}`], { cwd, env })
+  child.stderr!.resume() // agents log there; never let the pipe fill up
   return {
-    stream: ndJsonStream(Writable.toWeb(child.stdin) as WritableStream<Uint8Array>, Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>),
+    stream: ndJsonStream(Writable.toWeb(child.stdin!) as WritableStream<Uint8Array>, Readable.toWeb(child.stdout!) as ReadableStream<Uint8Array>),
     kill: () => void child.kill(),
     onExit: (cb) => void child.on('exit', (code) => cb(code ?? 0))
   }
 }
+
+/** spawnAcp with npx isolated in `npmPrefix` (see isolatedNpx). */
+export const acpSpawner =
+  (npmPrefix: string) =>
+  (command: { file: string; args: string[] }, cwd: string, env: Record<string, string>): AcpProcess =>
+    spawnAcp(command, cwd, env, npmPrefix)
 
 /** read / search / think / fetch only look; edit / delete / move change files; the rest runs things. */
 export function kindRisk(kind: ToolKind | null | undefined): ToolRisk {
   if (kind === 'read' || kind === 'search' || kind === 'think' || kind === 'fetch') return 'read'
   if (kind === 'edit' || kind === 'delete' || kind === 'move') return 'write'
   return 'execute'
+}
+
+/**
+ * The risk an approval carries: by kind, except that fetching (a way out for
+ * whatever was read) and reading outside the session's folder count as changes —
+ * a device allows them only with remote shells.
+ */
+export function acpApprovalRisk(kind: ToolKind | null | undefined, paths: string[], cwd: string): ToolRisk {
+  if (kind === 'fetch') return 'write'
+  const risk = kindRisk(kind)
+  return risk === 'read' && paths.some((p) => reachesOutside(p, cwd)) ? 'write' : risk
 }
 
 /**

@@ -117,6 +117,7 @@ export const REQUEST_SCHEMAS: Schemas = {
   'projects:githubDesktop': none,
   'projects:openInGitHubDesktop': z.object({ id }),
   'projects:openFile': z.object({ id, file: path, line: z.number().int().min(0).optional() }),
+  'projects:trust': z.object({ id, trusted: z.boolean() }),
 
   'system:subscribe': none,
   'system:unsubscribe': none,
@@ -452,7 +453,12 @@ export const REQUEST_SCHEMAS: Schemas = {
   'cloud:resendVerification': none,
   'cloud:forgotPassword': z.object({ email }),
   'cloud:checkout': none,
-  'cloud:adopt': z.object({ token: z.string().min(10).max(10_000), account: z.object({ email: z.string().max(320), name: z.string().max(200).nullable() }) }),
+  'cloud:installId': none,
+  'cloud:adopt': z.object({
+    token: z.string().min(10).max(10_000),
+    account: z.object({ email: z.string().max(320), name: z.string().max(200).nullable() }),
+    revokedKids: z.array(z.string().max(64)).max(256).optional()
+  }),
   'cloud:syncStatus': none,
   'cloud:syncPush': z.object({ appearance: z.unknown().optional(), locale: z.enum(['de', 'en']).optional(), force: z.boolean().optional() }),
   'cloud:syncPull': none,

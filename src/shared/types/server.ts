@@ -64,6 +64,12 @@ export interface ServerStatus {
 export interface TlsInfo {
   /** SHA-256 of the certificate, `AB:CD:…` — what a browser's certificate viewer shows. */
   fingerprint: string
+  /**
+   * SHA-256 of the certificate's public key (its DER SubjectPublicKeyInfo), `AB:CD:…`. The core
+   * renews its certificate on the same key (a new address, the end of its validity), so this one
+   * stays when `fingerprint` changes: what a native client should pin.
+   */
+  spkiFingerprint: string
   expiresAt: string
   /** Made by the core itself (trusted by comparing the fingerprint), or one set in the environment. */
   selfSigned: boolean
@@ -78,6 +84,8 @@ export interface PairingCode {
   urls: string[]
   /** The certificate's SHA-256 when the core speaks HTTPS: goes into the pairing link (`&fp=`). */
   fingerprint?: string
+  /** Its public key's SHA-256 (see `TlsInfo.spkiFingerprint`): goes into the pairing link as `&pk=`. */
+  spkiFingerprint?: string
 }
 
 /**
@@ -107,6 +115,8 @@ export interface PairResult {
    * native client pins it (and compares it with the `fp` of the pairing link).
    */
   fingerprint?: string
+  /** Over HTTPS: the SHA-256 of its public key — a pin that survives the certificate's renewal. */
+  spkiFingerprint?: string
 }
 
 /** One level of the server-side folder browser (web/mobile folder picker). */

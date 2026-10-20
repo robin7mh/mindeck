@@ -44,6 +44,7 @@ import { useRemote } from '@/features/remote/store'
 import { useLintStatus } from '../lintStatus'
 import type { PickItem } from '../scm'
 import { GitGraph } from './GitGraph'
+import { TrustBanner } from './TrustBanner'
 import type { CursorInfo } from './CodeEditor'
 import { usePaneFocused } from '@/features/workspace/pane'
 import { usePalette } from '@/features/palette/store'
@@ -213,6 +214,8 @@ function toggleBreakpointAtCursor(): void {
 
 /** How often open files are compared with the disk while the editor is visible. */
 const DISK_POLL_MS = 3000
+/** …and while the window is on screen without the focus (next to another app, an agent at work): less often. */
+const BLURRED_POLL_MS = 15_000
 
 /** ⌘1…⌘9 (Ctrl elsewhere) — the editor group to focus (0-based), or undefined. */
 function groupKey(e: KeyboardEvent): number | undefined {
@@ -234,6 +237,7 @@ export function EditorView({ active, onNavigate }: { active: boolean; onNavigate
   const projects = useProjects((s) => s.projects)
   const [projectsLoaded, setProjectsLoaded] = useState(projects.length > 0)
   const projectId = useEditor((s) => s.projectId)
+  const editorProject = projects.find((p) => p.id === projectId)
   const activeGroup = useEditor((s) => s.activeGroup)
   /** The file of the focused group — the status bar and file commands are about it. */
   const focused = useEditor((s) => s.tabs.find((x) => x.id === s.activeId))
@@ -330,12 +334,32 @@ export function EditorView({ active, onNavigate }: { active: boolean; onNavigate
   useEffect(() => {
     if (!active) return
     // Disk and git both follow edits made elsewhere (agents, terminals, other editors) — not while the
-    // window is hidden with Mindeck running in the background (no git status every few seconds for hours);
-    // the window coming back has the focus, and that looks again.
-    const check = () => {
-      if (document.hidden) return
+    // window is hidden with Mindeck running in the background (no git status every few seconds for hours),
+    // and only now and then while it's on screen without the focus. The window coming back (shown again,
+    // or focused) looks right away — once, though both usually come together.
+    let blurred = false
+    let last = 0
+    let returned = -Infinity
+    const look = () => {
+      last = Date.now()
       void useEditor.getState().checkDisk()
       void useScm.getState().refresh()
+    }
+    const poll = () => {
+      if (document.hidden || (blurred && Date.now() - last < BLURRED_POLL_MS)) return
+      look()
+    }
+    const back = () => {
+      if (document.hidden || Date.now() - returned < 1000) return
+      returned = Date.now()
+      look()
+    }
+    const onFocus = () => {
+      blurred = false
+      back()
+    }
+    const onBlur = () => {
+      blurred = true
     }
     const onKey = (e: KeyboardEvent) => {
       const scm = useScm.getState()
@@ -373,16 +397,21 @@ export function EditorView({ active, onNavigate }: { active: boolean; onNavigate
       else return
       e.preventDefault()
     }
-    check()
-    const timer = window.setInterval(check, DISK_POLL_MS)
-    window.addEventListener('focus', check)
+    poll()
+    const timer = window.setInterval(poll, DISK_POLL_MS)
+    window.addEventListener('focus', onFocus)
+    window.addEventListener('blur', onBlur)
+    document.addEventListener('visibilitychange', back)
     if (paneFocused) window.addEventListener('keydown', onKey)
     return () => {
       window.clearInterval(timer)
-      window.removeEventListener('focus', check)
+      window.removeEventListener('focus', onFocus)
+      window.removeEventListener('blur', onBlur)
+      document.removeEventListener('visibilitychange', back)
       window.removeEventListener('keydown', onKey)
     }
-  }, [active, paneFocused])
+    // `t`: command titles (user key bindings) follow a language switch.
+  }, [active, paneFocused, t])
 
   // The debugger follows the core's session events while the editor is mounted.
   useEffect(() => useDebug.getState().connect(), [])
@@ -502,6 +531,7 @@ export function EditorView({ active, onNavigate }: { active: boolean; onNavigate
 
       {/* Editor groups (one may show a diff, the graph …) · debug console · status */}
       <section className="flex min-w-0 flex-1 flex-col">
+        {editorProject && <TrustBanner project={editorProject} />}
         {live.error && (
           <Banner tone="warn">
             <AlertTriangle size={13} className="shrink-0 text-danger" />

@@ -6,9 +6,10 @@ import { SearchAddon, type ISearchOptions } from '@xterm/addon-search'
 import { SerializeAddon } from '@xterm/addon-serialize'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { WebglAddon } from '@xterm/addon-webgl'
-import { ipc, onEvent } from '@shared/ipc/client'
+import { ipc, onEvent, onResync } from '@shared/ipc/client'
 import type { TerminalData, TerminalSettings } from '@shared/types/terminal'
 import { getT, intlLocale } from '@/lib/i18n'
+import { openExternal } from '@/lib/links'
 import { APPEARANCE_ATTRIBUTES } from '@/lib/theme'
 import { cssRgb } from '@/lib/tokens'
 import { CommandTracker } from './commands'
@@ -65,6 +66,7 @@ const SAVED_LINES = 1000
 export const FIT_SETTLE_MS = 120
 
 /** Serialized output as plain text: colors and cursor moves dropped (a restored tab shows it greyed). */
+/* eslint-disable no-control-regex -- ANSI escape sequences are what this strips */
 export function plainText(serialized: string): string {
   return serialized
     .replace(/\x1b\[(\d*)C/g, (_, n: string) => ' '.repeat(Number(n || 1)))
@@ -73,6 +75,7 @@ export function plainText(serialized: string): string {
     .replace(/\x1b[()*+]?./g, '')
     .replace(/\s+$/, '')
 }
+/* eslint-enable no-control-regex */
 
 /** The restored output, greyed, with a line saying from when. */
 function restoredBlock(r: { scrollback: string; savedAt: string }): string {
@@ -123,12 +126,15 @@ export function useXterm(hostRef: RefObject<HTMLDivElement>, id: string, exited:
       allowTransparency: true,
       // Unicode 11 widths and the command marks (decorations) are "proposed" API.
       allowProposedApi: true,
+      // OSC 8 hyperlinks (`ls --hyperlink`, compilers): the same way out as plain URLs — xterm's
+      // own default opens an empty window first, which the desktop window refuses.
+      linkHandler: { activate: (_event, uri) => void openExternal(uri), allowNonHttpProtocols: false },
       theme: themeFromTokens()
     })
     const fit = new FitAddon()
     term.loadAddon(fit)
     // URLs are clickable; main routes window.open to the OS browser.
-    term.loadAddon(new WebLinksAddon((_event, uri) => void window.open(uri, '_blank')))
+    term.loadAddon(new WebLinksAddon((_event, uri) => void openExternal(uri)))
     const search = new SearchAddon()
     term.loadAddon(search)
     const serialize = new SerializeAddon()
@@ -180,19 +186,46 @@ export function useXterm(hostRef: RefObject<HTMLDivElement>, id: string, exited:
       )
     }
 
-    let attachedEnd: number | null = null
+    // `shown`: the output offset the view has written up to; null while (re)attaching.
+    let shown: number | null = null
     const queued: TerminalData[] = []
-    const show = (d: TerminalData) => {
-      if (attachedEnd === null) {
+    const show = (d: TerminalData, mayReattach = true) => {
+      if (shown === null) {
         queued.push(d)
         return
       }
       const start = d.end - d.data.length
-      if (d.end <= attachedEnd) return
-      term.write(start < attachedEnd ? d.data.slice(attachedEnd - start) : d.data)
+      if (d.end <= shown) return
+      // A gap (events lost while the push channel was down): take the missing part from the scrollback.
+      if (start > shown && mayReattach) {
+        queued.push(d)
+        attach(shown)
+        return
+      }
+      term.write(d.data.slice(Math.max(0, shown - start)))
+      shown = d.end
       if (persist) scheduleSave()
     }
-    const flushQueue = () => queued.splice(0).forEach(show)
+    /**
+     * Fetches the scrollback: all of it the first time (`from` null), else
+     * what came after `from`. If that fails, queued output is shown as it is
+     * (without asking again).
+     */
+    const attach = (from: number | null) => {
+      shown = null
+      ipc('terminal:attach', { id })
+        .then(({ buffer, end }) => {
+          const bufferStart = end - buffer.length
+          const missing = from === null || bufferStart >= from ? buffer : buffer.slice(from - bufferStart)
+          if (from === null || missing) term.write(missing)
+          shown = Math.max(end, from ?? 0)
+          queued.splice(0).forEach((d) => show(d))
+        })
+        .catch(() => {
+          shown = from ?? 0
+          queued.splice(0).forEach((d) => show(d, false))
+        })
+    }
 
     const offData = onEvent('terminal:data', (d) => d.id === id && show(d))
     const offExit = onEvent('terminal:exit', (e) => {
@@ -202,16 +235,11 @@ export function useXterm(hostRef: RefObject<HTMLDivElement>, id: string, exited:
       if (note) term.write(note)
     })
 
-    ipc('terminal:attach', { id })
-      .then(({ buffer, end }) => {
-        term.write(buffer)
-        attachedEnd = end
-        flushQueue()
-      })
-      .catch(() => {
-        attachedEnd = 0
-        flushQueue()
-      })
+    attach(null)
+    // Back after an outage of the push channel (web UI, phone): fetch what the gap swallowed.
+    const offResync = onResync(() => {
+      if (shown !== null) attach(shown)
+    })
 
     const input = term.onData((data) => {
       if (exitedRef.current) {
@@ -284,6 +312,7 @@ export function useXterm(hostRef: RefObject<HTMLDivElement>, id: string, exited:
     return () => {
       offData()
       offExit()
+      offResync()
       offSettings()
       input.dispose()
       resized.dispose()
@@ -294,11 +323,14 @@ export function useXterm(hostRef: RefObject<HTMLDivElement>, id: string, exited:
       ro.disconnect()
       window.clearTimeout(settling)
       mo.disconnect()
-      term.dispose()
+      // A task later: open() left xterm a timer that measures the view (Viewport.syncScrollArea);
+      // a view gone in the same task (StrictMode, a layout switching fast) would make it throw.
+      window.setTimeout(() => term.dispose())
       termRef.current = null
       fitRef.current = null
       parts.current = null
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- api is a stable ref (below); the view lives per session id
   }, [id, hostRef])
 
   // Stable across renders; a call while the view is gone does nothing.

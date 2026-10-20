@@ -19,6 +19,14 @@ export const en = {
     hAgo: (n: number) => `${n} h ago`
   },
 
+  /** The client's own errors (the core's come in English, see ANALYSE §5). */
+  transport: {
+    offline: 'The Mindeck core is not reachable.',
+    badResponse: (status: string) => `Unexpected answer from the Mindeck core (${status})`,
+    noBridge: 'Not connected to a Mindeck core',
+    rateLimited: (seconds?: string) => `Too many requests — please try again ${seconds ? `in ${seconds} s` : 'in a moment'}.`
+  },
+
   nav: {
     modules: 'Modules',
     core: 'Core',
@@ -189,6 +197,12 @@ export const en = {
     trial: 'Trial',
     trialLeft: (time: string) => `${time} of trial left`,
     offlineUntil: (date: string) => `Works offline until ${date}`,
+    offlineEnding: (days: number, date: string) =>
+      `The offline certificate runs out ${days === 0 ? 'within a day' : `in ${days} ${days === 1 ? 'day' : 'days'}`} (${date}). Connect Mindeck to the internet once to renew it — without it, Mindeck locks once it has run out and the cloud can't be reached.`,
+    offlineChip: (days: number) => `Offline license ends ${days === 0 ? 'within a day' : `in ${days} ${days === 1 ? 'day' : 'days'}`}`,
+    suspendedTitle: 'Payment disputed — license paused',
+    suspendedIntro: 'A payment for your lifetime license was disputed (a chargeback). Mindeck is paused until the dispute is closed. If this is a mistake, settle it with your bank or contact Mindeck support — then check again here.',
+    manageDevices: 'Manage devices',
     devBuild: 'Developer build — Mindeck runs without a license here.',
     errors: {
       invalid_credentials: 'Email or password is wrong.',
@@ -199,6 +213,7 @@ export const en = {
       session_expired: 'You were signed out. Please sign in again.',
       already_verified: 'Your email is already confirmed.',
       already_licensed: 'This account already has the lifetime license.',
+      device_limit: 'This account is signed in on the most computers it may use. Remove one under Devices on your account page on the Mindeck website, then sign in again.',
       billing_unavailable: 'Payments are not available yet.',
       invalid_input: 'Please check your input.',
       'bad-request': 'Please check your input.',
@@ -280,6 +295,8 @@ export const en = {
     introPath: 'Settings → Devices',
     code: 'Pairing code',
     deviceName: 'Device name',
+    remember: 'Stay paired on this browser',
+    rememberHint: 'Turn off on a shared computer: the pairing then ends when the browser closes, and you pair again next time.',
     submit: 'Pair device',
     noLongerPaired: 'This device is no longer paired',
     noCore: 'No Mindeck core answered at this address',
@@ -543,6 +560,9 @@ agents: {
     allowOnce: 'Allow once',
     allowAlways: 'Always allow',
     deny: 'Deny',
+    showWhole: (execute: boolean, hidden: number) => `${execute ? 'Show the whole command' : 'Show everything'} (+${hidden} characters)`,
+    showLess: 'Show less',
+    invisibleChars: (n: number) => `Contains ${n} invisible or control character${n === 1 ? '' : 's'} — shown as ⟨U+…⟩`,
     // assistant pane
     newChatWith: (name: string) => `New chat · ${name}`,
     assistantName: 'Assistant',
@@ -551,8 +571,10 @@ agents: {
       'ai-credit-exhausted': 'Your AI credit is used up. It renews at the start of next month — or add your own API key in Settings to go on now.',
       'ai-credit-exhausted-trial': 'The AI credit of the trial is used up. With a license you get new credit every month — or add your own API key in Settings.',
       'license-required': 'The AI needs an active trial or license.',
-      'ai-unavailable': 'The AI is not available right now — please try again later.',
+      'ai-unavailable': 'The AI is not available right now — please try again in a moment.',
       'rate-limited': 'The AI is busy — please try again in a moment.',
+      'ai-blocked': 'The AI through Mindeck Cloud is switched off for your account. Contact Mindeck support — or add your own API key in Settings.',
+      'ai-unsupported-content': 'This request contains content the AI through Mindeck Cloud doesn’t take (a document by URL or a file from the Files API). Attach the file itself instead.',
       session_expired: 'Please sign in to your Mindeck account again.',
       'transcript-damaged': 'The earlier messages of this session could not be read — the file was set aside in the agents data folder. The session itself can go on.'
     },
@@ -975,6 +997,13 @@ agents: {
     paletteRunAll: 'Test: Run all tests',
     paletteRunFile: 'Test: Run tests in this file'
   },
+  trust: {
+    restricted: (name: string) =>
+      `Restricted mode: Mindeck runs none of ${name}’s own tools — not its TypeScript, ESLint / Prettier, Python, Git hooks and config or SFTP config. Trust this project only if you trust its authors.`,
+    trust: 'Trust this project',
+    trusting: 'Trusting…'
+  },
+
   lint: {
     fix: (rule: string) => `Fix: ${rule} (ESLint)`,
     disable: (rule: string) => `Disable ${rule} for this line`,
@@ -1863,6 +1892,7 @@ agents: {
     cloudDefault: 'fast · light on credit',
     costFactor: (n: number) => `about ${n}× the credit`,
     ownKeyWins: 'Your own API key is set: the assistant uses it instead of this credit.',
+    cloudBlocked: 'The AI through Mindeck Cloud is switched off for your account — contact Mindeck support, or add your own API key below.',
     ownKeyTitle: 'Your own API key (optional)',
     ownKeyHint: 'For heavy use: requests go straight to Anthropic, on your bill — no credit, every model, suggestions while typing.',
     keyFrom: (env: boolean, hint?: string) => `Anthropic key ${env ? 'from the environment' : 'stored'} · …${hint}`,

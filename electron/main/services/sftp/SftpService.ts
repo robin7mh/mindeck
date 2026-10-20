@@ -1,4 +1,4 @@
-import { mkdir, readdir, readFile, realpath, stat } from 'node:fs/promises'
+import { lstat, mkdir, readdir, readFile, realpath, stat } from 'node:fs/promises'
 import { homedir, userInfo } from 'node:os'
 import { dirname, join, posix, relative, sep } from 'node:path'
 import ignore from 'ignore'
@@ -52,14 +52,17 @@ export class SftpService {
   constructor(
     private readonly opts: {
       resolveRoot: (projectId: string) => string | undefined
+      /** Whether the project is trusted (WorkspaceTrust): its .vscode/sftp.json counts only then. */
+      trusted?: (projectId: string) => boolean
       client?: () => Promise<SftpClient>
       publish?: (progress: SftpProgress) => void
       home?: string
     }
   ) {}
 
-  /** The project's targets — none when it has no .vscode/sftp.json. */
+  /** The project's targets — none when it has no .vscode/sftp.json, or isn't trusted. */
   async targets(projectId: string): Promise<SftpTarget[]> {
+    if (!this.trusts(projectId)) return []
     return (await this.configs(projectId)).map(({ name, raw }) => ({
       name,
       host: raw.host!,
@@ -169,7 +172,13 @@ export class SftpService {
     })
   }
 
+  private trusts(projectId: string): boolean {
+    return this.opts.trusted?.(projectId) ?? false
+  }
+
   private async session<T>(projectId: string, target: string, fn: (s: { client: SftpClient; remote: string; root: string; context: string; ig: ReturnType<typeof ignore> }) => Promise<T>): Promise<T> {
+    // A repository's sftp.json names a server to send files to (and keys to send along): only once the user trusts the project.
+    if (!this.trusts(projectId)) throw coded('untrusted', 'SFTP uses .vscode/sftp.json only in projects you trust')
     const found = (await this.configs(projectId)).find((c) => c.name === target)
     if (!found) throw coded('not-found', `No SFTP target ${target}`)
     const { raw } = found
@@ -207,12 +216,18 @@ export class SftpService {
 
 const clean = (context?: string) => (context ?? '').replace(/^\.?\/+|\/+$/g, '')
 
-/** Files under `abs` (or `abs` itself), relative-to-context ignores respected. */
-async function collect(abs: string, context: string, ig: ReturnType<typeof ignore>, out: string[]): Promise<void> {
+/**
+ * Files under `abs` (or `abs` itself), relative-to-context ignores respected.
+ * Links inside a folder are skipped, never followed: `assets -> ~/.ssh` in a
+ * repository would upload the user's keys (`abs` itself passed confine).
+ */
+async function collect(abs: string, context: string, ig: ReturnType<typeof ignore>, out: string[], top = true): Promise<void> {
   const rel = relative(context, abs).split(sep).join('/')
   if (rel && ig.ignores(rel)) return
-  if (!(await stat(abs)).isDirectory()) return void out.push(abs)
-  for (const d of await readdir(abs)) await collect(join(abs, d), context, ig, out)
+  const info = top ? await stat(abs) : await lstat(abs)
+  if (info.isSymbolicLink()) return
+  if (!info.isDirectory()) return void out.push(abs)
+  for (const d of await readdir(abs)) await collect(join(abs, d), context, ig, out, false)
 }
 
 async function defaultClient(): Promise<SftpClient> {

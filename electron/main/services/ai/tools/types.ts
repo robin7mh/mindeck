@@ -5,6 +5,8 @@ import type { ToolRisk } from '@shared/types/ai'
 export interface ToolContext {
   /** Project the conversation is scoped to, if any. */
   projectId?: string
+  /** Only `projectId` may be named (an agent through MCP: its session's project, never another one). */
+  onlyProject?: boolean
   signal: AbortSignal
   /** Who calls (an agent's name, e.g. "Claude Code") — shown where the tool acts, like a browser tab. */
   agent?: string

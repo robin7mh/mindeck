@@ -8,7 +8,7 @@ import { findNode, folderChoices } from '../library'
 import { useBrowser } from '../store'
 
 export const field =
-  'w-full rounded-md border border-hud/60 bg-surface/50 px-2.5 py-1.5 font-sans text-[12.5px] text-text-primary outline-none focus:border-cyan/60'
+  'w-full rounded-md border border-hud/60 bg-surface/50 px-2.5 py-1.5 font-sans text-[12.5px] text-text-primary outline-hidden focus:border-cyan/60'
 export const dialogButton = 'rounded-md border border-hud/60 px-3 py-1.5 font-sans text-[12px] text-text-secondary transition-colors hover:border-cyan/50 hover:text-cyan'
 
 /** The two root folders by their names in the UI language. */
@@ -53,12 +53,12 @@ function Editor({ node, parent, added }: { node: BookmarkNode; parent: BookmarkF
   const heading = added ? t.library.added : isFolder(node) ? t.library.folderTitle : t.library.editTitle
 
   return (
-    <div role="dialog" aria-label={heading} className="fixed inset-0 z-[60] flex justify-center bg-void/40 pt-[12vh]" onMouseDown={close}>
+    <div role="dialog" aria-label={heading} className="fixed inset-0 z-60 flex justify-center bg-void/40 pt-[12vh]" onMouseDown={close}>
       <div className="h-fit w-[min(420px,90vw)] rounded-lg border border-hud/70 bg-panel/95 p-4 shadow-2xl shadow-black/50 backdrop-blur-md" onMouseDown={(e) => e.stopPropagation()}>
         <div className="mb-3 flex items-center gap-2">
           {!isFolder(node) && <Star size={15} className="fill-current text-amber" />}
           <h2 className="flex-1 font-sans text-[14px] font-semibold text-text-primary">{heading}</h2>
-          <button type="button" aria-label={t.common.close} onClick={close} className="rounded p-1 text-text-muted hover:bg-elevated hover:text-text-primary">
+          <button type="button" aria-label={t.common.close} onClick={close} className="rounded-sm p-1 text-text-muted hover:bg-elevated hover:text-text-primary">
             <X size={14} />
           </button>
         </div>

@@ -1,3 +1,4 @@
+import type { NodeLauncher } from '../lib/nodeProcess'
 import type { RestorableTrash } from './trash'
 
 /**
@@ -29,6 +30,12 @@ export interface Platform {
    * with its device token. Resolves once it is closed. Absent on a server.
    */
   openRemoteWindow?: (opts: { title: string; url: string; token: string; deviceId: string }) => { closed: Promise<void>; close: () => void }
+  /**
+   * How Node programs run (tsserver, the lint worker, the PHP debug adapter,
+   * the Dev Containers CLI): the desktop's in Electron utility processes. Absent:
+   * `process.execPath` is a real Node (the headless core).
+   */
+  node?: NodeLauncher
 }
 
 function coded(code: string, message: string): Error {

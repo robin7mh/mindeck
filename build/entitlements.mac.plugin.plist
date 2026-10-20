@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Electron's plugin helper ("Mindeck Helper (Plugin).app", signed with it by build/sign.cjs): the utility
+     processes Mindeck starts with allowLoadingUnsignedLibraries run in it — the lint worker (the project's
+     ESLint / Prettier with their plugins) and tsserver (a trusted project's tsconfig plugins). Their native
+     addons (unrs-resolver, @swc/core …) are not signed with Mindeck's team ID: disable-library-validation.
+     V8's JIT (allow-jit), no unsigned executable memory. Only Mindeck's main process can start this helper:
+     it is no Node of its own (the RunAsNode fuse is off). -->
+<plist version="1.0">
+  <dict>
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+  </dict>
+</plist>

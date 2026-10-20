@@ -28,7 +28,7 @@ function Editor({ group, at }: { group: BrowserTabGroup; at?: { x: number; y: nu
   const place = at ? { left: Math.max(8, Math.min(at.x, window.innerWidth - WIDTH - 8)), top: Math.min(at.y + 6, window.innerHeight - 260) } : { left: `calc(50% - ${WIDTH / 2}px)`, top: '12vh' }
 
   return (
-    <div className="fixed inset-0 z-[60]" onMouseDown={close}>
+    <div className="fixed inset-0 z-60" onMouseDown={close}>
       <div
         role="dialog"
         aria-label={t.browserTabs.editGroup}
@@ -44,7 +44,7 @@ function Editor({ group, at }: { group: BrowserTabGroup; at?: { x: number; y: nu
           maxLength={100}
           onChange={(e) => setTitle(e.target.value)}
           onKeyDown={(e) => (e.key === 'Enter' || e.key === 'Escape') && close()}
-          className="w-full rounded-md border border-hud/60 bg-surface/60 px-2.5 py-1.5 font-sans text-[13px] text-text-primary outline-none placeholder:text-text-muted focus:border-cyan/60"
+          className="w-full rounded-md border border-hud/60 bg-surface/60 px-2.5 py-1.5 font-sans text-[13px] text-text-primary outline-hidden placeholder:text-text-muted focus:border-cyan/60"
         />
         <div role="radiogroup" aria-label={t.browserTabs.groupColor} className="mt-2.5 flex gap-2 px-0.5">
           {TAB_GROUP_COLORS.map((color) => (

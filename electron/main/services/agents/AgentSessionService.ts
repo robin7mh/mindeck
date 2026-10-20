@@ -39,16 +39,16 @@ import { readJson, readJsonFile } from '../../lib/jsonFile'
 import { CLAUDE_MODELS, CLAUDE_MODES } from '@shared/types/claude'
 import { CLAUDE_COMMANDS, claudeArgs, claudeEnv, hookSettings, mcpConfig } from './claudeLaunch'
 import { detectAgents, loginShellProbe, type Probe } from './detect'
-import { applyHook, toolRisk, toolSummary, toolTitle, type Applied, type HookEvent } from './transcript'
+import { applyHook, approvalRisk, toolSummary, toolTitle, type Applied, type HookEvent } from './transcript'
 import { journalBody, journalTitle } from './journal'
 import {
   ACP_AGENTS,
+  acpApprovalRisk,
   acpCommands,
   applyAcpUpdate,
   findAcpTool,
   grantKey,
   KIND_TITLES,
-  kindRisk,
   openTurn,
   pickOption,
   sessionControls,
@@ -713,7 +713,7 @@ export class AgentSessionService {
     // Granted by kind: a title changes with every file or command.
     const kind = call.kind ?? link.kinds.get(call.toolCallId)
     const key = grantKey(kind)
-    const risk = kindRisk(kind)
+    const risk = acpApprovalRisk(kind, (call.locations ?? []).map((loc) => loc.path), l.session.cwd)
     if (hit) hit.part.status = 'awaiting-approval'
     let decision: ApprovalDecision = 'once'
     if (risk === 'execute' || !(await this.deps.permissions.isGranted(agent, key, l.session.projectId))) {
@@ -752,7 +752,8 @@ export class AgentSessionService {
   private async approve(l: Live, e: HookEvent, signal: AbortSignal): Promise<unknown> {
     const applied = applyHook(this.state(l), e)
     const name = e.tool_name ?? 'tool'
-    const risk = toolRisk(name)
+    // Reading outside the project or fetching from the web: allowed like a change (a device needs remote shells).
+    const risk = approvalRisk(name, e.tool_input, l.session.cwd)
     const part = this.tool(l, e.tool_use_id)
     let decision: ApprovalDecision = 'once'
     if (risk === 'execute' || !(await this.deps.permissions.isGranted('claude-code', name, l.session.projectId))) {

@@ -34,6 +34,7 @@ export default function JsonEditor({ value, onChange, onSave }: { value: string;
       model.dispose()
     }
     // The text is the editor's from here on; a new document remounts it (key).
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- see above
   }, [])
 
   return <div ref={host} className="h-full w-full" />

@@ -1,11 +1,11 @@
-import { useMemo, useState, type MouseEvent } from 'react'
+import { useState, type MouseEvent } from 'react'
 import { Code2, ExternalLink, FolderSearch, Globe, X } from 'lucide-react'
 import type { FinderPreview } from '@shared/types/finder'
 import { extOf } from '@shared/types/finder'
 import { TechLabel } from '@/components/ui/TechLabel'
 import { useT } from '@/lib/i18n'
 import { isMac } from '@/lib/platform'
-import { renderMarkdown } from '@/features/memory/markdown'
+import { Markdown } from '@/components/ui/Markdown'
 import { useBrowser } from '@/features/browser/store'
 import { entryKind, fileUrl, formatBytes, formatMode, formatModified, thumbUrl } from '../kinds'
 import { useFiles } from '../store'
@@ -24,14 +24,13 @@ function SystemThumb({ preview }: { preview: FinderPreview }) {
       </div>
     )
   }
-  return <img src={thumbUrl(preview.entry.path, 512)} alt="" onError={() => setFailed(true)} className="mx-auto max-h-80 max-w-full rounded border border-hud/40 object-contain" />
+  return <img src={thumbUrl(preview.entry.path, 512)} alt="" onError={() => setFailed(true)} className="mx-auto max-h-80 max-w-full rounded-sm border border-hud/40 object-contain" />
 }
 
 function Body({ preview }: { preview: FinderPreview }) {
   const t = useT()
   const { entry, type } = preview
   const markdown = type === 'text' && ['md', 'markdown', 'mdx'].includes(extOf(entry.name))
-  const html = useMemo(() => (markdown ? renderMarkdown(preview.text ?? '', {}) : ''), [markdown, preview.text])
 
   // Links in a rendered note open in Mindeck's browser, never in this window.
   const onClick = (e: MouseEvent) => {
@@ -41,8 +40,8 @@ function Body({ preview }: { preview: FinderPreview }) {
     if (/^https?:/i.test(a.href)) void useBrowser.getState().show(a.href)
   }
 
-  if (type === 'image') return <img src={fileUrl(entry.path)} alt={entry.name} className="mx-auto max-h-[60vh] max-w-full rounded border border-hud/40 object-contain" />
-  if (type === 'video') return <video src={fileUrl(entry.path)} controls className="w-full rounded border border-hud/40 bg-black" />
+  if (type === 'image') return <img src={fileUrl(entry.path)} alt={entry.name} className="mx-auto max-h-[60vh] max-w-full rounded-sm border border-hud/40 object-contain" />
+  if (type === 'video') return <video src={fileUrl(entry.path)} controls className="w-full rounded-sm border border-hud/40 bg-black" />
   if (type === 'audio') return <audio src={fileUrl(entry.path)} controls className="w-full" />
   if (type === 'dir') {
     return (
@@ -56,7 +55,7 @@ function Body({ preview }: { preview: FinderPreview }) {
     return (
       <div className="space-y-1.5">
         {markdown ? (
-          <div className="md-prose text-[13px]" onClick={onClick} dangerouslySetInnerHTML={{ __html: html }} />
+          <Markdown text={preview.text ?? ''} className="text-[13px]" onClick={onClick} />
         ) : (
           <pre className="overflow-x-auto whitespace-pre rounded-md border border-hud/40 bg-surface/60 p-2.5 font-mono text-[11px] leading-relaxed text-text-secondary">{preview.text}</pre>
         )}
@@ -100,7 +99,7 @@ export function PreviewPane({ actions, editable, browsable }: { actions: Preview
           aria-label={t.files.closePreview}
           title={t.files.closePreview}
           onClick={() => useFiles.getState().clearSelection()}
-          className="shrink-0 rounded p-0.5 text-text-muted transition-colors hover:bg-elevated hover:text-text-primary"
+          className="shrink-0 rounded-sm p-0.5 text-text-muted transition-colors hover:bg-elevated hover:text-text-primary"
         >
           <X size={13} />
         </button>

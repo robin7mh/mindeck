@@ -7,8 +7,8 @@ import { Select } from '@/components/ui/Select'
 import { useGitHub } from '../github'
 import { useScm } from '../scm'
 
-const tool = 'flex h-6 w-6 items-center justify-center rounded text-text-muted transition-colors hover:bg-elevated hover:text-text-primary disabled:opacity-40'
-const field = 'w-full rounded-md border border-hud/60 bg-void/40 px-2 py-1 font-sans text-[12.5px] text-text-primary outline-none placeholder:text-text-muted focus:border-cyan/60'
+const tool = 'flex h-6 w-6 items-center justify-center rounded-sm text-text-muted transition-colors hover:bg-elevated hover:text-text-primary disabled:opacity-40'
+const field = 'w-full rounded-md border border-hud/60 bg-void/40 px-2 py-1 font-sans text-[12.5px] text-text-primary outline-hidden placeholder:text-text-muted focus:border-cyan/60'
 const FILTERS: PullFilter[] = ['all', 'mine', 'review']
 const STATES: PullListState[] = ['open', 'merged', 'closed', 'all']
 
@@ -19,7 +19,7 @@ function Hint({ title, hint, commands }: { title: string; hint: string; commands
       <p className="text-text-primary">{title}</p>
       <p>{hint}</p>
       {commands.map((c) => (
-        <code key={c} className="block select-all rounded bg-void/60 px-2 py-1 font-mono text-[11.5px] text-cyan">
+        <code key={c} className="block select-all rounded-sm bg-void/60 px-2 py-1 font-mono text-[11.5px] text-cyan">
           {c}
         </code>
       ))}
@@ -55,11 +55,11 @@ function CreateForm() {
       </label>
       {same && <p className="font-sans text-[11.5px] text-amber">{t.github.sameBranch}</p>}
       <div className="flex gap-1.5">
-        <button type="submit" disabled={!title.trim() || !base.trim() || same || !!busy} className="flex items-center gap-1 rounded border border-cyan/50 px-2 py-0.5 font-sans text-[12px] text-cyan hover:bg-cyan/10 disabled:opacity-40">
+        <button type="submit" disabled={!title.trim() || !base.trim() || same || !!busy} className="flex items-center gap-1 rounded-sm border border-cyan/50 px-2 py-0.5 font-sans text-[12px] text-cyan hover:bg-cyan/10 disabled:opacity-40">
           {busy === 'create' && <Loader2 size={11} className="animate-spin" />}
           {t.github.submit}
         </button>
-        <button type="button" onClick={() => useGitHub.getState().setCreating(false)} className="rounded border border-hud/60 px-2 py-0.5 font-sans text-[12px] text-text-secondary">
+        <button type="button" onClick={() => useGitHub.getState().setCreating(false)} className="rounded-sm border border-hud/60 px-2 py-0.5 font-sans text-[12px] text-text-secondary">
           {t.github.cancel}
         </button>
       </div>
@@ -78,7 +78,7 @@ function Item({ pr, active, opening }: { pr: PullSummary; active: boolean; openi
         aria-label={`#${pr.number} ${pr.title}`}
         aria-current={active || undefined}
         onClick={() => void useGitHub.getState().open(pr.number)}
-        className={cn('flex w-full gap-2 rounded px-2 py-1.5 text-left transition-colors hover:bg-elevated/60', active && 'bg-cyan/[0.08]')}
+        className={cn('flex w-full gap-2 rounded-sm px-2 py-1.5 text-left transition-colors hover:bg-elevated/60', active && 'bg-cyan/8')}
       >
         {opening ? <Loader2 size={13} className="mt-0.5 shrink-0 animate-spin text-text-muted" /> : <Icon size={13} className={cn('mt-0.5 shrink-0', tint)} />}
         <span className="min-w-0 flex-1">
@@ -88,8 +88,8 @@ function Item({ pr, active, opening }: { pr: PullSummary; active: boolean; openi
           </span>
           {(pr.draft || pr.review) && (
             <span className="mt-0.5 flex gap-1 font-sans text-[10.5px]">
-              {pr.draft && <span className="rounded bg-elevated px-1 text-text-muted">{t.github.draft}</span>}
-              {pr.review && <span className={cn('rounded px-1', pr.review === 'APPROVED' ? 'bg-green/10 text-green' : pr.review === 'CHANGES_REQUESTED' ? 'bg-danger/10 text-danger' : 'bg-amber/10 text-amber')}>{t.github.review[pr.review]}</span>}
+              {pr.draft && <span className="rounded-sm bg-elevated px-1 text-text-muted">{t.github.draft}</span>}
+              {pr.review && <span className={cn('rounded-sm px-1', pr.review === 'APPROVED' ? 'bg-green/10 text-green' : pr.review === 'CHANGES_REQUESTED' ? 'bg-danger/10 text-danger' : 'bg-amber/10 text-amber')}>{t.github.review[pr.review]}</span>}
             </span>
           )}
         </span>
@@ -134,7 +134,7 @@ export function PullsPanel() {
               type="button"
               aria-pressed={filter === f}
               onClick={() => gh.setFilter(f)}
-              className={cn('flex-1 whitespace-nowrap rounded px-1 py-0.5 font-sans text-[11.5px] transition-colors', filter === f ? 'bg-elevated text-text-primary' : 'text-text-muted hover:text-text-primary')}
+              className={cn('flex-1 whitespace-nowrap rounded-sm px-1 py-0.5 font-sans text-[11.5px] transition-colors', filter === f ? 'bg-elevated text-text-primary' : 'text-text-muted hover:text-text-primary')}
             >
               {t.github.filters[f]}
             </button>

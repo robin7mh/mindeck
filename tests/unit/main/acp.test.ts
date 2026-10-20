@@ -1,6 +1,6 @@
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi, type Mock } from 'vitest'
 import {
   AgentSideConnection,
   ClientSideConnection,
@@ -12,7 +12,7 @@ import {
   type SessionUpdate
 } from '@agentclientprotocol/sdk'
 import { onCleanup, tempDir, tick } from './helpers'
-import { ACP_AGENTS, applyAcpUpdate, findAcpTool, kindRisk, openTurn, pickOption, spawnAcp, type AcpProcess } from '../../../electron/main/services/agents/acp'
+import { ACP_AGENTS, acpApprovalRisk, acpSpawner, applyAcpUpdate, findAcpTool, isolatedNpx, kindRisk, openTurn, pickOption, spawnAcp, type AcpProcess } from '../../../electron/main/services/agents/acp'
 import { AgentSessionService, type AgentSessionDeps } from '../../../electron/main/services/agents/AgentSessionService'
 import { GitService } from '../../../electron/main/services/git/GitService'
 import type { SessionState } from '../../../electron/main/services/agents/transcript'
@@ -61,6 +61,13 @@ describe('ACP updates → chat, tools, plan', () => {
     expect((['read', 'search', 'think', 'fetch', 'edit', 'delete', 'move', 'execute', 'other', undefined, null] as const).map(kindRisk)).toEqual([
       'read', 'read', 'read', 'read', 'write', 'write', 'write', 'execute', 'execute', 'execute', 'execute'
     ])
+    // Approvals: fetching and reading outside the session's folder count as changes (BE-SEC-17).
+    expect(acpApprovalRisk('fetch', [], '/w')).toBe('write')
+    expect(acpApprovalRisk('read', ['/w/src/a.ts', 'src/b.ts'], '/w')).toBe('read')
+    expect(acpApprovalRisk('read', ['/w/a.ts', '/home/me/.ssh/id_ed25519'], '/w')).toBe('write')
+    expect(acpApprovalRisk('search', ['../other'], '/w')).toBe('write')
+    expect(acpApprovalRisk('edit', ['/etc/x'], '/w')).toBe('write')
+    expect(acpApprovalRisk('execute', [], '/w')).toBe('execute')
     const options = [
       { optionId: 'a1', name: 'Allow', kind: 'allow_once' as const },
       { optionId: 'aa', name: 'Always', kind: 'allow_always' as const },
@@ -95,6 +102,19 @@ describe('spawnAcp', () => {
     expect(typeof (await exited)).toBe('number')
   })
 
+  it('npx runs the adapter from a folder of Mindeck’s — never a copy (or a registry) a cloned repository brings', async () => {
+    expect(isolatedNpx(ACP_AGENTS.codex, '/data/agents/npm')).toEqual({ ...ACP_AGENTS.codex, args: ['--prefix', '/data/agents/npm', '-y', '@zed-industries/codex-acp@0.16.0'] })
+    expect(isolatedNpx(ACP_AGENTS.codex)).toBe(ACP_AGENTS.codex)
+    expect(isolatedNpx(ACP_AGENTS.gemini, '/data/agents/npm')).toBe(ACP_AGENTS.gemini)
+    // Exactly one version, never a range.
+    expect(ACP_AGENTS.codex.args[1]).toMatch(/@\d+\.\d+\.\d+$/)
+    // The adapter itself still runs in the agent's folder.
+    const cwd = await tempDir()
+    const proc = acpSpawner('/data/agents/npm')({ file: process.execPath, args: [agent] }, cwd, { ...process.env } as Record<string, string>)
+    expect(await handshake(proc, cwd)).toBe(`from ${cwd}`)
+    proc.kill()
+  })
+
   it('on Windows starts the agent directly', async () => {
     const platform = process.platform
     Object.defineProperty(process, 'platform', { value: 'win32' })
@@ -115,7 +135,7 @@ interface FakeAgent {
   proc: AcpProcess
   newSession: NewSessionRequest[]
   prompts: PromptRequest[]
-  cancel: ReturnType<typeof vi.fn>
+  cancel: Mock
   /** What the agent does on a prompt (it can call back into the client). */
   onPrompt: (conn: AgentSideConnection, req: PromptRequest) => Promise<{ stopReason: 'end_turn' | 'cancelled' }>
   /** Model and mode switches it was asked for. */
@@ -287,7 +307,11 @@ describe('AgentSessionService with ACP agents (Codex, Gemini)', () => {
     agent.onPrompt = async (conn, req) => {
       await conn.sessionUpdate({ sessionId: req.sessionId, update: { sessionUpdate: 'tool_call', toolCallId: 'e', title: 'Edit a.ts', kind: 'edit' } })
       answers.push(await conn.requestPermission({ sessionId: req.sessionId, toolCall: { toolCallId: 'e', title: 'Edit a.ts', kind: 'edit' }, options: [{ optionId: 'no', name: 'Reject', kind: 'reject_once' }] }))
+      // A tool call that names no kind: nothing to keep, the request decides.
+      await conn.sessionUpdate({ sessionId: req.sessionId, update: { sessionUpdate: 'tool_call', toolCallId: 'plain', title: 'Think' } })
       answers.push(await conn.requestPermission({ sessionId: req.sessionId, toolCall: { toolCallId: 'unseen' }, options: [{ optionId: 'ok', name: 'Allow', kind: 'allow_once' }] }))
+      // Reading outside the folder counts as a change (BE-SEC-17).
+      answers.push(await conn.requestPermission({ sessionId: req.sessionId, toolCall: { toolCallId: 'r', title: 'Read key', kind: 'read', locations: [{ path: '/etc/ssh/ssh_host_rsa_key' }] }, options: [{ optionId: 'no', name: 'Reject', kind: 'reject_once' }] }))
       return { stopReason: 'cancelled' }
     }
     t.svc.send(s.id, 'edit it')
@@ -297,8 +321,11 @@ describe('AgentSessionService with ACP agents (Codex, Gemini)', () => {
     while (t.asks.length < 2) await tick(5)
     expect(t.asks[1].input).toMatchObject({ toolName: 'other', toolTitle: 'tool', risk: 'execute' })
     t.asks[1].settle('deny') // no reject option offered → cancelled
+    while (t.asks.length < 3) await tick(5)
+    expect(t.asks[2].input).toMatchObject({ toolName: 'read', risk: 'write' })
+    t.asks[2].settle('deny')
     await t.settled(s.id, 'idle')
-    expect(answers).toEqual([{ outcome: { outcome: 'selected', optionId: 'no' } }, { outcome: { outcome: 'cancelled' } }])
+    expect(answers).toEqual([{ outcome: { outcome: 'selected', optionId: 'no' } }, { outcome: { outcome: 'cancelled' } }, { outcome: { outcome: 'selected', optionId: 'no' } }])
     expect(t.svc.get(s.id).messages[1].parts[0]).toMatchObject({ id: 'e', status: 'denied' })
     expect(t.svc.get(s.id).messages[1].status).toBe('cancelled')
 
@@ -369,6 +396,7 @@ describe('AgentSessionService with ACP agents (Codex, Gemini)', () => {
 
     const failing = await acpSetup({ failInit: true })
     const s3 = await failing.svc.create({ kind: 'codex', projectId: 'p1' })
+    failing.svc.interrupt(s3.id) // the handshake fails: nothing to cancel, nothing thrown
     failing.svc.stop(s3.id) // stopped before the failed handshake reports
     await tick(20)
     expect(failing.svc.get(s3.id).error).toBeUndefined()

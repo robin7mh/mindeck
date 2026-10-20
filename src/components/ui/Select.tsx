@@ -127,10 +127,10 @@ export function Select({ value, options, onChange, label, placeholder, icon: Ico
         onClick={() => (open ? close() : show())}
         onKeyDown={onKeyDown}
         className={cn(
-          'group flex min-w-0 items-center gap-2 text-left outline-none transition-colors disabled:opacity-50',
+          'group flex min-w-0 items-center gap-2 text-left outline-hidden transition-colors disabled:opacity-50',
           variant === 'field'
             ? 'w-full rounded-md border bg-surface/50 px-2.5 py-1.5 font-sans text-[12.5px] text-text-primary hover:border-hud-strong focus-visible:border-cyan/60'
-            : 'max-w-[240px] rounded px-1.5 py-0.5 font-mono text-[11px] hover:bg-elevated/60 focus-visible:bg-elevated/60',
+            : 'max-w-[240px] rounded-sm px-1.5 py-0.5 font-mono text-[11px] hover:bg-elevated/60 focus-visible:bg-elevated/60',
           variant === 'field' && (open ? 'border-cyan/50' : 'border-hud/60'),
           variant === 'quiet' && (current?.value ? 'text-text-secondary' : 'text-text-muted'),
           className
@@ -148,7 +148,7 @@ export function Select({ value, options, onChange, label, placeholder, icon: Ico
             role="listbox"
             aria-label={label}
             style={{ left: place.left, minWidth: place.minWidth, top: place.top, bottom: place.bottom, maxHeight: MENU_MAX }}
-            className="fixed z-[70] max-w-[min(420px,90vw)] overflow-y-auto rounded-lg border border-hud/70 bg-panel/95 p-1 shadow-xl shadow-black/40 backdrop-blur-md"
+            className="fixed z-70 max-w-[min(420px,90vw)] overflow-y-auto rounded-lg border border-hud/70 bg-panel/95 p-1 shadow-xl shadow-black/40 backdrop-blur-md"
           >
             {options.map((o, i) => (
               <li

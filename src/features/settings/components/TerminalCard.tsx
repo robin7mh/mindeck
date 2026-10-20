@@ -8,7 +8,7 @@ import { useT } from '@/lib/i18n'
 import { useTerminalSettings } from '@/features/terminal/settings'
 import { Toggle } from './Toggle'
 
-const field = 'rounded-md border border-hud/70 bg-surface/70 px-2 py-1 font-mono text-[12px] text-text-primary outline-none focus:border-cyan/60'
+const field = 'rounded-md border border-hud/70 bg-surface/70 px-2 py-1 font-mono text-[12px] text-text-primary outline-hidden focus:border-cyan/60'
 const label = 'flex items-center gap-2 font-sans text-[12.5px] text-text-secondary'
 const button =
   'flex items-center justify-center gap-1.5 rounded-md border border-hud/60 px-2.5 py-1.5 font-sans text-[12px] text-text-secondary transition-colors hover:border-cyan/50 hover:text-cyan disabled:opacity-40'
@@ -74,7 +74,7 @@ function ProfileForm({ profile, onSave, onCancel }: { profile: TerminalProfile; 
       ...(cwd ? { cwd } : {})
     })
   return (
-    <div className="mt-2 space-y-2 rounded-md border border-cyan/30 bg-cyan/[0.03] p-2.5">
+    <div className="mt-2 space-y-2 rounded-md border border-cyan/30 bg-cyan/3 p-2.5">
       <input aria-label={s.profileName} placeholder={s.profileName} value={draft.name} onChange={set('name')} maxLength={80} className={`${field} w-full`} />
       <input aria-label={s.profileCommand} placeholder={s.profileCommand} value={draft.command} onChange={set('command')} spellCheck={false} className={`${field} w-full`} />
       <textarea aria-label={s.profileArgs} placeholder={s.profileArgs} value={draft.args} onChange={set('args')} rows={2} spellCheck={false} className={`${field} w-full resize-y`} />

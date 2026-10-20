@@ -47,11 +47,11 @@ function Picker({ label, items, onClose }: { label: string; items: Item[]; onClo
           if (e.key === 'Escape') onClose()
           else if (e.key === 'Enter' && shown[0]) pick(shown[0])
         }}
-        className="mb-1 w-full rounded border border-hud/60 bg-transparent px-2 py-1 font-sans text-[12px] text-text-primary outline-none focus:border-cyan/50"
+        className="mb-1 w-full rounded-sm border border-hud/60 bg-transparent px-2 py-1 font-sans text-[12px] text-text-primary outline-hidden focus:border-cyan/50"
       />
       <ul role="listbox" aria-label={label} className="max-h-72 overflow-y-auto">
         {shown.map((item) => (
-          <li key={item.key} role="option" aria-selected={false} onClick={() => pick(item)} className="flex cursor-pointer items-center gap-1.5 truncate rounded px-2 py-1 font-sans text-[12px] text-text-primary hover:bg-elevated/70">
+          <li key={item.key} role="option" aria-selected={false} onClick={() => pick(item)} className="flex cursor-pointer items-center gap-1.5 truncate rounded-sm px-2 py-1 font-sans text-[12px] text-text-primary hover:bg-elevated/70">
             {item.icon}
             <span className="truncate">{item.label}</span>
           </li>
@@ -120,7 +120,7 @@ export function Breadcrumbs({ tab, group }: { tab: EditorTab; group: string }) {
         aria-label={named ? undefined : label}
         aria-expanded={picking?.at === at}
         onClick={() => setPicking(picking?.at === at ? undefined : open)}
-        className={cn('flex min-w-0 items-center gap-1 rounded px-1 py-0.5 hover:bg-elevated/60 hover:text-text-primary', picking?.at === at && 'bg-elevated/60 text-text-primary')}
+        className={cn('flex min-w-0 items-center gap-1 rounded-sm px-1 py-0.5 hover:bg-elevated/60 hover:text-text-primary', picking?.at === at && 'bg-elevated/60 text-text-primary')}
       >
         {icon}
         {named && <span className="truncate">{label}</span>}

@@ -55,10 +55,10 @@ const mon = vi.hoisted(() => {
         .slice(0, line - 1)
         .reduce((n, l) => n + l.length + 1, col - 1)
     }
-    pushEditOperations(_sel: unknown, edits: { range: Range; text: string }[]) {
+    pushEditOperations(_sel: unknown, edits: { range: Range; text: string }[], cursor?: (inverse: unknown[]) => unknown) {
       const spans = edits.map((e) => ({ from: this.offset(e.range.startLineNumber, e.range.startColumn), to: this.offset(e.range.endLineNumber, e.range.endColumn), text: e.text }))
       for (const s of spans.sort((a, b) => b.from - a.from)) this.value = this.value.slice(0, s.from) + s.text + this.value.slice(s.to)
-      return null
+      return cursor?.([]) ?? null // like Monaco: the cursor afterwards comes from the caller
     }
   }
   class Editor {
@@ -422,7 +422,7 @@ describe('blame in the editor (Monaco)', () => {
   })
 
   it('the blame column: a label per hunk, blanks below, a hover; a click on it shows the commit', async () => {
-    const { editor, column, detach } = setup('one\ntwo\nthree\nfour\nfive')
+    const { editor, column, detach, calls } = setup('one\ntwo\nthree\nfour\nfive')
     act(() => useEditorPrefs.setState({ settings: { inlineBlame: false } }))
     await flush()
     expect(column.items).toEqual([])
@@ -434,6 +434,11 @@ describe('blame in the editor (Monaco)', () => {
     expect(before[1].content).toBe(BLAME_BLANK)
     expect(before[3].content).toBe(gutterLabel(commit(UNCOMMITTED)))
     expect(before[4].content).toBe(BLAME_BLANK) // a line blame doesn't know (yet)
+    // the store changing without the toggles: nothing reloads
+    const loads = calls.length
+    act(() => useBlame.setState({}))
+    await flush()
+    expect(calls).toHaveLength(loads)
     expect(column.items.map((d) => !!d.options.hoverMessage)).toEqual([true, false, true, true, false])
 
     const scm = useScm.getState()

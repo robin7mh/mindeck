@@ -6,7 +6,7 @@ import { isMac } from '@/lib/platform'
 import { formatBytes } from '@/features/files/kinds'
 import { useBrowser } from '../store'
 
-const action = 'rounded px-1.5 py-0.5 font-sans text-[11px] text-text-secondary transition-colors hover:bg-elevated hover:text-cyan'
+const action = 'rounded-sm px-1.5 py-0.5 font-sans text-[11px] text-text-secondary transition-colors hover:bg-elevated hover:text-cyan'
 
 /** Downloads of this session: progress, then open or show in the folder. */
 export function DownloadsPanel() {
@@ -19,7 +19,7 @@ export function DownloadsPanel() {
     <aside aria-label={t.browser.downloads} className="flex w-72 shrink-0 flex-col border-l border-hud/50 bg-surface/40">
       <div className="flex h-9 items-center justify-between border-b border-hud/50 px-3">
         <TechLabel className="text-text-secondary">{t.browser.downloads}</TechLabel>
-        <button type="button" aria-label={t.common.close} onClick={() => useBrowser.getState().toggleDownloads()} className="rounded p-1 text-text-muted hover:bg-elevated hover:text-text-primary">
+        <button type="button" aria-label={t.common.close} onClick={() => useBrowser.getState().toggleDownloads()} className="rounded-sm p-1 text-text-muted hover:bg-elevated hover:text-text-primary">
           <X size={13} />
         </button>
       </div>

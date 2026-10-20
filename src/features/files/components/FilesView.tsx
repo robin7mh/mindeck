@@ -66,7 +66,7 @@ function PathInput({ path, onDone }: { path: string; onDone: () => void }) {
         onDone()
         if (target) void useFiles.getState().open(target)
       }}
-      className="h-7 min-w-0 flex-1 rounded-md border border-cyan/50 bg-surface px-2 font-mono text-[12px] text-text-primary outline-none"
+      className="h-7 min-w-0 flex-1 rounded-md border border-cyan/50 bg-surface px-2 font-mono text-[12px] text-text-primary outline-hidden"
     />
   )
 }
@@ -93,7 +93,7 @@ function Crumbs({ path, onEdit }: { path: string; onEdit: () => void }) {
               title={c.path}
               onClick={() => void useFiles.getState().open(c.path)}
               className={cn(
-                'truncate rounded px-1.5 py-0.5 font-sans text-[12.5px] transition-colors hover:bg-elevated/60',
+                'truncate rounded-sm px-1.5 py-0.5 font-sans text-[12.5px] transition-colors hover:bg-elevated/60',
                 i === shown.length - 1 ? 'font-medium text-text-primary' : 'text-text-secondary'
               )}
             >
@@ -323,7 +323,7 @@ export function FilesView({ onNavigate }: { onNavigate: (module: ModuleId) => vo
                 s.clearSearch()
               }
             }}
-            className="min-w-0 flex-1 bg-transparent font-sans text-[12px] text-text-primary outline-none placeholder:text-text-muted"
+            className="min-w-0 flex-1 bg-transparent font-sans text-[12px] text-text-primary outline-hidden placeholder:text-text-muted"
           />
           {query && (
             <button
@@ -350,7 +350,7 @@ export function FilesView({ onNavigate }: { onNavigate: (module: ModuleId) => vo
                 aria-pressed={s.view === v}
                 title={t.files[v]}
                 onClick={() => s.setView(v)}
-                className={cn('flex h-6 w-7 items-center justify-center rounded transition-colors', s.view === v ? 'bg-cyan/10 text-cyan' : 'text-text-muted hover:text-text-secondary')}
+                className={cn('flex h-6 w-7 items-center justify-center rounded-sm transition-colors', s.view === v ? 'bg-cyan/10 text-cyan' : 'text-text-muted hover:text-text-secondary')}
               >
                 <Icon size={13} />
               </button>
@@ -393,10 +393,10 @@ export function FilesView({ onNavigate }: { onNavigate: (module: ModuleId) => vo
             e.preventDefault()
             void s.dropFiles([...e.dataTransfer.files], s.listing.path, e.altKey)
           }}
-          className={cn('min-h-0 min-w-0 flex-1 outline-none', columns ? 'overflow-hidden' : 'overflow-y-auto')}
+          className={cn('min-h-0 min-w-0 flex-1 outline-hidden', columns ? 'overflow-hidden' : 'overflow-y-auto')}
         >
           {s.error && (
-            <div role="alert" className="m-2 flex items-start gap-2 rounded-md border border-danger/40 bg-danger/[0.06] px-2.5 py-2">
+            <div role="alert" className="m-2 flex items-start gap-2 rounded-md border border-danger/40 bg-danger/6 px-2.5 py-2">
               <AlertTriangle size={13} className="mt-0.5 shrink-0 text-danger" />
               <span className="min-w-0 flex-1 font-mono text-[11px] text-text-secondary">
                 {s.errorCode === 'trash-gone'

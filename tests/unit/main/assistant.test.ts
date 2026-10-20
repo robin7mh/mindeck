@@ -287,6 +287,11 @@ describe('AssistantService — tools and the permission gate', () => {
       const [req] = h.permissions.list()
       const live = h.pushed.filter((p) => p.channel === 'ai:message').at(-1)!.payload as { message: ChatMessage }
       expect(toolParts(live.message).at(-1)).toMatchObject({ status: 'awaiting-approval', requestId: expect.any(String) })
+      // A client that missed the push (reconnecting) reads the same from the conversation, not the last saved copy.
+      const now = await h.svc.conversation(conversationId)
+      expect(now.running).toBe(true)
+      expect(toolParts(now.messages.at(-1)!).at(-1)).toMatchObject({ status: 'awaiting-approval', requestId: req.id })
+      expect(toolParts((await h.store.get(conversationId))!.messages.at(-1)!).at(-1)?.requestId).not.toBe(req.id)
       expect(req).toMatchObject({ agentName: 'Tester', toolTitle: 'Write X', risk: 'write', allowAlways: true })
       await h.permissions.respond(req.id, decision)
       return req

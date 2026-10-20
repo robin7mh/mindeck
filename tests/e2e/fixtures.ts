@@ -1,5 +1,5 @@
 import { _electron as electron, test as base, type ElectronApplication, type Page } from '@playwright/test'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
@@ -50,6 +50,8 @@ function launch(home: string, extra: Record<string, string>, switches: string[])
   delete env.ELECTRON_RENDERER_URL // always the built renderer, never a dev server
   delete env.ELECTRON_RUN_AS_NODE
   return electron.launch({
+    // MINDECK_E2E_ELECTRON: another Electron binary — one with a release's fuses (RunAsNode off), say.
+    ...(process.env.MINDECK_E2E_ELECTRON ? { executablePath: process.env.MINDECK_E2E_ELECTRON } : {}),
     // --no-sandbox: CI runners and containers have no usable Chromium sandbox.
     // --lang: on macOS Electron takes the system language, not LANG.
     // --user-data-dir: the window's own storage (layout, setup, …) is this test's too.
@@ -85,6 +87,10 @@ async function kill(app: ElectronApplication): Promise<void> {
 export const test = base.extend<Fixtures>({
   home: async ({}, use) => {
     const dir = await mkdtemp(join(tmpdir(), 'mindeck-e2e-'))
+    // Terminals draw with the DOM renderer, whose text the tests read — on a Mac with a GPU as on a
+    // CI runner without one (WebGL would paint it onto a canvas).
+    await mkdir(join(dir, 'data'), { recursive: true })
+    await writeFile(join(dir, 'data', 'settings.json'), JSON.stringify({ version: 1, settings: { terminal: { gpu: false } } }))
     await use(dir)
     await rm(dir, { recursive: true, force: true })
   },

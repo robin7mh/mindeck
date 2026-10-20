@@ -154,9 +154,12 @@ describe('BrowserService · tabs and the session', () => {
     expect(b.open().url).toBe('')
     expect(b.open({ url: 'javascript:alert(1)' }).url).toBe('') // never runs as an address
 
-    // a link for another app opens there, not in a tab
+    // a link for another app opens there, not in a tab — once the user said yes (a bookmark, the history, typed)
     const before = ids().length
     expect(b.open({ url: 'mailto:robin@example.com' }).id).toBe(b.state().activeId)
+    expect(deps.openExternal).not.toHaveBeenCalled()
+    expect(b.state().permissions).toEqual([{ id: expect.any(String), origin: 'mailto:', kind: 'external', target: 'mailto:robin@example.com', app: 'Arc' }])
+    b.permission(b.state().permissions[0].id, true)
     expect(deps.openExternal).toHaveBeenCalledWith('mailto:robin@example.com')
     expect(ids()).toHaveLength(before)
 
@@ -225,8 +228,29 @@ describe('BrowserService · tabs and the session', () => {
     b.navigate(ntp, '  ')
     b.navigate(ntp, 'javascript:alert(1)')
     expect(host.load).toHaveBeenCalledTimes(1)
+    // another app's link: asked in this tab; no → nothing; yes, remembered → the next one opens without asking
+    vi.mocked(deps.openExternal!).mockClear()
     b.navigate(ntp, 'zoommtg://zoom.us/join')
+    expect(b.state().permissions).toEqual([{ id: expect.any(String), tabId: ntp, origin: 'zoommtg:', kind: 'external', target: 'zoommtg://zoom.us/join', app: 'Arc' }])
+    b.permission(b.state().permissions[0].id, false)
+    expect(deps.openExternal).not.toHaveBeenCalled()
+    b.navigate(ntp, 'zoommtg://zoom.us/join')
+    vi.mocked(deps.openExternal!).mockRejectedValueOnce(new Error('the app did not start')) // nothing to report
+    b.permission(b.state().permissions[0].id, true, true)
     expect(deps.openExternal).toHaveBeenCalledWith('zoommtg://zoom.us/join')
+    b.navigate(ntp, 'ZOOMMTG://zoom.us/join?confno=2')
+    expect(b.state().permissions).toEqual([])
+    expect(deps.openExternal).toHaveBeenLastCalledWith('ZOOMMTG://zoom.us/join?confno=2')
+    // Shares and Windows' risky handlers (e.g. from imported bookmarks) never reach the OS; nor a link no app takes.
+    vi.mocked(deps.openExternal!).mockClear()
+    for (const link of ['ms-msdt:/id%20PCWDiagnostic', 'search-ms:query=x&crumb=location:\\\\evil\\share', 'smb://evil/share/x.exe', 'MS-OFFICECMD:{}', 'search:query=x']) {
+      b.navigate(ntp, link)
+      b.open({ url: link })
+    }
+    vi.mocked(deps.appForUrl!).mockReturnValueOnce('')
+    b.navigate(ntp, 'unknown-app:x')
+    expect(b.state().permissions).toEqual([])
+    expect(deps.openExternal).not.toHaveBeenCalled()
 
     // an agent's tab: typing an address takes it over
     const agentTab = await (async () => {
@@ -310,6 +334,12 @@ describe('BrowserService · tabs and the session', () => {
     expect(t().audible).toBe(true)
     b.update(tab.id, { muted: true })
     expect(host.setMuted).toHaveBeenCalledWith(tab.id, true)
+    // a tab without a page (the new-tab page) keeps the setting for when it has one
+    host.setMuted.mockClear()
+    const asleep = b.open({ background: true })
+    b.update(asleep.id, { muted: true })
+    expect(host.setMuted).not.toHaveBeenCalled()
+    expect(b.state().tabs.find((x) => x.id === asleep.id)!.muted).toBe(true)
 
     // events of tabs that are gone change nothing
     for (const call of [
@@ -677,6 +707,10 @@ describe('BrowserService · agents', () => {
     const second = b.open({ url: 'localhost:3000', background: true })
     b.noteAgent(second.id, 'Codex', 'click', 'Save')
     expect(b.agentTab().id).toBe(second.id)
+    await tick(5)
+    b.noteAgent(local.id, 'Claude Code', 'read')
+    expect(b.agentTab().id).toBe(local.id) // used later
+    await tick(5)
     expect(b.state().tabs.find((t) => t.id === second.id)!.agent).toMatchObject({ name: 'Codex', action: 'click', detail: 'Save' })
     b.noteAgent(second.id, 'Codex', 'read')
     expect(b.state().tabs.find((t) => t.id === second.id)!.agent).not.toHaveProperty('detail')

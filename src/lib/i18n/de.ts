@@ -15,6 +15,13 @@ export const de: Dict = {
     hAgo: (n) => `vor ${n} Std.`
   },
 
+  transport: {
+    offline: 'Der Mindeck-Core ist nicht erreichbar.',
+    badResponse: (status) => `Unerwartete Antwort vom Mindeck-Core (${status})`,
+    noBridge: 'Nicht mit einem Mindeck-Core verbunden',
+    rateLimited: (seconds) => `Zu viele Anfragen — bitte versuch es ${seconds ? `in ${seconds} s` : 'gleich'} noch einmal.`
+  },
+
   nav: {
     modules: 'Module',
     core: 'Core',
@@ -184,6 +191,12 @@ export const de: Dict = {
     trial: 'Testversion',
     trialLeft: (time) => `noch ${time} Testzeit`,
     offlineUntil: (date) => `Funktioniert offline bis ${date}`,
+    offlineEnding: (days, date) =>
+      `Das Offline-Zertifikat läuft ${days === 0 ? 'in weniger als einem Tag' : `in ${days} ${days === 1 ? 'Tag' : 'Tagen'}`} ab (${date}). Verbinde Mindeck einmal mit dem Internet, um es zu erneuern — sonst sperrt Mindeck, sobald es abgelaufen und die Cloud nicht erreichbar ist.`,
+    offlineChip: (days) => `Offline-Lizenz endet ${days === 0 ? 'in weniger als einem Tag' : `in ${days} ${days === 1 ? 'Tag' : 'Tagen'}`}`,
+    suspendedTitle: 'Zahlung angefochten – Lizenz pausiert',
+    suspendedIntro: 'Eine Zahlung für deine Lifetime-Lizenz wurde angefochten (Rückbuchung). Bis die Anfechtung geklärt ist, ist Mindeck pausiert. Falls das ein Irrtum ist, kläre es mit deiner Bank oder wende dich an den Mindeck-Support — und prüfe hier danach erneut.',
+    manageDevices: 'Geräte verwalten',
     devBuild: 'Entwickler-Build — hier läuft Mindeck ohne Lizenz.',
     errors: {
       invalid_credentials: 'E-Mail oder Passwort ist falsch.',
@@ -194,6 +207,7 @@ export const de: Dict = {
       session_expired: 'Du wurdest abgemeldet. Bitte melde dich neu an.',
       already_verified: 'Deine E-Mail ist schon bestätigt.',
       already_licensed: 'Dieses Konto hat die Lifetime-Lizenz bereits.',
+      device_limit: 'Dieses Konto ist schon auf der Höchstzahl an Computern angemeldet. Entferne eines unter „Geräte“ auf deiner Kontoseite der Mindeck-Website und melde dich dann erneut an.',
       billing_unavailable: 'Bezahlen ist noch nicht möglich.',
       invalid_input: 'Bitte prüfe deine Eingaben.',
       'bad-request': 'Bitte prüfe deine Eingaben.',
@@ -275,6 +289,8 @@ export const de: Dict = {
     introPath: 'Einstellungen → Geräte',
     code: 'Kopplungscode',
     deviceName: 'Gerätename',
+    remember: 'In diesem Browser gekoppelt bleiben',
+    rememberHint: 'Auf einem geteilten Rechner ausschalten: Die Kopplung endet dann, wenn du den Browser schließt; beim nächsten Mal koppelst du neu.',
     submit: 'Gerät koppeln',
     noLongerPaired: 'Dieses Gerät ist nicht mehr gekoppelt',
     noCore: 'Unter dieser Adresse hat kein Mindeck-Core geantwortet',
@@ -537,6 +553,9 @@ agents: {
     allowOnce: 'Einmal erlauben',
     allowAlways: 'Immer erlauben',
     deny: 'Ablehnen',
+    showWhole: (execute, hidden) => `${execute ? 'Ganzen Befehl anzeigen' : 'Alles anzeigen'} (+${hidden} Zeichen)`,
+    showLess: 'Weniger anzeigen',
+    invisibleChars: (n) => `Enthält ${n} ${n === 1 ? 'unsichtbares' : 'unsichtbare'} Zeichen oder Steuerzeichen — hier als ⟨U+…⟩ gezeigt`,
     newChatWith: (name) => `Neuer Chat · ${name}`,
     assistantName: 'Assistent',
     addKey: 'Melde dich mit deinem Mindeck-Konto an, um den Assistenten zu nutzen — oder hinterlege in den Einstellungen einen eigenen API-Schlüssel →',
@@ -544,8 +563,10 @@ agents: {
       'ai-credit-exhausted': 'Dein KI-Guthaben ist aufgebraucht. Es erneuert sich am Monatsanfang — oder hinterlege in den Einstellungen einen eigenen API-Schlüssel, um gleich weiterzumachen.',
       'ai-credit-exhausted-trial': 'Das KI-Guthaben der Testversion ist aufgebraucht. Mit einer Lizenz bekommst du jeden Monat neues Guthaben — oder hinterlege in den Einstellungen einen eigenen API-Schlüssel.',
       'license-required': 'Die KI braucht eine aktive Testversion oder Lizenz.',
-      'ai-unavailable': 'Die KI ist gerade nicht verfügbar — bitte versuch es später noch einmal.',
+      'ai-unavailable': 'Die KI ist gerade nicht verfügbar — bitte versuch es gleich noch einmal.',
       'rate-limited': 'Die KI ist gerade ausgelastet — bitte versuch es gleich noch einmal.',
+      'ai-blocked': 'Die KI über Mindeck Cloud ist für dein Konto abgeschaltet. Wende dich an den Mindeck-Support — oder hinterlege in den Einstellungen einen eigenen API-Schlüssel.',
+      'ai-unsupported-content': 'Diese Anfrage enthält Inhalte, die die KI über Mindeck Cloud nicht annimmt (ein Dokument per URL oder eine Datei aus der Files API). Häng stattdessen die Datei selbst an.',
       session_expired: 'Bitte melde dich erneut mit deinem Mindeck-Konto an.',
       'transcript-damaged': 'Die früheren Nachrichten dieser Sitzung konnten nicht gelesen werden – die Datei wurde im Agenten-Datenordner beiseitegelegt. Die Sitzung selbst kann weiterlaufen.'
     },
@@ -959,6 +980,13 @@ agents: {
     paletteRunAll: 'Test: Alle Tests ausführen',
     paletteRunFile: 'Test: Tests dieser Datei ausführen'
   },
+  trust: {
+    restricted: (name) =>
+      `Eingeschränkter Modus: Mindeck startet keine eigenen Werkzeuge von ${name} – weder TypeScript, ESLint / Prettier, Python, Git-Hooks und -Konfiguration noch die SFTP-Konfiguration. Vertraue diesem Projekt nur, wenn du seinen Autoren vertraust.`,
+    trust: 'Diesem Projekt vertrauen',
+    trusting: 'Wird vertraut …'
+  },
+
   lint: {
     fix: (rule) => `Beheben: ${rule} (ESLint)`,
     disable: (rule) => `${rule} für diese Zeile abschalten`,
@@ -1840,6 +1868,7 @@ agents: {
     cloudDefault: 'schnell · schont das Guthaben',
     costFactor: (n) => `etwa ${n}× so viel Guthaben`,
     ownKeyWins: 'Ein eigener API-Schlüssel ist hinterlegt: Der Assistent nutzt ihn statt dieses Guthabens.',
+    cloudBlocked: 'Die KI über Mindeck Cloud ist für dein Konto abgeschaltet — wende dich an den Mindeck-Support oder hinterlege unten einen eigenen API-Schlüssel.',
     ownKeyTitle: 'Eigener API-Schlüssel (optional)',
     ownKeyHint: 'Für Vielnutzer: Anfragen gehen direkt an Anthropic, auf deine Rechnung — ohne Guthaben, mit allen Modellen und Vorschlägen beim Tippen.',
     keyFrom: (env, hint) => `Anthropic-Key ${env ? 'aus der Umgebung' : 'gespeichert'} · …${hint}`,

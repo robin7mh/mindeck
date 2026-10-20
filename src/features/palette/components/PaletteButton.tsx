@@ -19,7 +19,7 @@ export function PaletteButton() {
     >
       <Search size={13} />
       <span className="hidden font-sans text-[12px] lg:inline">{c.search}</span>
-      <kbd className="hidden rounded border border-hud/70 bg-surface/70 px-1 font-mono text-[10px] text-text-secondary sm:inline">{key}</kbd>
+      <kbd className="hidden rounded-sm border border-hud/70 bg-surface/70 px-1 font-mono text-[10px] text-text-secondary sm:inline">{key}</kbd>
     </button>
   )
 }

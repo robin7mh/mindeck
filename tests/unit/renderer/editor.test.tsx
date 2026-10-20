@@ -49,11 +49,12 @@ const mon = vi.hoisted(() => {
     pushStackElement() {
       this.stack += 1
     }
-    pushEditOperations(_sel: unknown, edits: { text: string }[]) {
+    pushEditOperations(_sel: unknown, edits: { text: string }[], cursor?: (inverse: unknown[]) => unknown) {
       this.edits.push(edits)
       this.value = edits[0].text
       this.version += 1
       this.change.fire()
+      return cursor?.([]) ?? null // like Monaco: the cursor afterwards comes from the caller
     }
     /** test helper: an edit (version = a new id, like Monaco's alternative version id) */
     type(text: string) {
@@ -837,6 +838,12 @@ describe('CodeEditor (Monaco view)', () => {
     rerender(both(e().tabs[0], undefined, false))
     expect(right.disposed).toBe(true)
     expect(editorActions()).not.toBeNull()
+    // An editor that isn't in charge goes: the focused one keeps the palette.
+    rerender(both(e().tabs[0], e().tabs[0]))
+    act(() => left.focusText.fire())
+    const inCharge = editorActions()
+    rerender(both(e().tabs[0], undefined, false))
+    expect(editorActions()).toBe(inCharge)
     // The last editor makes way for another in the same render (another project's layout): the buffers stay.
     rerender(<CodeEditor key="other" group="g3" tab={e().tabs[0]} readOnly={false} onCursor={() => {}} />)
     await act(() => settle(1))

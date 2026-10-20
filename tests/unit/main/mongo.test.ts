@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { hostOf, mongoDriver, MongoService, type MongoClientLike, type MongoCollectionLike, type MongoDriver } from '../../../electron/main/services/mongo/MongoService'
+import { hostOf, mongoDriver, MongoService, serverScript, type MongoClientLike, type MongoCollectionLike, type MongoDriver } from '../../../electron/main/services/mongo/MongoService'
+import { registerMongoIpc } from '../../../electron/ipc/mongo.ipc'
+import { Router } from '../../../electron/ipc/router'
 
 type Doc = Record<string, unknown> & { _id?: unknown }
 
 /** An in-memory MongoDB: databases of collections of documents (filters match by equality). */
-function fakeMongo(opts: { failConnect?: string; failList?: boolean } = {}) {
+function fakeMongo(opts: { failConnect?: string; failList?: boolean; failClose?: boolean } = {}) {
   const data: Record<string, Record<string, Doc[]>> = { shop: { users: [{ _id: 1, name: 'Ann', age: 31 }, { _id: 2, name: 'Bob', age: 25 }], views: [] }, empty: {} }
   const calls: string[] = []
   let closed = 0
@@ -64,7 +66,10 @@ function fakeMongo(opts: { failConnect?: string; failList?: boolean } = {}) {
         }
       })
     }),
-    close: async () => void closed++
+    close: async () => {
+      closed++
+      if (opts.failClose) throw new Error('connection reset')
+    }
   }
   const connects: string[] = []
   const driver: MongoDriver = {
@@ -117,6 +122,12 @@ describe('MongoDB', () => {
     const unauthorized = setup(fakeMongo({ failList: true }))
     await expect(unauthorized.svc.add('x', 'mongodb://localhost')).rejects.toMatchObject({ message: 'not authorized' })
     expect(await unauthorized.svc.connections()).toEqual([])
+    // a client that fails to close is gone all the same
+    const stuck = setup(fakeMongo({ failClose: true }))
+    const s1 = await stuck.svc.add('x', 'mongodb://localhost')
+    await stuck.svc.remove(s1.id)
+    expect(await stuck.svc.connections()).toEqual([])
+    expect(stuck.closed()).toBe(1)
   })
 
   it('opens saved connections on first use (again after a failure); broken storage is no connections', async () => {
@@ -184,6 +195,48 @@ describe('MongoDB', () => {
       { name: '_id_', key: '{"_id":1}', unique: false },
       { name: 'email_1', key: '{"email":1}', unique: true }
     ])
+  })
+
+  it('a paired device runs no JavaScript on the database server: $where, $function, $accumulator, $eval, Code — at any depth (BE-SEC-08)', async () => {
+    const t = setup(fakeMongo(), secrets(JSON.stringify([{ id: 'c', name: 'C', uri: 'mongodb://x' }])))
+    const remote = { serverJs: false }
+    const attacks: [string, Parameters<MongoService['find']>[3]][] = [
+      ['$where', { filter: '{"$where": "sleep(100000) || true"}' }],
+      ['$function', { filter: '{"$expr": {"$function": {"body": "function() { while (true) {} }", "args": [], "lang": "js"}}}' }],
+      ['$where', { filter: '{"$or": [{"a": 1}, {"$where": "true"}]}' }],
+      ['$function', { projection: '{"x": {"$function": {"body": "function() {}", "args": [], "lang": "js"}}}' }],
+      ['$eval', { sort: '{"$eval": 1}' }]
+    ]
+    for (const [operator, query] of attacks) {
+      await expect(t.svc.find('c', 'shop', 'users', query, remote), operator).rejects.toMatchObject({ code: 'remote-forbidden', message: expect.stringContaining(operator) })
+    }
+    const group = '[{"$group": {"_id": null, "n": {"$accumulator": {"init": "function() { return 0 }", "accumulate": "function(s) { return s }", "accumulateArgs": [], "merge": "function(a) { return a }", "lang": "js"}}}}]'
+    await expect(t.svc.aggregate('c', 'shop', 'users', group, remote)).rejects.toMatchObject({ code: 'remote-forbidden', message: expect.stringContaining('$accumulator') })
+    await expect(t.svc.aggregate('c', 'shop', 'users', '[{"$match": {"$where": "true"}}]', remote)).rejects.toMatchObject({ code: 'remote-forbidden' })
+    // Ordinary queries from a device work; the desktop (who typed it) may use server JavaScript.
+    expect((await t.svc.find('c', 'shop', 'users', { filter: '{"name": "Bob"}', sort: '{"age": 1}' }, remote)).total).toBe(1)
+    expect(await t.svc.aggregate('c', 'shop', 'users', '[{"$match": {"tags": ["$where"]}}]', remote)).toHaveLength(1) // a value, not an operator
+    expect(await t.svc.aggregate('c', 'shop', 'users', group)).toHaveLength(1)
+    await expect(t.svc.find('c', 'shop', 'users', { filter: '{"$where": "true"}' }, { serverJs: true })).resolves.toMatchObject({ total: 0 })
+
+    // Through the Router: a device's call carries serverJs: false, the desktop's true.
+    const router = new Router({ remoteTerminal: () => true })
+    registerMongoIpc(router, t.svc)
+    const find = { id: 'c', db: 'shop', collection: 'users', query: { filter: '{"$where": "true"}' } }
+    expect(await router.dispatch('mongo:find', find, { transport: 'remote', deviceId: 'd', role: 'admin' })).toMatchObject({ ok: false, error: { code: 'remote-forbidden' } })
+    expect(await router.dispatch('mongo:find', find, { transport: 'ipc' })).toMatchObject({ ok: true })
+    expect(await router.dispatch('mongo:aggregate', { id: 'c', db: 'shop', collection: 'users', pipeline: group }, { transport: 'remote', deviceId: 'd', role: 'admin' })).toMatchObject({ ok: false, error: { code: 'remote-forbidden' } })
+  })
+
+  it('serverScript finds BSON Code values and survives cycles', async () => {
+    const driver = await mongoDriver()
+    expect(serverScript(driver.parse('{"a": {"$code": "function() { return 1 }"}}'))).toBe('$code')
+    expect(serverScript(driver.parse('{"_id": {"$oid": "6acd597170296b89e1a597c3"}, "at": {"$date": "2024-01-02T00:00:00Z"}}'))).toBeNull()
+    const cyclic: Record<string, unknown> = { a: 1 }
+    cyclic.self = cyclic
+    expect(serverScript(cyclic)).toBeNull()
+    expect(serverScript(null)).toBeNull()
+    expect(serverScript('$where')).toBeNull()
   })
 
   it('the real driver: Extended JSON both ways; a server that isn’t there', async () => {

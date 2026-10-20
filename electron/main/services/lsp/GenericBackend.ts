@@ -161,6 +161,8 @@ export interface ServerTools {
 
 export interface GenericOptions {
   resolveRoot: (projectId: string) => string | undefined
+  /** Whether the project is trusted (WorkspaceTrust): language servers run only for trusted ones. */
+  trusted?: (projectId: string) => boolean
   tools: ServerTools
   spawn?: (command: string, args: string[], cwd: string) => RpcProcess
   /** A server published new diagnostics for this project. */
@@ -339,6 +341,7 @@ export class GenericBackend {
   async executeCommand(projectId: string, languageId: string, command: string, args: unknown[]): Promise<unknown> {
     const lang = LANGUAGES.find((l) => l.id === languageId)!
     const session = await this.session(projectId, lang)
+    if (!session && !this.trusts(projectId)) throw coded('untrusted', 'Language servers run only in projects you trust')
     if (!session) throw coded('server-missing', `No ${lang.name} language server installed — Settings → Languages`)
     return session.client.request('workspace/executeCommand', { command, arguments: args }, INITIALIZE_TIMEOUT_MS)
   }
@@ -349,6 +352,17 @@ export class GenericBackend {
     await Promise.all(all.map((s) => s.client.dispose()))
   }
 
+  /** The project is no longer trusted: its servers stop. */
+  async forget(projectId: string): Promise<void> {
+    const gone = [...this.sessions].filter(([, s]) => s.projectId === projectId)
+    for (const [key] of gone) this.sessions.delete(key)
+    await Promise.all(gone.map(([, s]) => s.client.dispose()))
+  }
+
+  private trusts(projectId: string): boolean {
+    return this.opts.trusted?.(projectId) ?? false
+  }
+
   // --- sessions ---
 
   private key(projectId: string, lang: LanguageInfo): string {
@@ -356,6 +370,9 @@ export class GenericBackend {
   }
 
   private async session(projectId: string, lang: LanguageInfo): Promise<Session | undefined> {
+    // Restricted: no language server — they run the project's code (rust-analyzer
+    // its build scripts, jdtls its Gradle wrapper, Pyright the project's Python).
+    if (!this.trusts(projectId)) return undefined
     const key = this.key(projectId, lang)
     const existing = this.sessions.get(key)
     if (existing?.client.running) {

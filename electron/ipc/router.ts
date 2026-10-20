@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import {
   CHANNEL_ACCESS,
   type IpcChannel,
@@ -20,6 +21,15 @@ export type Handler<K extends IpcChannel> = (
 ) => Promise<IpcChannels[K]['response']> | IpcChannels[K]['response']
 
 type AnyHandler = (req: unknown, ctx: CallContext) => unknown
+
+/**
+ * An error a device should not read as it is: the OS's own (`ENOENT: no such
+ * file or directory, open '/Users/robin/…'` — paths, user names), or something
+ * thrown that is no error at all. Mindeck's own errors are written for people.
+ */
+function internal(e: { code?: string; message?: string; syscall?: string } | null | undefined): boolean {
+  return typeof e?.message !== 'string' || !!e.syscall || /^E[A-Z0-9_]+$/.test(e.code ?? '')
+}
 
 function fail(code: string, message: string): IpcResult<never> {
   return { ok: false, error: { code, message } }
@@ -77,6 +87,9 @@ export class Router {
       if (access === 'admin' && ctx.role !== 'admin') {
         return fail('admin-only', `${channel} needs a device with the admin role (or the Mindeck desktop app)`)
       }
+      if (access === 'trusted' && ctx.role !== 'admin' && !this.opts.remoteTerminal()) {
+        return fail('remote-terminal-disabled', `${channel} needs remote shells on this Mindeck core, or a device with the admin role`)
+      }
     }
 
     const parsed = parseRequest(key, payload)
@@ -88,7 +101,13 @@ export class Router {
       const data = await handler(parsed.data, ctx)
       return { ok: true, data: this.opts.shape ? await this.opts.shape(key, data, ctx) : data }
     } catch (err) {
-      const e = err as { code?: string; message?: string }
+      const e = err as { code?: string; message?: string; syscall?: string }
+      if (ctx.transport === 'remote' && internal(e)) {
+        // The details go to the log; the device gets a reference to quote.
+        const ref = randomUUID().slice(0, 8)
+        console.error(`[router] ${channel} failed (ref ${ref}):`, err)
+        return fail(e?.code ?? 'error', `Something went wrong on the Mindeck core (ref ${ref})`)
+      }
       return fail(e?.code ?? 'error', e?.message ?? String(err))
     }
   }

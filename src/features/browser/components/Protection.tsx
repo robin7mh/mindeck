@@ -20,7 +20,7 @@ export function PrivateTabPage() {
   return (
     <div className="flex h-full items-center justify-center p-8">
       <div className="flex max-w-xl flex-col items-center gap-4 text-center">
-        <div className="flex h-12 w-12 items-center justify-center rounded-xl border border-purple/40 bg-purple/[0.08] text-purple">
+        <div className="flex h-12 w-12 items-center justify-center rounded-xl border border-purple/40 bg-purple/8 text-purple">
           <VenetianMask size={22} />
         </div>
         <h2 className="font-sans text-[16px] font-semibold text-text-primary">{t.browserExtras.privateTitle}</h2>
@@ -51,7 +51,7 @@ export function ShieldButton({ tab }: { tab: BrowserTab }) {
       title={label}
       onMouseDown={(e) => e.preventDefault()} // the address bar keeps the focus
       onClick={() => void useBrowser.getState().run('browser:tool', { id: tab.id, tool: 'shield' })}
-      className={cn('flex shrink-0 items-center gap-1 rounded px-1 py-0.5 transition-colors hover:bg-elevated', shield.on ? 'text-cyan' : 'text-text-muted')}
+      className={cn('flex shrink-0 items-center gap-1 rounded-sm px-1 py-0.5 transition-colors hover:bg-elevated', shield.on ? 'text-cyan' : 'text-text-muted')}
     >
       {shield.on ? <Shield size={13} aria-hidden /> : <ShieldOff size={13} aria-hidden />}
       {shield.on && shield.blocked > 0 && <span className="font-mono text-[10.5px]">{shield.blocked > 999 ? '999+' : shield.blocked}</span>}
@@ -65,13 +65,13 @@ export function DrmBar({ tab }: { tab: BrowserTab }) {
   const run = useBrowser((s) => s.run)
   if (!tab.drm) return null
   return (
-    <div role="status" className="flex shrink-0 items-center gap-2 border-b border-amber/30 bg-amber/[0.06] px-3 py-1.5">
+    <div role="status" className="flex shrink-0 items-center gap-2 border-b border-amber/30 bg-amber/6 px-3 py-1.5">
       <Film size={14} className="shrink-0 text-amber" />
       <span className="min-w-0 flex-1 truncate font-sans text-[12.5px] text-text-primary">{t.browserExtras.drm}</span>
       <button type="button" onClick={() => void run('browser:tool', { id: tab.id, tool: 'handoff' })} className={cn(small, 'border-cyan/50 text-cyan')}>
         <ExternalLink size={12} /> {t.browserExtras.drmOpen}
       </button>
-      <button type="button" aria-label={t.common.dismiss} onClick={() => void run('browser:dismissDrm', { id: tab.id })} className="rounded p-0.5 text-text-muted hover:text-text-primary">
+      <button type="button" aria-label={t.common.dismiss} onClick={() => void run('browser:dismissDrm', { id: tab.id })} className="rounded-sm p-0.5 text-text-muted hover:text-text-primary">
         <X size={12} />
       </button>
     </div>
@@ -85,7 +85,7 @@ export function DangerPage({ tab }: { tab: BrowserTab }) {
   const url = tab.error!.url
   const back = () => void (tab.canGoBack ? run('browser:go', { id: tab.id, action: 'back' }) : run('browser:close', { id: tab.id }))
   return (
-    <div className="flex h-full items-center justify-center bg-danger/[0.05] p-8">
+    <div className="flex h-full items-center justify-center bg-danger/5 p-8">
       <div className="max-w-md text-center">
         <ShieldAlert size={32} className="mx-auto text-danger" />
         <h2 className="mt-3 font-sans text-[16px] font-semibold text-text-primary">{t.browserExtras.dangerTitle}</h2>
@@ -117,7 +117,7 @@ function AuthForm({ req }: { req: BrowserAuthRequest }) {
     void run('browser:auth', { id: req.id, username, password })
   }
   const cancel = () => void run('browser:auth', { id: req.id })
-  const field = 'mt-1 w-full rounded-md border border-hud/60 bg-surface/70 px-2 py-1.5 font-sans text-[12.5px] text-text-primary outline-none focus:border-cyan/60'
+  const field = 'mt-1 w-full rounded-md border border-hud/60 bg-surface/70 px-2 py-1.5 font-sans text-[12.5px] text-text-primary outline-hidden focus:border-cyan/60'
   return (
     <div className="absolute inset-0 z-10 flex items-center justify-center bg-void/60 p-6">
       <form

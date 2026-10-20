@@ -213,7 +213,8 @@ describe('DebugService edge cases', () => {
       { name: 'g', value: '(getter)', type: 'accessor' },
       { name: 'v', value: '1', type: 'number' }
     ])
-    proc.stderr.write('ne\nWaiting for the debugger to disconnect...\n')
+    // Node's inspector chatter, whichever order it ends in, stays out of the program's output.
+    proc.stderr.write('ne\nDebugger ending on ws://x/2\nWaiting for the debugger to disconnect...\n')
     await new Promise((r) => setTimeout(r, 10))
     expect(cdp.closed).toBe(1)
     proc.stderr.write('tail without newline')
@@ -274,6 +275,33 @@ describe('DebugService edge cases', () => {
     expect(sessions[sessions.length - 1].frames[0].path).toBeUndefined() // the folder itself is no file
     Object.assign(proc, { signalCode: 'SIGTERM' })
     await service.stop()
+  })
+})
+
+describe('DebugService · an inspector that refuses', () => {
+  it('a refused resume at the start or a breakpoint that won\'t go is no error', async () => {
+    const root = await tempDir()
+    await writeFile(join(root, 'a.js'), '')
+    const sent: string[] = []
+    const { cdp, proc } = fakeRun((method) => {
+      sent.push(method)
+      if (method === 'Debugger.setBreakpointByUrl') return { breakpointId: `bp-${sent.length}` }
+      if (method === 'Debugger.removeBreakpoint' || method === 'Debugger.resume') throw new Error('gone')
+      return {}
+    })
+    const sessions: DebugSession[] = []
+    const service = new DebugService({ resolveRoot: () => root, publish: (c, p) => c === 'debug:session' && sessions.push(p as DebugSession), launch: () => proc as never, connect: async () => cdp })
+    await service.start({ projectId: 'p', program: 'a.js', breakpoints: [{ path: 'a.js', line: 1 }] })
+    proc.stderr.write('Debugger listening on ws://x/1\n')
+    await new Promise((r) => setTimeout(r, 10))
+    cdp.emit('Debugger.paused', { reason: 'Break on start', callFrames: [] })
+    await new Promise((r) => setTimeout(r, 10))
+    expect(sent).toContain('Debugger.resume')
+    await service.setBreakpoints('p', [{ path: 'a.js', line: 2 }])
+    expect(sent.filter((m) => m === 'Debugger.removeBreakpoint')).toHaveLength(1)
+    expect(sent.filter((m) => m === 'Debugger.setBreakpointByUrl')).toHaveLength(2)
+    expect(sessions.at(-1)?.error).toBeUndefined()
+    service.dispose()
   })
 })
 

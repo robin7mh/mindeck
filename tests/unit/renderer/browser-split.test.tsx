@@ -82,7 +82,7 @@ describe('split view parts', () => {
     fireEvent.pointerDown(divider, { clientX: 503 })
     expect(useOverlays.getState().count).toBe(1)
     expect(screen.getByTestId('split-drag-shield')).toBeInTheDocument()
-    fireEvent.pointerMove(divider, { clientX: 403 })
+    fireEvent.pointerMove(divider, { clientX: 403, buttons: 1 })
     expect(onRatio).toHaveBeenLastCalledWith(0.4)
     fireEvent.pointerUp(divider, { clientX: 303 })
     expect(onRatio).toHaveBeenLastCalledWith(null)
@@ -108,7 +108,7 @@ describe('split view parts', () => {
     )
     expect(divider).toHaveAttribute('aria-orientation', 'horizontal')
     fireEvent.pointerDown(divider, { clientY: 403 })
-    fireEvent.pointerMove(divider, { clientY: 303 })
+    fireEvent.pointerMove(divider, { clientY: 303, buttons: 1 })
     expect(onRatio).toHaveBeenLastCalledWith(0.375)
     fireEvent.pointerCancel(divider, { clientY: 303 })
     fireEvent.keyDown(divider, { key: 'ArrowUp' })
@@ -195,7 +195,7 @@ describe('Viewport · split view', () => {
     expect(sent('browser:activate')).toEqual([{ id: 'b' }])
     // the divider dragged: the panes follow at once
     fireEvent.pointerDown(screen.getByRole('separator'), { clientX: 10 + 203 })
-    fireEvent.pointerMove(screen.getByRole('separator'), { clientX: 10 + 203 })
+    fireEvent.pointerMove(screen.getByRole('separator'), { clientX: 10 + 203, buttons: 1 })
     expect(panes[0].style.flexBasis).toBe('calc(0.5 * (100% - 6px))')
     fireEvent.pointerUp(screen.getByRole('separator'), { clientX: 10 + 203 })
     // stacked

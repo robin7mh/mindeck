@@ -61,7 +61,7 @@ function Search() {
   }
 
   return (
-    <div role="dialog" aria-label={t.library.tabSearch} className="fixed inset-0 z-[60] flex justify-center bg-void/40 pt-[12vh]" onMouseDown={close}>
+    <div role="dialog" aria-label={t.library.tabSearch} className="fixed inset-0 z-60 flex justify-center bg-void/40 pt-[12vh]" onMouseDown={close}>
       <div className="h-fit w-[min(600px,90vw)] overflow-hidden rounded-lg border border-hud/70 bg-panel/95 shadow-2xl shadow-black/50 backdrop-blur-md" onMouseDown={(e) => e.stopPropagation()}>
         <input
           autoFocus
@@ -79,7 +79,7 @@ function Search() {
               setActive((i) => Math.max(0, Math.min(hits.length - 1, i + (e.key === 'ArrowDown' ? 1 : -1))))
             } else if (e.key === 'Enter' && hits[active]) choose(hits[active])
           }}
-          className="w-full border-b border-hud/60 bg-transparent px-3 py-2.5 font-sans text-[13.5px] text-text-primary outline-none placeholder:text-text-muted"
+          className="w-full border-b border-hud/60 bg-transparent px-3 py-2.5 font-sans text-[13.5px] text-text-primary outline-hidden placeholder:text-text-muted"
         />
         <ul ref={list} role="listbox" aria-label={t.library.tabSearch} className="max-h-[55vh] overflow-y-auto p-1">
           {!hits.length && <li className="px-3 py-3 font-sans text-[12.5px] text-text-muted">{t.library.nothingFound}</li>}

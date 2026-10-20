@@ -246,6 +246,10 @@ describe('the browser host · profiles, fullscreen, media, logins', () => {
     expect(own.opts.webPreferences.partition).toBe('persist:mindeck-browser')
     // every profile asks the blocker
     expect(h.sessions.get('mindeck-private')!.beforeRequest).toBeDefined()
+    // and asks the window open now — naming the tab
+    const [ask] = h.sessions.get('mindeck-private')!.setPermissionRequestHandler.mock.calls[0] as [(...a: unknown[]) => void]
+    ask(priv.webContents, 'notifications', vi.fn(), { requestingUrl: 'https://secret.dev/x' })
+    expect(ev.permission).toHaveBeenCalledWith({ tabId: 'p', origin: 'https://secret.dev', kind: 'notifications' }, expect.any(Function))
     // a private sign-in popup stays private
     const popup = priv.webContents.openHandler!({ url: 'https://login.dev/', disposition: 'new-window', features: 'width=400' } as never) as {
       overrideBrowserWindowOptions: { webPreferences: { partition: string } }
@@ -307,7 +311,7 @@ describe('the browser host · profiles, fullscreen, media, logins', () => {
     a.webContents.emit('leave-html-full-screen')
     expect(a.bounds).toEqual({ x: 10, y: 50, width: 800, height: 600 })
     // F11 / ⌃⌘F still toggles the window's own full screen from the page
-    a.webContents.emit('before-input-event', esc, { ...key('F11') })
+    a.webContents.emit('before-input-event', esc, process.platform === 'darwin' ? { ...key('f'), meta: true, control: true } : key('F11'))
     expect(win.setFullScreen).toHaveBeenCalledWith(true)
 
     // fullscreen again, then another tab: the first leaves fullscreen

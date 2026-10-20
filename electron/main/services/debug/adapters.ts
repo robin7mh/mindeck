@@ -6,7 +6,9 @@ import { pathToFileURL } from 'node:url'
 import { shellCommand, shellEnv, shellQuote } from '../terminal/TerminalService'
 import { shellArgs } from '../../lib/shellArgs'
 import { spawnProgram } from '../../lib/executables'
+import { spawnNode, type NodeLauncher, type NodeProcess } from '../../lib/nodeProcess'
 import { pythonFor } from '../tools/catalog'
+import { userEnv } from '../tools/ToolsService'
 import type { DapLaunch, DapTransport } from './Dap'
 
 /**
@@ -25,7 +27,7 @@ export function spawnInShell(command: string, args: string[], cwd: string, env: 
   })
 }
 
-export function stdioTransport(proc: Pick<ChildProcess, 'stdin' | 'stdout' | 'on' | 'kill'>): DapTransport {
+export function stdioTransport(proc: Pick<NodeProcess, 'stdin' | 'stdout' | 'on' | 'kill'>): DapTransport {
   return {
     write: (data) => void proc.stdin!.write(data),
     onData: (fn) => void proc.stdout!.on('data', fn),
@@ -58,6 +60,8 @@ export interface AdapterContext {
   module?: string
   /** Go: run the package's tests. */
   goTest?: boolean
+  /** How a debug adapter written in JavaScript runs as a Node program (Platform.node). */
+  node?: NodeLauncher
 }
 
 export type Spawn = (command: string, args: string[], cwd: string, env?: Record<string, string>) => ChildProcess
@@ -126,8 +130,8 @@ export async function startAdapter(language: string, ctx: AdapterContext, run: S
     }
   }
   if (language === 'php') {
-    // Xdebug's adapter is JavaScript: Mindeck's own Node runs it. It starts php with Xdebug pointed at its port.
-    const proc = run(process.execPath, [ctx.debugger], ctx.root, { ELECTRON_RUN_AS_NODE: '1' })
+    // Xdebug's adapter is JavaScript: Mindeck runs it as a Node program. It starts php (the user's PATH) with Xdebug pointed at its port.
+    const proc = (ctx.node ?? spawnNode)([ctx.debugger], { cwd: ctx.root, env: await userEnv(), name: 'PHP Debug' })
     return {
       transport: stdioTransport(proc),
       launch: {

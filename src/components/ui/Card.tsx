@@ -12,7 +12,7 @@ export function Card({ icon: Icon, title, children, className }: { icon: LucideI
   return (
     <section
       data-card={title}
-      className={cn('scroll-mt-3 rounded-md border border-hud/60 bg-surface/40 p-3.5 transition-shadow duration-500 data-[flash]:shadow-[0_0_0_1px_rgb(var(--accent-cyan)/0.7),0_0_24px_rgb(var(--accent-cyan)/0.25)]', className)}
+      className={cn('scroll-mt-3 rounded-md border border-hud/60 bg-surface/40 p-3.5 transition-shadow duration-500 data-flash:shadow-[0_0_0_1px_rgb(var(--accent-cyan)/0.7),0_0_24px_rgb(var(--accent-cyan)/0.25)]', className)}
     >
       <div className="mb-3 flex items-center gap-2">
         <Icon size={14} className="text-cyan" />

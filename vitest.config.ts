@@ -17,7 +17,14 @@ export default defineConfig({
   plugins: [react()],
   resolve: { alias },
   test: {
+    // Before each test: spies are restored, every vi.fn() loses its calls and
+    // the implementations a test gave it (vitest 4's restoreMocks alone only
+    // restores vi.spyOn spies).
     restoreMocks: true,
+    mockReset: true,
+    // The heavier UI tests take ~1 s alone, but several times that with coverage on every core of a
+    // busy machine — no test waits on the clock (fake timers do that), so the limit only catches hangs.
+    testTimeout: 20_000,
     projects: [
       {
         extends: true,
@@ -40,7 +47,7 @@ export default defineConfig({
     ],
     coverage: {
       provider: 'v8',
-      all: true,
+      // Files no test imports count too: everything `include` matches.
       include: ['electron/**/*.ts', 'src/**/*.{ts,tsx}'],
       // Type-only modules compile to nothing (0/0 lines) and would show as an
       // empty row. tests/unit/renderer/base.test.tsx asserts they export nothing

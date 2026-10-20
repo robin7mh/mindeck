@@ -16,6 +16,8 @@ import type {
 } from '@shared/types/github'
 import { shellCommand, shellEnv, shellQuote } from '../terminal/TerminalService'
 import { shellArgs } from '../../lib/shellArgs'
+import { spawnProgram } from '../../lib/executables'
+import { overrideEnv, untrustedOverrides } from '../../lib/git'
 
 function coded(code: string, message: string): Error {
   return Object.assign(new Error(message), { code })
@@ -27,18 +29,19 @@ export interface GhResult {
   stderr: string
 }
 
-/** Runs `gh <args>` in a folder (stdin = input). */
-export type GhRunner = (args: string[], cwd: string, input?: string) => Promise<GhResult>
+/** Runs `gh <args>` in a folder (stdin = input, `env` added to the user's). */
+export type GhRunner = (args: string[], cwd: string, input?: string, env?: Record<string, string>) => Promise<GhResult>
 
 const TIMEOUT_MS = 120_000
 
 /** A program (gh) started from the user's login shell (their PATH), never prompting; killed after `timeoutMs`. */
 export const shellRunner =
   (program: string, timeoutMs = TIMEOUT_MS): GhRunner =>
-  (args, cwd, input) =>
+  (args, cwd, input, extra) =>
     new Promise((resolve) => {
       const env = {
         ...shellEnv(),
+        ...extra,
         GH_PROMPT_DISABLED: '1',
         GH_NO_UPDATE_NOTIFIER: '1',
         GH_PAGER: 'cat',
@@ -46,12 +49,13 @@ export const shellRunner =
         CLICOLOR: '0'
       }
       const proc =
-        process.platform === 'win32' ? spawn(program, args, { cwd, env, windowsHide: true }) : spawn(shellCommand().file, shellArgs([program, ...args].map(shellQuote).join(' ')), { cwd, env })
+        // Windows: gh from the PATH by its full path (spawnProgram) — never a gh.exe in the project folder.
+        process.platform === 'win32' ? spawnProgram(program, args, { cwd, env }) : spawn(shellCommand().file, shellArgs([program, ...args].map(shellQuote).join(' ')), { cwd, env })
       const out: Buffer[] = []
       const err: Buffer[] = []
       const timer = setTimeout(() => proc.kill(), timeoutMs)
-      proc.stdout.on('data', (d: Buffer) => out.push(d))
-      proc.stderr.on('data', (d: Buffer) => err.push(d))
+      proc.stdout!.on('data', (d: Buffer) => out.push(d))
+      proc.stderr!.on('data', (d: Buffer) => err.push(d))
       proc.on('error', (e) => {
         clearTimeout(timer)
         resolve({ code: 127, stdout: '', stderr: e.message })
@@ -64,7 +68,7 @@ export const shellRunner =
           stderr: Buffer.concat(err).toString()
         })
       })
-      proc.stdin.end(input ?? '')
+      proc.stdin!.end(input ?? '')
     })
 
 /** The user's own gh. */
@@ -72,6 +76,8 @@ export const loginShellGh = shellRunner('gh')
 
 export interface GitHubOptions {
   resolveRoot: (projectId: string) => string | undefined
+  /** Whether a project folder is trusted (WorkspaceTrust): else the git gh runs (checkout, push) gets the untrusted overrides. */
+  trusted?: (dir: string) => boolean
   /** How gh runs (loginShellGh). */
   gh: GhRunner
 }
@@ -354,7 +360,9 @@ export class GitHubService {
   }
 
   private async run(cwd: string, args: string[], input?: string): Promise<string> {
-    const r = await this.opts.gh(args, cwd, input)
+    // gh runs git (checkout, push): in an untrusted repository with the same overrides as Mindeck's own git.
+    const env = this.opts.trusted?.(cwd) ? undefined : { GIT_CONFIG_PARAMETERS: overrideEnv(await untrustedOverrides(cwd), process.env.GIT_CONFIG_PARAMETERS) }
+    const r = await this.opts.gh(args, cwd, input, env)
     if (r.code === 0) return r.stdout
     const why = r.stderr.trim().split('\n').filter(Boolean).slice(-3).join('\n')
     if (r.code === 127 || /command not found|not recognized|ENOENT/i.test(why)) throw coded('gh-missing', 'The GitHub CLI (gh) is not installed')

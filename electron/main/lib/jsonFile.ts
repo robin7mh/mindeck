@@ -22,13 +22,19 @@ export function corruptName(file: string, now = new Date()): string {
  * `<name>.corrupt-<time>.json`, so the next save can't overwrite what may
  * still be rescued, and the problem is logged. The caller starts empty.
  */
-export async function readJsonFile<T = unknown>(file: string, now: () => Date = () => new Date()): Promise<JsonRead<T>> {
+export function readJsonFile<T = unknown>(file: string, now: () => Date = () => new Date()): Promise<JsonRead<T>> {
+  return read<T>(file, now, false)
+}
+
+/** `strict`: a file that is there but can't be read throws (logged) instead of reading as damaged. */
+async function read<T>(file: string, now: () => Date, strict: boolean): Promise<JsonRead<T>> {
   let raw: string
   try {
     raw = await readFile(file, 'utf8')
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return { status: 'missing' }
     console.warn(`[data] cannot read ${file}: ${(err as Error).message}`)
+    if (strict) throw err
     return { status: 'damaged' }
   }
   try {
@@ -50,4 +56,16 @@ export async function readJsonFile<T = unknown>(file: string, now: () => Date = 
 export async function readJson<T = unknown>(file: string): Promise<T | undefined> {
   const read = await readJsonFile<T>(file)
   return read.status === 'ok' ? read.value : undefined
+}
+
+/**
+ * Like readJson, for a store that writes itself back whole (paired devices,
+ * secrets): a file that is there but can't be read right now (EACCES, EIO,
+ * EMFILE) throws instead of reading as empty — the next save would otherwise
+ * replace everything in it with nothing. Missing → undefined; damaged JSON is
+ * set aside as always (see readJsonFile) → undefined.
+ */
+export async function readJsonOrThrow<T = unknown>(file: string): Promise<T | undefined> {
+  const result = await read<T>(file, () => new Date(), true)
+  return result.status === 'ok' ? result.value : undefined
 }

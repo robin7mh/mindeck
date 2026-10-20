@@ -71,6 +71,7 @@ export function XtermPane({ tab, label, active, framed, onNavigate }: PaneProps)
       termRef.current?.focus()
     })
     return () => cancelAnimationFrame(raf)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- refs from useXterm: stable
   }, [active])
 
   const focus = () => {
@@ -130,7 +131,7 @@ export function XtermPane({ tab, label, active, framed, onNavigate }: PaneProps)
               aria-label={t.terminal.close(label)}
               onMouseDown={(e) => e.stopPropagation()}
               onClick={() => void useTerminals.getState().close(tab.id)}
-              className="rounded p-0.5 text-text-muted transition-colors hover:bg-elevated hover:text-text-primary"
+              className="rounded-sm p-0.5 text-text-muted transition-colors hover:bg-elevated hover:text-text-primary"
             >
               <X size={11} />
             </button>

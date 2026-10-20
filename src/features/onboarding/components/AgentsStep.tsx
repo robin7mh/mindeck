@@ -11,7 +11,7 @@ import { XtermPane } from '@/features/terminal/components/XtermPane'
 import { quietButton } from '@/features/cloud/components/CloudForms'
 import { guides, type Guide } from '../guides'
 
-const small = 'flex shrink-0 items-center gap-1 rounded border border-hud/60 px-1.5 py-1 font-sans text-[11px] text-text-secondary transition-colors hover:border-cyan/50 hover:text-cyan'
+const small = 'flex shrink-0 items-center gap-1 rounded-sm border border-hud/60 px-1.5 py-1 font-sans text-[11px] text-text-secondary transition-colors hover:border-cyan/50 hover:text-cyan'
 
 /** A command line: copy it, or run it in a terminal right here. */
 function CommandLine({ label, command, onRun }: { label: string; command: string; onRun: (command: string) => void }) {
@@ -30,7 +30,7 @@ function CommandLine({ label, command, onRun }: { label: string; command: string
   return (
     <div className="mt-1.5 flex min-w-0 items-center gap-1.5">
       <span className="w-20 shrink-0 font-sans text-[11px] text-text-muted">{label}</span>
-      <code title={command} className="min-w-0 flex-1 truncate rounded border border-hud/50 bg-void/50 px-2 py-1 font-mono text-[11px] text-text-primary">
+      <code title={command} className="min-w-0 flex-1 truncate rounded-sm border border-hud/50 bg-void/50 px-2 py-1 font-mono text-[11px] text-text-primary">
         {command}
       </code>
       <button type="button" aria-label={o.copy(command)} title={copied ? o.copied : undefined} onClick={() => void copy()} className={small}>
@@ -98,7 +98,7 @@ export function AgentsStep() {
     <div>
       <div className="mb-3 flex items-start gap-3">
         <p className="flex-1 font-sans text-[13px] text-text-secondary">{o.agentsIntro}</p>
-        <button type="button" disabled={detecting || !runtimes} onClick={check} className={cn(quietButton, '!py-1.5')}>
+        <button type="button" disabled={detecting || !runtimes} onClick={check} className={cn(quietButton, 'py-1.5!')}>
           <RefreshCw size={12} className={cn(detecting && 'animate-spin')} /> {o.checkAgain}
         </button>
       </div>

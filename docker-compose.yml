@@ -15,6 +15,18 @@ services:
     image: ghcr.io/robin7mh/mindeck:local
     container_name: mindeck-core
     restart: unless-stopped
+    # Hardened: no capabilities, no privilege gain (setuid), and a read-only image — the core
+    # writes only to /data, /projects (when rw) and the in-memory /tmp and home below. The
+    # healthcheck comes from the Dockerfile (docker compose up --wait waits for it).
+    read_only: true
+    tmpfs:
+      - /tmp
+      # The node user's home (uid 1000): git, npm and shells keep their caches there.
+      - /home/node:uid=1000,gid=1000
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     environment:
       MINDECK_REMOTE_TERMINAL: ${MINDECK_REMOTE_TERMINAL:-0}
       # HTTPS (1) or plain HTTP (0); an own certificate: MINDECK_TLS_CERT / MINDECK_TLS_KEY
@@ -22,14 +34,18 @@ services:
       MINDECK_TLS: ${MINDECK_TLS:-1}
       MINDECK_TLS_CERT: ${MINDECK_TLS_CERT:-}
       MINDECK_TLS_KEY: ${MINDECK_TLS_KEY:-}
+      # Names besides its addresses the core answers to (the host's name, a proxy's domain).
+      MINDECK_ALLOWED_HOSTS: ${MINDECK_ALLOWED_HOSTS:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
     ports:
       - '${MINDECK_BIND:-127.0.0.1}:${MINDECK_CORE_PORT:-7420}:7420'
     volumes:
       # Settings, paired devices, project registry, history and the vault live here.
       - mindeck-data:/data
-      # Folders the core may add as projects (inside the container: /projects).
-      - ${MINDECK_PROJECTS_DIR:-./}:/projects:ro
+      # Folders the core may add as projects (inside the container: /projects). Read-only by
+      # default (browse, search, agents that read); MINDECK_PROJECTS_MODE=rw lets the core
+      # save, rename and delete files there (deleted ones go to /data/file-trash).
+      - ${MINDECK_PROJECTS_DIR:-./projects}:/projects:${MINDECK_PROJECTS_MODE:-ro}
 
 volumes:
   mindeck-data:

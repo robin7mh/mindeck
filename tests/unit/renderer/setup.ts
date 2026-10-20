@@ -63,5 +63,6 @@ afterEach(() => {
   delete (window as { mindeck?: unknown }).mindeck
   setTransport(null)
   localStorage.clear()
+  sessionStorage.clear()
   for (const a of ['data-theme', 'data-accent', 'data-surface', 'style']) document.documentElement.removeAttribute(a)
 })

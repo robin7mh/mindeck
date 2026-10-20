@@ -30,18 +30,23 @@ const R = '‹redacted›'
 /** `token=…`, `"password": "…"` — unless a rule before took the value out already (or it is a Bearer's, done too). */
 const KEYED = new RegExp(String.raw`((?:token|password|passwd|secret|api[_-]?key|authorization|cookie)["']?\s*[:=]\s*["']?)(?!(?:Bearer|Basic)\s|${R})[^\s"'&,;}]+`, 'gi')
 
+/** A pairing code (`K7QM-2XPA`, no 0/O/1/I/L) after `Code:`, `"code": "…"` or a link's `#pair=` — an admin's, maybe. */
+const PAIRING_CODE = /(\b(?:[Cc]ode|pair)["']?\s*[:=]\s*["']?)[A-HJ-NP-Z2-9]{4}-?[A-HJ-NP-Z2-9]{4}(?![\w-])/g
+
 /**
- * Takes secrets out of a log line: bearer and session tokens, signed
- * entitlements, JWTs, API keys, private keys, passwords in URLs
- * (`mongodb://user:pw@host`, a git remote) and `token=` / `password: …`
- * style values. Logs are shared in bug reports — nothing in them may sign
- * anyone in.
+ * Takes secrets out of a log line: bearer and session tokens, Mindeck's own
+ * device tokens and pairing codes, signed entitlements, JWTs, API keys,
+ * private keys, passwords in URLs (`mongodb://user:pw@host`, a git remote)
+ * and `token=` / `password: …` style values. Logs are shared in bug reports —
+ * nothing in them may sign anyone in.
  */
 export function redact(text: string): string {
   return text
     .replace(/-----BEGIN ([A-Z ]*)PRIVATE KEY-----[\s\S]*?(?:-----END \1PRIVATE KEY-----|$)/g, `-----BEGIN $1PRIVATE KEY-----${R}`)
     .replace(/\b(Bearer|Basic)\s+[\w.~+/=-]+/gi, `$1 ${R}`)
     .replace(/\bmindeck1\.[\w-]+\.[\w-]+/g, `mindeck1.${R}`)
+    .replace(/\bmindeck_[\w-]{20,}/g, `mindeck_${R}`)
+    .replace(PAIRING_CODE, `$1${R}`)
     .replace(/\beyJ[\w-]{8,}\.eyJ[\w-]{8,}\.[\w-]+/g, R)
     .replace(/\b([a-z][a-z0-9+.-]*:\/\/[^\s/:@]+):[^\s/@]+@/gi, `$1:${R}@`)
     .replace(/\b(sk-ant-|sk-|ghp_|gho_|ghs_|ghu_|ghr_|github_pat_|glpat-|npm_|xox[abpe]-|AKIA|AIza)[\w-]{8,}/g, `$1${R}`)

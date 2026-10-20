@@ -8,8 +8,8 @@ import {
 import type { EntityRef } from '@shared/types/entity'
 
 /**
- * Where non-ephemeral events are stored (EventLog: memory ring + Postgres
- * `events` table, catalog-driven, audit rows append-only).
+ * Where non-ephemeral events are stored (EventLog: memory ring + a JSON-lines
+ * file in the data folder, catalog-driven, append-only).
  */
 export interface EventSink {
   persist(event: MindeckEvent, cls: Exclude<EventPersistence, 'ephemeral'>): void

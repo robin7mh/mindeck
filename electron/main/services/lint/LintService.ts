@@ -1,10 +1,10 @@
-import { spawn, type ChildProcess } from 'node:child_process'
 import { realpath } from 'node:fs/promises'
 import { sep } from 'node:path'
 import { createInterface } from 'node:readline'
 import { isTypeScriptFile } from '@shared/types/languages'
 import type { LintDiagnostic, LintResult } from '@shared/types/lint'
 import { confine } from '../../lib/confine'
+import { spawnNode, type NodeLauncher, type NodeProcess } from '../../lib/nodeProcess'
 import { shellEnv } from '../terminal/TerminalService'
 
 function coded(code: string, message: string): Error {
@@ -15,13 +15,17 @@ function coded(code: string, message: string): Error {
  * Runs inside the project (its own node_modules): ESLint lints and fixes,
  * Prettier formats — the project's versions, configs and plugins, as the
  * VS Code extensions use them. One JSON request per line in, one answer out.
+ * In a project that isn't trusted (MINDECK_TRUSTED unset) nothing of the
+ * project's is loaded — its modules and configs are code: no ESLint, and
+ * Prettier only Mindeck's own with the editor's options, when asked for.
  */
 export const WORKER = String.raw`
 const path = require('path'), fs = require('fs'), readline = require('readline')
 const { createRequire } = require('module')
 const ROOT = process.env.MINDECK_ROOT
+const TRUSTED = process.env.MINDECK_TRUSTED === '1'
 const local = createRequire(path.join(ROOT, 'mindeck.js'))
-const tryRequire = (m) => { try { return local(m) } catch { return null } }
+const tryRequire = (m) => { if (!TRUSTED) return null; try { return local(m) } catch { return null } }
 const CONFIGS = ['eslint.config.js', 'eslint.config.mjs', 'eslint.config.cjs', 'eslint.config.ts', 'eslint.config.mts', 'eslint.config.cts',
   '.eslintrc', '.eslintrc.js', '.eslintrc.cjs', '.eslintrc.json', '.eslintrc.yaml', '.eslintrc.yml']
 const pkg = (() => { try { return JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')) } catch { return {} } })()
@@ -57,7 +61,7 @@ const ops = {
     if (!prettier) return null
     const info = await prettier.getFileInfo(file, { ignorePath: path.join(ROOT, '.prettierignore') })
     if (info.ignored || !info.inferredParser) return null
-    const config = await prettier.resolveConfig(file, { editorconfig: true })
+    const config = TRUSTED ? await prettier.resolveConfig(file, { editorconfig: true }) : null
     return prettier.format(text, { ...(config || options || {}), filepath: file })
   }
 }
@@ -86,8 +90,12 @@ export interface LintOptions {
   resolveRoot: (projectId: string) => string | undefined
   /** Mindeck's own Prettier (used where a project has none, when asked to). */
   prettier: string
-  /** Start the worker in a project (tests run it with plain Node). */
-  spawn?: (root: string) => ChildProcess
+  /** Whether the project is trusted (WorkspaceTrust); restricted when not, or without this. */
+  trusted?: (projectId: string) => boolean
+  /** How the worker runs as a Node program (Platform.node). */
+  node?: NodeLauncher
+  /** Start the worker in a project (default: WORKER with `node`). */
+  spawn?: (root: string, trusted: boolean) => NodeProcess
   /** A worker nobody asked for this long stops. */
   idleMs?: number
   timeoutMs?: number
@@ -95,13 +103,15 @@ export interface LintOptions {
 
 /** The worker of one project: requests by id, stops when idle. */
 class Worker {
-  private proc?: ChildProcess
+  private proc?: NodeProcess
   private seq = 0
   private pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> }>()
   private idle?: ReturnType<typeof setTimeout>
 
   constructor(
     private readonly root: string,
+    /** Started for a trusted project (loads the project's ESLint / Prettier). */
+    readonly trusted: boolean,
     private readonly opts: LintOptions & Required<Pick<LintOptions, 'idleMs' | 'timeoutMs' | 'spawn'>>
   ) {}
 
@@ -127,8 +137,8 @@ class Worker {
     this.proc = undefined
   }
 
-  private start(): ChildProcess {
-    const proc = this.opts.spawn(this.root)
+  private start(): NodeProcess {
+    const proc = this.opts.spawn(this.root, this.trusted)
     createInterface({ input: proc.stdout! }).on('line', (line) => {
       let msg: { id: number; ok: boolean; result?: unknown; error?: string }
       try {
@@ -173,11 +183,13 @@ export class LintService {
     this.opts = {
       idleMs: 10 * 60_000,
       timeoutMs: 60_000,
-      spawn: (root) =>
-        spawn(process.execPath, ['-e', WORKER], {
+      // The project's ESLint / Prettier plugins may bring native addons (unrs-resolver, @swc/core …).
+      spawn: (root, trusted) =>
+        (opts.node ?? spawnNode)(['-e', WORKER], {
           cwd: root,
-          env: { ...shellEnv(), ELECTRON_RUN_AS_NODE: '1', MINDECK_ROOT: root, MINDECK_PRETTIER: opts.prettier },
-          stdio: ['pipe', 'pipe', 'pipe']
+          env: { ...shellEnv(), MINDECK_ROOT: root, MINDECK_PRETTIER: opts.prettier, ...(trusted ? { MINDECK_TRUSTED: '1' } : {}) },
+          name: 'ESLint / Prettier',
+          unsignedLibraries: true
         }),
       ...opts
     }
@@ -187,7 +199,7 @@ export class LintService {
   async lint(projectId: string, path: string, text: string): Promise<LintResult> {
     if (!isTypeScriptFile(path)) return { available: false, diagnostics: [] }
     const { root, file } = await this.file(projectId, path)
-    const messages = await this.worker(root).request<RawMessage[] | null>('lint', { file, text })
+    const messages = await this.worker(root, projectId).request<RawMessage[] | null>('lint', { file, text })
     if (!messages) return { available: false, diagnostics: [] }
     return {
       available: true,
@@ -208,13 +220,13 @@ export class LintService {
   async fix(projectId: string, path: string, text: string): Promise<string | null> {
     if (!isTypeScriptFile(path)) return null
     const { root, file } = await this.file(projectId, path)
-    return this.worker(root).request<string | null>('fix', { file, text })
+    return this.worker(root, projectId).request<string | null>('fix', { file, text })
   }
 
   /** Prettier's version of the text (null: Prettier isn't responsible — the editor's own formatter is). */
   async format(projectId: string, path: string, text: string, opts: { prettier?: boolean; options?: Record<string, unknown> } = {}): Promise<string | null> {
     const { root, file } = await this.file(projectId, path)
-    return this.worker(root).request<string | null>('format', { file, text, force: !!opts.prettier, options: opts.options })
+    return this.worker(root, projectId).request<string | null>('format', { file, text, force: !!opts.prettier, options: opts.options })
   }
 
   /** Start over (after changing the ESLint / Prettier config or installing plugins). */
@@ -234,17 +246,20 @@ export class LintService {
     return { root, file: await confine(root, path) }
   }
 
-  private worker(root: string): Worker {
+  /** The project's worker — a new one when its trust changed since it started. */
+  private worker(root: string, projectId: string): Worker {
+    const trusted = this.opts.trusted?.(projectId) ?? false
     let w = this.workers.get(root)
-    if (!w) {
-      w = new Worker(root, this.opts)
+    if (w && w.trusted !== trusted) w.stop()
+    if (!w || w.trusted !== trusted) {
+      w = new Worker(root, trusted, this.opts)
       this.workers.set(root, w)
     }
     return w
   }
 }
 
-/** Mindeck's own Prettier, outside the app archive (the worker is a separate Node). */
+/** Mindeck's own Prettier, outside the app archive (the worker is a Node program of its own). */
 export function bundledPrettier(resolve: (id: string) => string = require.resolve): string {
   return resolve('prettier').replace(`app.asar${sep}`, `app.asar.unpacked${sep}`)
 }

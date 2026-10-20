@@ -13,15 +13,28 @@ import type { DirListing } from '@shared/types/server'
  */
 const DENIED: readonly RegExp[] = [
   /^\.(ssh|aws|gnupg|azure|kube|docker|mozilla)$/,
+  // A repository's own data: remote URLs carry tokens (`https://x-access-token:ghp_…@github.com`) — scm:* reads git for devices.
+  /^\.git$/,
   /^\.env/,
-  /^\.(netrc|pgpass|git-credentials|npmrc|pypirc)$/,
-  /\.(pem|key|p12|pfx|keychain|keychain-db)$/,
+  /^\.(netrc|pgpass|git-credentials|npmrc|pypirc|yarnrc|yarnrc\.yml|htpasswd|terraformrc|dockercfg|boto|s3cfg|my\.cnf)$/,
+  /\.(pem|key|p12|pfx|jks|keystore|ppk|kdbx|keychain|keychain-db)$/,
+  // Terraform state (every secret of the infrastructure), cloud credentials and service accounts, app secrets.
+  /\.tfstate(\..*)?$/,
+  /^credentials.*\.json$/,
+  /service[-_]?account.*\.json$/,
+  /^secrets?\.(ya?ml|json)$/,
+  /^wp-config\.php$/,
   // SSH keys (`id_rsa`, `id_ed25519.pub`, `id_github`) — not source files such as `id_utils.py`.
   /^id_[^.]*(\.pub)?$/,
   /^keychains$/,
   /^(google-chrome|chromium|bravesoftware|vivaldi)$/,
   /^(cookies|login data|web data|key4\.db|logins\.json|cookies\.sqlite)$/
 ]
+
+/** A file or folder name on the deny list (keys, credentials, browser profiles), ignoring case. */
+export function isDeniedName(name: string): boolean {
+  return DENIED.some((re) => re.test(name.toLowerCase()))
+}
 
 /** The operating system's own folders: never a device's, nor any folder that holds one. */
 function systemDirs(platform: NodeJS.Platform): string[] {
@@ -99,7 +112,10 @@ export class RemoteAccess {
   /** Router guard for remote calls: folders, projects and files named in the payload. */
   async check(channel: IpcChannel, payload: unknown): Promise<void> {
     const p = (payload ?? {}) as Record<string, unknown>
-    if (channel === 'projects:add' || channel === 'memory:setVault') await this.folder(String(p.path))
+    if (channel === 'projects:add') await this.folder(String(p.path))
+    if (channel === 'memory:setVault') await this.vault(String(p.path))
+    // projects:remove / refresh / pull / trust name their project as `id`: a device only acts on projects it may use.
+    if (channel.startsWith('projects:') && typeof p.id === 'string') await this.project(p.id)
     if (typeof p.projectId === 'string') {
       await this.project(p.projectId)
       await this.files(filePaths(p), p.projectId)
@@ -150,7 +166,7 @@ export class RemoteAccess {
    */
   denied(path: string): string | undefined {
     const segments = path.split(/[\\/]+/).map((s) => (this.path === win32 ? s.replace(/:.*$/, '').replace(/[. ]+$/, '') : s))
-    return segments.find((segment) => DENIED.some((re) => re.test(segment.toLowerCase())))
+    return segments.find(isDeniedName)
   }
 
   /** An existing folder a device may add (project, vault) or browse: its canonical path. */
@@ -168,11 +184,23 @@ export class RemoteAccess {
     return abs
   }
 
+  /**
+   * A folder a device makes the vault. Without remote shells never a project's
+   * (nor one holding or inside a project): notes there are project files —
+   * `CLAUDE.md`, `AGENTS.md`, the README — that a device could not write otherwise.
+   */
+  private async vault(path: string): Promise<void> {
+    const abs = await this.folder(path)
+    if (this.deps.remoteShell()) return
+    const project = this.deps.projects().find((p) => this.inside(abs, p.path) || this.inside(p.path, abs))
+    if (project) throw refused(`The project ${project.name} cannot be the vault of a paired device while remote shells are off`)
+  }
+
   /** The folder browser for a device: the shared folders only (hidden and denied names left out). */
   async dirs(path?: string): Promise<DirListing> {
     const visible = (listing: DirListing): DirListing => ({
       ...listing,
-      dirs: listing.dirs.filter((name) => !DENIED.some((re) => re.test(name.toLowerCase())))
+      dirs: listing.dirs.filter((name) => !isDeniedName(name))
     })
     if (this.deps.remoteShell()) return visible(await this.deps.dirs(path))
     const roots = await this.roots()
@@ -218,7 +246,7 @@ export class RemoteAccess {
     if (guarded.some((d) => this.inside(abs, d) || this.inside(d, abs))) return "Mindeck's own data"
     const segments = abs.split(/[\\/]+/)
     if (segments.some((s) => s.startsWith('.'))) return 'a hidden folder'
-    if (segments.some((s) => DENIED.some((re) => re.test(s.toLowerCase())))) return 'keys or credentials'
+    if (segments.some(isDeniedName)) return 'keys or credentials'
     return null
   }
 

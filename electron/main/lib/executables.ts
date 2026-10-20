@@ -1,6 +1,6 @@
 import { execFile, spawn, type ChildProcess, type SpawnOptions } from 'node:child_process'
 import { statSync } from 'node:fs'
-import { basename, extname, isAbsolute, join } from 'node:path'
+import { basename, dirname, extname, isAbsolute, join, posix, win32 } from 'node:path'
 
 /** Where programs are looked up: the folders of a PATH, and (Windows) the endings a bare name may have. */
 export interface SearchPath {
@@ -56,6 +56,39 @@ export function findExecutable(name: string, search: SearchPath): string | undef
     if (hit) return hit
   }
   return undefined
+}
+
+/** An environment variable whatever its case on Windows (`Path`, `PATHEXT`); exactly as named elsewhere. */
+function envValue(env: Record<string, string | undefined>, name: string, platform: NodeJS.Platform): string | undefined {
+  if (platform !== 'win32') return env[name]
+  return Object.entries(env).find(([k]) => k.toUpperCase() === name)?.[1]
+}
+
+/** A folder that says where it is: `C:\…` or `\\server\share` on Windows, `/…` elsewhere. */
+const anchored = (dir: string, platform: NodeJS.Platform) => (platform === 'win32' ? /^([a-z]:[\\/]|[\\/]{2})/i.test(dir) : posix.isAbsolute(dir))
+
+/**
+ * Where a program Mindeck starts by name may come from: the PATH's absolute
+ * folders, nothing else. Never the working folder — Windows looks there
+ * first for a bare name (libuv, cmd.exe), so a `git.exe` checked into a
+ * project would run in its place — and no empty or relative PATH entry,
+ * which means a folder relative to it.
+ */
+export function programSearch(env: Record<string, string | undefined> = process.env, platform: NodeJS.Platform = process.platform): SearchPath {
+  const search = searchPath(envValue(env, 'PATH', platform) ?? '', platform, envValue(env, 'PATHEXT', platform))
+  return { ...search, dirs: search.dirs.filter((dir) => anchored(dir, platform)) }
+}
+
+/**
+ * The absolute path to start a program by: a path stays as given, a bare
+ * name is looked up with programSearch. A name that isn't on the PATH gets a
+ * path in a folder that never exists — the start fails with ENOENT, as for
+ * any missing program, instead of finding something next to the project.
+ */
+export function programPath(name: string, env: Record<string, string | undefined> = process.env, platform: NodeJS.Platform = process.platform): string {
+  const path = platform === 'win32' ? win32 : posix
+  if (path.isAbsolute(name) || name.includes('/') || (platform === 'win32' && name.includes('\\'))) return name
+  return findExecutable(name, programSearch(env, platform)) ?? path.join(dirname(process.execPath), 'not-on-PATH', name)
 }
 
 /** Runs a program, resolving with its stdout (also when it exits non-zero: `where.exe` does when one name is missing). */
@@ -144,10 +177,15 @@ export function psQuote(word: string): string {
  * quoted so every argument arrives unchanged.
  */
 export function spawnProgram(file: string, args: string[], options: SpawnOptions, platform: NodeJS.Platform = process.platform, run: typeof spawn = spawn): ChildProcess {
-  if (platform === 'win32' && /\.(cmd|bat)$/i.test(file)) {
-    const shim = /node_modules[\\/]\.bin[\\/][^\\/]+\.cmd$/i.test(file)
-    const line = [file.replace(CMD_META, '^$1'), ...args.map((a) => cmdArg(a, shim))].join(' ')
-    return run(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', `"${line}"`], { ...options, windowsVerbatimArguments: true, windowsHide: true })
+  if (platform === 'win32') {
+    // A bare name from the PATH only — never a program of that name in the (project) working folder.
+    const env = options.env ?? process.env
+    file = programPath(file, env, platform)
+    if (/\.(cmd|bat)$/i.test(file)) {
+      const shim = /node_modules[\\/]\.bin[\\/][^\\/]+\.cmd$/i.test(file)
+      const line = [file.replace(CMD_META, '^$1'), ...args.map((a) => cmdArg(a, shim))].join(' ')
+      return run(process.env.ComSpec || programPath('cmd.exe', env, platform), ['/d', '/s', '/c', `"${line}"`], { ...options, windowsVerbatimArguments: true, windowsHide: true })
+    }
   }
   return run(file, args, { ...options, windowsHide: true })
 }

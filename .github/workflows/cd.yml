@@ -1,5 +1,6 @@
-# Merges (push to main/develop) and releases (tags v*) build and publish —
-# without re-running tests: every change already passed CI on its pull request.
+# Merges (push to main/develop) and releases (tags v*) build and publish — only
+# after typecheck and unit tests pass here too: a direct push never reaches the
+# public image untested (E2E stays on the pull request, ci.yml).
 name: CD
 
 on:
@@ -15,24 +16,42 @@ concurrency:
 env:
   IMAGE: ghcr.io/${{ github.repository_owner }}/mindeck
 
+permissions:
+  contents: read
+
 jobs:
+  test:
+    name: Typecheck + unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run test:coverage
+
   image:
     name: Web image → GHCR
+    needs: test
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@v5
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
         with:
           images: ${{ env.IMAGE }}
           # develop → :develop, main → :main, v1.2.3 → :1.2.3 :1.2 :latest, plus :sha-<short>
@@ -43,7 +62,7 @@ jobs:
             type=sha
           flavor: |
             latest=${{ startsWith(github.ref, 'refs/tags/v') }}
-      - uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: .
           push: true
@@ -65,8 +84,8 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 22
           cache: npm
@@ -77,7 +96,7 @@ jobs:
           tar -czf mindeck-web-${GITHUB_REF_NAME}.tar.gz -C out/web .
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           generate_release_notes: true
           files: mindeck-web-*.tar.gz

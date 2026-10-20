@@ -1,4 +1,4 @@
-import { mkdir, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -39,7 +39,8 @@ const electron = vi.hoisted(() => ({
   encryption: true,
   backend: 'gnome_libsecret',
   clipboardWrites: [] as unknown[],
-  trashItem: vi.fn(async (_path: string) => {})
+  trashItem: vi.fn(async (_path: string) => {}),
+  fork: vi.fn((..._args: unknown[]) => ({ stdout: null, stderr: null, postMessage() {}, kill: () => true, on() {} }))
 }))
 vi.mock('electron', () => ({
   app: { getApplicationNameForProtocol: electron.appForProtocol },
@@ -48,6 +49,7 @@ vi.mock('electron', () => ({
     constructor(public data: Record<string, string>) {}
   },
   dialog: { showOpenDialog: electron.showOpenDialog },
+  utilityProcess: { fork: electron.fork },
   shell: { openPath: electron.openPath, openExternal: electron.openExternal, showItemInFolder: electron.reveal, trashItem: electron.trashItem },
   safeStorage: {
     isEncryptionAvailable: () => electron.encryption,
@@ -64,6 +66,8 @@ import { ProjectRegistry } from '../../../electron/main/services/projects/regist
 import { electronCipher, electronPlatform, secretsProtected } from '../../../electron/main/platform/electron'
 import { headlessPlatform } from '../../../electron/main/platform/headless'
 import { openInVsCode } from '../../../electron/main/lib/openInVsCode'
+import { gitProgram } from '../../../electron/main/lib/git'
+import { WorkspaceTrust } from '../../../electron/main/services/projects/trust'
 
 const realPlatform = process.platform
 const setPlatform = (p: NodeJS.Platform) => Object.defineProperty(process, 'platform', { value: p })
@@ -89,7 +93,7 @@ describe('detectGit', () => {
       if (key.startsWith('rev-list')) return '2\t5'
       return 'abc123\x1ffix: thing\x1fRobin\x1f2026-10-01T10:00:00+02:00'
     })
-    expect(await detectGit('/x')).toEqual({
+    expect(await detectGit('/x', true)).toEqual({
       isRepo: true,
       branch: 'main',
       dirty: true,
@@ -97,12 +101,13 @@ describe('detectGit', () => {
       ahead: 5,
       lastCommit: { hash: 'abc123', subject: 'fix: thing', author: 'Robin', date: '2026-10-01T10:00:00+02:00' }
     })
-    expect(proc.calls.every((c) => c.cmd === 'git')).toBe(true)
+    // Git by its full path from the PATH — never a git.exe in the project (BE-SEC-03).
+    expect(proc.calls.every((c) => c.cmd === gitProgram())).toBe(true)
   })
 
   it('keeps partial info when every optional probe fails or is empty', async () => {
     proc.setResponder((_cmd, args) => (args[0] === 'rev-parse' && args[1] === '--is-inside-work-tree' ? 'true' : new Error('x')))
-    expect(await detectGit('/x')).toEqual({ isRepo: true })
+    expect(await detectGit('/x', true)).toEqual({ isRepo: true })
 
     proc.setResponder((_cmd, args) => {
       const key = args.join(' ')
@@ -111,12 +116,30 @@ describe('detectGit', () => {
       if (key.startsWith('log')) return ''
       return 'HEAD'
     })
-    expect(await detectGit('/x')).toEqual({ isRepo: true, branch: 'HEAD', dirty: false })
+    expect(await detectGit('/x', true)).toEqual({ isRepo: true, branch: 'HEAD', dirty: false })
   })
 
   it('links the repo page from origin, without credentials', async () => {
     proc.setResponder((_cmd, args) => (args[0] === 'remote' ? 'https://robin:token@github.com/robin7mh/testing-games.git' : 'true'))
-    expect((await detectGit('/x')).webUrl).toBe('https://github.com/robin7mh/testing-games')
+    expect((await detectGit('/x', true)).webUrl).toBe('https://github.com/robin7mh/testing-games')
+  })
+
+  it('untrusted (a project just added): every git call carries the overrides — the repository’s fsmonitor, hooks and filters never run', async () => {
+    proc.setResponder((_cmd, args) => {
+      if (args.includes('config')) return 'local\0core.fsmonitor\n./x.sh\0local\0filter.evil.clean\ntouch pwned\0'
+      if (args.includes('--is-inside-work-tree')) return 'true'
+      return ''
+    })
+    expect(await detectGit('/x')).toMatchObject({ isRepo: true, dirty: false })
+    const runs = proc.calls.filter((c) => !c.args.includes('config'))
+    expect(runs.length).toBeGreaterThan(3)
+    for (const { args } of runs) {
+      expect(args).toEqual(expect.arrayContaining(['core.fsmonitor=false', 'core.hooksPath=/dev/null', 'filter.evil.clean=', 'filter.evil.required=false']))
+    }
+    expect(runs.find((c) => c.args.includes('status'))!.args).toContain('--ignore-submodules=all')
+    // A config that can't be made safe: no git at all.
+    proc.setResponder((_cmd, args) => (args.includes('config') ? 'local\0core.gitproxy\nevil\0' : 'true'))
+    expect(await detectGit('/x')).toEqual({ isRepo: false })
   })
 })
 
@@ -250,6 +273,17 @@ describe('ProjectService', () => {
     expect(electron.reveal).toHaveBeenCalledWith('/Users/me/report.pdf')
   })
 
+  it('runs Node programs in utility processes on the desktop — Mindeck’s binary never runs as Node', () => {
+    electronPlatform.node!(['/ts/tsserver.js'], { cwd: '/p', env: { A: '1' }, name: 'TypeScript' })
+    expect(electron.fork).toHaveBeenCalledWith(expect.stringMatching(/[/\\]nodeHost\.js$/), ['/ts/tsserver.js'], {
+      cwd: '/p',
+      env: { A: '1' },
+      stdio: 'pipe',
+      serviceName: 'TypeScript',
+      allowLoadingUnsignedLibraries: false
+    })
+  })
+
   it('refuses the picker and opening files on a headless host', async () => {
     const data = await tempDir()
     const s = new ProjectService(new ProjectRegistry(data), headlessPlatform)
@@ -294,7 +328,73 @@ describe('ProjectService', () => {
 
     await s.remove(p.id)
     expect(s.getProjectPath(p.id)).toBeUndefined()
-    await expect(s.refresh('nope')).rejects.toThrow('Unknown project: nope')
+    await expect(s.refresh('nope')).rejects.toMatchObject({ code: 'not-found', message: 'Unknown project: nope' })
+  })
+
+  it('workspace trust: every project added — at the desktop too — starts restricted; trusting is kept and announced', async () => {
+    const s = await setup()
+    proc.setResponder(() => new Error('no git'))
+    const dir = await tempDir()
+    const p = await s.add(dir)
+    expect(p.trusted).toBe(false)
+    expect((await s.add(dir, true)).trusted).toBe(false)
+    const heard: string[] = []
+    s.onTrustChange((project) => heard.push(`${project.id}:${project.trusted}`))
+    expect((await s.trust(p.id, true)).trusted).toBe(true)
+    expect((await s.add(dir)).trusted).toBe(true) // added again: still trusted
+    expect((await s.refresh(p.id)).trusted).toBe(true)
+    await s.trust(p.id, false)
+    expect(heard).toEqual([`${p.id}:true`, `${p.id}:false`])
+    await expect(s.trust('nope', true)).rejects.toThrow('Unknown project: nope')
+  })
+
+  it('workspace trust: projects from before it stay trusted (the upgrade breaks nothing); restricted ones stay restricted', async () => {
+    const data = await tempDir()
+    const old = (id: string, extra = {}) => ({ id, name: id, path: `/p/${id}`, addedAt: 'a', lastSeenAt: 'b', ...extra })
+    await writeFile(join(data, 'projects.json'), JSON.stringify({ version: 1, projects: [old('a'), old('b', { trusted: false })] }))
+    const reg = new ProjectRegistry(data)
+    await reg.load()
+    expect(reg.all().map((p) => [p.id, p.trusted])).toEqual([['a', true], ['b', false]])
+    const saved = JSON.parse(await readFile(join(data, 'projects.json'), 'utf8'))
+    expect(saved.version).toBe(2)
+    // From then on, what is stored counts (a later new project stays restricted).
+    await writeFile(join(data, 'projects.json'), JSON.stringify({ version: 2, projects: [old('c')] }))
+    const later = new ProjectRegistry(data)
+    await later.load()
+    expect(later.get('c')?.trusted).toBeUndefined()
+    // No version at all (the first format) is from before, too; an empty list needs no saving.
+    await writeFile(join(data, 'projects.json'), JSON.stringify({ projects: [old('d')] }))
+    const first = new ProjectRegistry(data)
+    await first.load()
+    expect(first.get('d')?.trusted).toBe(true)
+    const empty = await tempDir()
+    await writeFile(join(empty, 'projects.json'), JSON.stringify({ version: 1, projects: [] }))
+    await new ProjectRegistry(empty).load()
+    expect(JSON.parse(await readFile(join(empty, 'projects.json'), 'utf8')).version).toBe(1)
+  })
+
+  it('WorkspaceTrust: by id, and by folder — the innermost project decides, folders outside every project are restricted', () => {
+    const list = [
+      { id: 'mono', name: 'mono', path: '/code', addedAt: '', lastSeenAt: '', trusted: true },
+      { id: 'clone', name: 'clone', path: '/code/evil-clone', addedAt: '', lastSeenAt: '', trusted: false },
+      { id: 'old', name: 'old', path: '/old', addedAt: '', lastSeenAt: '' },
+      { id: 'root', name: 'root', path: '/', addedAt: '', lastSeenAt: '', trusted: false }
+    ]
+    const trust = new WorkspaceTrust(() => list, 'linux')
+    expect(trust.project('mono')).toBe(true)
+    expect(trust.project('clone')).toBe(false)
+    expect(trust.project('old')).toBe(false)
+    expect(trust.project('nope')).toBe(false)
+    expect(trust.folder('/code')).toBe(true)
+    expect(trust.folder('/code/src/../lib')).toBe(true)
+    expect(trust.folder('/code/evil-clone/sub')).toBe(false)
+    expect(trust.folder('/code-other')).toBe(false) // only the root '/' holds it
+    expect(new WorkspaceTrust(() => list.slice(0, 1), 'linux').folder('/elsewhere')).toBe(false)
+    // Windows and macOS compare without case.
+    const win = new WorkspaceTrust(() => [{ ...list[0], path: 'C:\\Code' }], 'win32')
+    expect(win.folder('c:\\code\\src')).toBe(true)
+    expect(new WorkspaceTrust(() => [{ ...list[0], path: '/Users/Me/Code' }], 'darwin').folder('/users/me/code/x')).toBe(true)
+    expect(new WorkspaceTrust(() => []).folder(process.cwd())).toBe(false)
   })
 
   it('marks projects a paired device added — until the desktop adds them too', async () => {
@@ -314,8 +414,10 @@ describe('ProjectService', () => {
     const s = await setup()
     const dir = await tempDir()
     await writeFile(join(dir, 'f.txt'), 'x')
-    await expect(s.add(join(dir, 'f.txt'))).rejects.toThrow('not a directory')
-    await expect(s.add(join(dir, 'missing'))).rejects.toThrow()
+    await expect(s.add(join(dir, 'f.txt'))).rejects.toMatchObject({ code: 'not-a-dir', message: expect.stringContaining('not a directory') })
+    await expect(s.add(join(dir, 'missing'))).rejects.toMatchObject({ code: 'not-found' })
+    // Anything else the disk says is passed on as it is.
+    await expect(s.add(join(dir, 'f.txt', 'below'))).rejects.toMatchObject({ code: 'ENOTDIR' })
   })
 
   describe('openInEditor', () => {
@@ -371,7 +473,7 @@ describe('ProjectService', () => {
       electron.openPath.mockResolvedValueOnce('nope')
       await expect(s.openFile(id, 'a.ts')).rejects.toThrow('nope')
 
-      await expect(s.openFile(id, '../../etc/passwd')).rejects.toThrow('outside the project')
+      await expect(s.openFile(id, '../../etc/passwd')).rejects.toMatchObject({ code: 'outside-project', message: expect.stringContaining('outside the project') })
       const outside = await tempDir()
       await mkdir(join(dir, 'sub'))
       await symlink(outside, join(dir, 'sub', 'link'))
@@ -385,7 +487,15 @@ describe('ProjectService', () => {
     const { id } = await s.add(await tempDir())
     proc.setResponder(() => '')
     await s.pull(id)
-    expect(proc.calls.find((c) => c.args[0] === 'pull')).toMatchObject({ cmd: 'git', args: ['pull', '--ff-only', '--quiet'] })
+    // Not trusted yet: the repository's hooks and helpers stay off.
+    const pull = proc.calls.find((c) => c.args.includes('pull'))!
+    expect(pull.cmd).toBe(gitProgram())
+    expect(pull.args.slice(-3)).toEqual(['pull', '--ff-only', '--quiet'])
+    expect(pull.args).toContain('core.hooksPath=/dev/null')
+    await s.trust(id, true)
+    proc.calls.length = 0
+    await s.pull(id)
+    expect(proc.calls.find((c) => c.args.includes('pull'))!.args).toEqual(['pull', '--ff-only', '--quiet'])
     proc.setResponder((_c, args) =>
       args[0] === 'pull' ? Object.assign(new Error('Command failed: git pull'), { stderr: 'fatal: Not possible to fast-forward, aborting.\nmore' }) : ''
     )

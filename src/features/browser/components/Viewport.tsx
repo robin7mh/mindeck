@@ -34,6 +34,7 @@ function ErrorPage({ tab }: { tab: BrowserTab }) {
     if (!waiting) return
     const timer = setInterval(retry, RETRY_MS)
     return () => clearInterval(timer)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- retry only depends on the tab id
   }, [waiting, tab.id])
 
   return (
@@ -212,7 +213,7 @@ export function Viewport({ active }: { active: boolean }) {
             data-testid={split ? 'browser-pane' : undefined}
             aria-current={split && x.id === tab?.id ? 'true' : undefined}
             onPointerDownCapture={split ? () => focus(x.id) : undefined}
-            className={cn('flex min-h-0 min-w-0 flex-1', split && 'rounded-sm border-2', split && (x.id === tab?.id ? 'border-cyan/50' : 'border-hud/30'))}
+            className={cn('flex min-h-0 min-w-0 flex-1', split && 'rounded-xs border-2', split && (x.id === tab?.id ? 'border-cyan/50' : 'border-hud/30'))}
           >
             <div
               ref={(el) => {

@@ -343,9 +343,9 @@ describe('VerticalTabs', () => {
     fireEvent.pointerDown(edge, { clientX: 300, pointerId: 1 })
     expect(useOverlays.getState().count).toBe(1)
     expect(screen.getByTestId('sidebar-drag-shield')).toBeInTheDocument()
-    fireEvent.pointerMove(edge, { clientX: 360, pointerId: 1 })
+    fireEvent.pointerMove(edge, { clientX: 360, pointerId: 1, buttons: 1 })
     expect(screen.getByRole('complementary')).toHaveStyle({ width: '360px' })
-    fireEvent.pointerMove(edge, { clientX: 1000, pointerId: 1 })
+    fireEvent.pointerMove(edge, { clientX: 1000, pointerId: 1, buttons: 1 })
     expect(screen.getByRole('complementary')).toHaveStyle({ width: '480px' }) // at most
     fireEvent.pointerUp(edge, { clientX: 0, pointerId: 1 })
     expect(useOverlays.getState().count).toBe(0)

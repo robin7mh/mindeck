@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events'
 import { chmod, mkdir, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { existsSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import { PassThrough } from 'node:stream'
 import type { spawn } from 'node:child_process'
 import { describe, expect, it, vi } from 'vitest'
@@ -11,6 +12,8 @@ import {
   expandWindowsVars,
   findExecutable,
   outputOf,
+  programPath,
+  programSearch,
   psQuote,
   regValue,
   searchPath,
@@ -123,6 +126,7 @@ describe('starting programs without a shell', () => {
     const comspec = process.env.ComSpec
     delete process.env.ComSpec
     try {
+      // Without ComSpec, cmd.exe from the PATH — none here: a path that doesn't exist, never the project's cmd.exe.
       spawnProgram('C:\\t\\npm\\node_modules\\.bin\\pyright-langserver.cmd', ['--stdio'], { cwd: 'C:\\p' }, 'win32', run)
       process.env.ComSpec = 'C:\\Windows\\system32\\cmd.exe'
       spawnProgram('C:\\Program Files\\kotlin\\adapter.bat', ['a b'], {}, 'win32', run)
@@ -133,7 +137,7 @@ describe('starting programs without a shell', () => {
     spawnProgram('C:\\LLVM\\bin\\lldb-dap.exe', [], { cwd: 'C:\\p' }, 'win32', run)
     spawnProgram('/usr/bin/lldb-dap', ['x'], {}, 'linux', run)
     expect(calls[0]).toEqual({
-      file: 'cmd.exe',
+      file: expect.stringMatching(/not-on-PATH\\cmd\.exe$/),
       args: ['/d', '/s', '/c', '"C:\\t\\npm\\node_modules\\.bin\\pyright-langserver.cmd ^^^"--stdio^^^""'],
       options: { cwd: 'C:\\p', windowsVerbatimArguments: true, windowsHide: true }
     })
@@ -141,6 +145,43 @@ describe('starting programs without a shell', () => {
     expect(calls[1].args[3]).toBe('"C:\\Program^ Files\\kotlin\\adapter.bat ^"a^ b^""')
     expect(calls[2]).toEqual({ file: 'C:\\LLVM\\bin\\lldb-dap.exe', args: [], options: { cwd: 'C:\\p', windowsHide: true } })
     expect(calls[3]).toEqual({ file: '/usr/bin/lldb-dap', args: ['x'], options: { windowsHide: true } })
+  })
+
+  it('programs by name come from the PATH’s absolute folders — never the working folder (binary planting, BE-SEC-03)', async () => {
+    const dir = await tempDir()
+    await writeFile(join(dir, 'tool'), '#!/bin/sh\n')
+    await chmod(join(dir, 'tool'), 0o755)
+    // macOS / Linux: an empty or relative PATH entry means a folder relative to the working folder.
+    expect(programSearch({ PATH: `:.:bin:${dir}` }, 'linux').dirs).toEqual([dir])
+    expect(programPath('tool', { PATH: `.:${dir}` }, 'linux')).toBe(join(dir, 'tool'))
+    const missing = programPath('tool', { PATH: '.:bin' }, 'linux')
+    expect(missing).toBe(join(dirname(process.execPath), 'not-on-PATH', 'tool'))
+    expect(existsSync(missing)).toBe(false)
+    expect(programPath('tool', {}, 'linux')).toBe(missing) // no PATH at all
+    // A path is used as given.
+    expect(programPath('/usr/bin/git', {}, 'linux')).toBe('/usr/bin/git')
+    expect(programPath('./git', {}, 'linux')).toBe('./git')
+
+    // Windows looks into the working folder first for a bare name: only drive and UNC folders count
+    // (`//…` is a UNC path there — and the same folder here, so the test runs everywhere).
+    await writeFile(join(dir, 'git.exe'), '')
+    await writeFile(join(dir, 'npm.cmd'), '')
+    const win = { Path: `.;tools;C:tools;\\tools;//${dir}`, PathExt: '.EXE;.CMD' }
+    expect(programSearch(win, 'win32')).toEqual({ platform: 'win32', dirs: [`//${dir}`], pathext: ['.exe', '.cmd'] })
+    expect(programPath('git', win, 'win32')).toBe(join(`//${dir}`, 'git.exe'))
+    expect(programPath('git', { Path: '.;tools' }, 'win32')).toMatch(/not-on-PATH\\git$/)
+    expect(programPath('C:\\Git\\cmd\\git.exe', {}, 'win32')).toBe('C:\\Git\\cmd\\git.exe')
+    expect(programPath('bin\\git', {}, 'win32')).toBe('bin\\git')
+    expect(programPath('bin/git', {}, 'win32')).toBe('bin/git')
+    // spawnProgram on Windows: bare names resolved (npm → its .cmd through cmd.exe), else the path that doesn't exist.
+    const { run, calls } = fakeSpawn()
+    spawnProgram('npm', ['-v'], { cwd: 'C:\\p', env: win }, 'win32', run)
+    spawnProgram('git', ['status'], { cwd: 'C:\\p', env: { Path: '.' } }, 'win32', run)
+    expect(calls[0].args[3]).toContain('npm.cmd')
+    expect(calls[1].file).toMatch(/not-on-PATH\\git$/)
+    // Defaults: this machine's PATH and platform.
+    expect(programSearch().platform).toBe(process.platform)
+    expect(programPath('definitely-not-installed-xyz')).toContain('not-on-PATH')
   })
 
   it('a program’s output when it succeeds, else nothing', async () => {

@@ -15,7 +15,7 @@ export const MODULE_ICONS: Record<ModuleId, LucideIcon> = {
 }
 
 const tool =
-  'no-drag flex h-6 w-6 shrink-0 items-center justify-center rounded text-text-muted transition-colors hover:bg-elevated hover:text-text-primary'
+  'no-drag flex h-6 w-6 shrink-0 items-center justify-center rounded-sm text-text-muted transition-colors hover:bg-elevated hover:text-text-primary'
 
 /** The module in a pane, and the menu to show another one there. */
 function ModuleSwitcher({ pane, elsewhere }: { pane: Pane; elsewhere: Set<ModuleId> }) {
@@ -51,7 +51,7 @@ function ModuleSwitcher({ pane, elsewhere }: { pane: Pane; elsewhere: Set<Module
         aria-label={t.workspace.switchModule(t.nav[pane.module])}
         title={t.workspace.switchModule(t.nav[pane.module])}
         onClick={() => setOpen((o) => !o)}
-        className="flex min-w-0 items-center gap-1.5 rounded px-1.5 py-0.5 text-text-secondary transition-colors hover:bg-elevated hover:text-text-primary"
+        className="flex min-w-0 items-center gap-1.5 rounded-sm px-1.5 py-0.5 text-text-secondary transition-colors hover:bg-elevated hover:text-text-primary"
       >
         <Icon size={13} className="shrink-0" />
         <span className="truncate font-sans text-[12px] font-medium">{t.nav[pane.module]}</span>
@@ -74,7 +74,7 @@ function ModuleSwitcher({ pane, elsewhere }: { pane: Pane; elsewhere: Set<Module
                 aria-checked={current}
                 onClick={() => pick(item.id)}
                 className={cn(
-                  'flex w-full items-center gap-2 rounded px-2 py-1.5 text-left font-sans text-[12.5px] transition-colors hover:bg-elevated',
+                  'flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left font-sans text-[12.5px] transition-colors hover:bg-elevated',
                   current ? 'text-cyan' : 'text-text-secondary hover:text-text-primary'
                 )}
               >
@@ -121,7 +121,7 @@ export function PaneHeader({
       onPointerDown={() => ws().focus(pane.id)}
       data-testid={`pane-head-${pane.module}`}
       className={cn(
-        'absolute z-20 flex items-center gap-0.5 rounded-t-lg border border-b-0 px-1 backdrop-blur-sm',
+        'absolute z-20 flex items-center gap-0.5 rounded-t-lg border border-b-0 px-1 backdrop-blur-xs',
         focused ? 'border-cyan/50 bg-cyan/[0.07]' : 'border-hud/60 bg-surface/50'
       )}
     >

@@ -12,7 +12,7 @@ export function RestoreBar() {
   const run = useBrowser((s) => s.run)
   if (!count) return null
   return (
-    <div role="alert" className="flex shrink-0 items-center gap-2 border-b border-amber/30 bg-amber/[0.06] px-3 py-1.5">
+    <div role="alert" className="flex shrink-0 items-center gap-2 border-b border-amber/30 bg-amber/6 px-3 py-1.5">
       <RotateCcw size={14} className="shrink-0 text-amber" />
       <span className="min-w-0 flex-1 truncate font-sans text-[12.5px] text-text-primary">{t.library.crashed(count)}</span>
       <button type="button" onClick={() => void run('browser:restoreSession', { restore: false })} className={small}>

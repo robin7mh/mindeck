@@ -32,7 +32,7 @@ export function ContextMenu({ x, y, items, label, onClose }: { x: number; y: num
       role="menu"
       aria-label={label}
       style={place}
-      className="fixed z-[80] min-w-[200px] rounded-lg border border-hud/70 bg-panel/95 p-1 shadow-xl shadow-black/40 backdrop-blur-md"
+      className="fixed z-80 min-w-[200px] rounded-lg border border-hud/70 bg-panel/95 p-1 shadow-xl shadow-black/40 backdrop-blur-md"
     >
       {items.map((item, i) =>
         item === 'separator' ? (

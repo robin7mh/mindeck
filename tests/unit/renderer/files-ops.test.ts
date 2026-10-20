@@ -178,6 +178,13 @@ describe('files store: big folders and details', () => {
     s().select('/d/a.txt')
     await settle()
     expect(s().info).toBeUndefined()
+    // Stopping a count that can't be stopped (it ended meanwhile) is fine too.
+    disk({}, { 'finder:folderSize': () => new Promise(() => {}), 'finder:cancel': () => Promise.reject(new Error('no such job')) })
+    s().select('/d/dir')
+    await settle()
+    s().select('/d/a.txt')
+    await settle()
+    expect(s().size).toBeUndefined()
   })
 })
 

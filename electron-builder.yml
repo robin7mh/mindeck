@@ -36,11 +36,12 @@ files:
 # started as plain Node with NODE_OPTIONS or --inspect, its code only comes from app.asar
 # and only as signed (the integrity is checked at start on macOS and Windows), and the
 # browser's cookies are encrypted with the OS keychain like Chrome's (a one-way switch).
-# RunAsNode stays on: tsserver, the lint worker, the PHP debug adapter and the Dev
-# Containers CLI run as Node in Mindeck's own binary (ELECTRON_RUN_AS_NODE) — moving them
-# to utilityProcess would let it go.
+# RunAsNode off: ELECTRON_RUN_AS_NODE=1 can't turn the signed binary into a Node that inherits
+# Mindeck's macOS permissions (camera, microphone, folders). Mindeck's own Node programs —
+# tsserver, the lint worker, the PHP debug adapter, the Dev Containers CLI — run in Electron
+# utility processes, which only the main process can start (electron/main/lib/nodeProcess.ts).
 electronFuses:
-  runAsNode: true
+  runAsNode: false
   enableCookieEncryption: true
   enableNodeOptionsEnvironmentVariable: false
   enableNodeCliInspectArguments: false
@@ -77,6 +78,9 @@ mac:
   gatekeeperAssess: false
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.inherit.plist
+  # As electron-builder signs, but the plugin helper (utility processes that load the project's native
+  # addons) gets build/entitlements.mac.plugin.plist.
+  sign: build/sign.cjs
   minimumSystemVersion: '13.0'
   # The ZIPs the auto-updater downloads (latest-mac.yml lists both architectures).
   artifactName: ${productName}-mac-${arch}.${ext}

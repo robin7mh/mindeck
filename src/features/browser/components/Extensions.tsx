@@ -77,7 +77,7 @@ function ExtensionRow({ ext }: { ext: BrowserExtension }) {
           aria-label={x.remove(ext.name)}
           title={x.remove(ext.name)}
           onClick={() => void run('browser:extensions:remove', { id: ext.id })}
-          className="rounded p-1 text-text-muted hover:bg-elevated hover:text-danger"
+          className="rounded-sm p-1 text-text-muted hover:bg-elevated hover:text-danger"
         >
           <Trash2 size={12} />
         </button>
@@ -102,7 +102,7 @@ function ExtensionRow({ ext }: { ext: BrowserExtension }) {
           {ext.permissions.length > 0 && (
             <ul className="flex flex-wrap gap-1">
               {ext.permissions.map((p) => (
-                <li key={p} className={cn('rounded border px-1 font-mono text-[10px]', ext.unsupported.includes(p) ? 'border-amber/40 text-amber' : 'border-hud/50')}>
+                <li key={p} className={cn('rounded-sm border px-1 font-mono text-[10px]', ext.unsupported.includes(p) ? 'border-amber/40 text-amber' : 'border-hud/50')}>
                   {p}
                 </li>
               ))}
@@ -194,7 +194,7 @@ export function ExtensionsPanel() {
     <aside aria-label={x.extensions} className="flex w-80 shrink-0 flex-col border-l border-hud/50 bg-surface/40">
       <div className="flex h-9 items-center justify-between border-b border-hud/50 px-3">
         <TechLabel className="text-text-secondary">{x.extensions}</TechLabel>
-        <button type="button" aria-label={t.common.close} onClick={() => useBrowser.getState().toggleExtensions()} className="rounded p-1 text-text-muted hover:bg-elevated hover:text-text-primary">
+        <button type="button" aria-label={t.common.close} onClick={() => useBrowser.getState().toggleExtensions()} className="rounded-sm p-1 text-text-muted hover:bg-elevated hover:text-text-primary">
           <X size={13} />
         </button>
       </div>
@@ -206,7 +206,7 @@ export function ExtensionsPanel() {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             spellCheck={false}
-            className="min-w-0 flex-1 rounded-md border border-hud/60 bg-surface/70 px-2 py-1 font-mono text-[11.5px] text-text-primary outline-none placeholder:font-sans focus:border-cyan/60"
+            className="min-w-0 flex-1 rounded-md border border-hud/60 bg-surface/70 px-2 py-1 font-mono text-[11.5px] text-text-primary outline-hidden placeholder:font-sans focus:border-cyan/60"
           />
           <button type="submit" disabled={busy || !input.trim()} className={cn(small, 'border-cyan/50 text-cyan')}>
             {x.install}

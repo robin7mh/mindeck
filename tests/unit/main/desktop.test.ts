@@ -41,6 +41,17 @@ describe('log', () => {
     expect(redact('-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXk\n-----END OPENSSH PRIVATE KEY-----\nnext')).toBe('-----BEGIN OPENSSH PRIVATE KEY-----‹redacted›\nnext')
     expect(redact('cut -----BEGIN PRIVATE KEY-----\nMIIEv')).toBe('cut -----BEGIN PRIVATE KEY-----‹redacted›')
     expect(redact('glpat-abcdefghijk npm_abcdefghijkl AIzaSyA1234567890 xoxe-123456789')).toBe('glpat-‹redacted› npm_‹redacted› AIza‹redacted› xoxe-‹redacted›')
+    // Mindeck's own device tokens and pairing codes (BE-SEC-22).
+    expect(redact('paired: {"token":"mindeck_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789-_"}')).toBe('paired: {"token":"‹redacted›"}')
+    expect(redact('ws mindeck.bearer.mindeck_AbCdEfGhIjKlMnOpQrStUvWx failed')).toBe('ws mindeck.bearer.mindeck_‹redacted› failed')
+    expect(redact('saved mindeck_AbCdEfGhIjKlMnOpQrStUvWx')).toBe('saved mindeck_‹redacted›')
+    expect(redact('  │  Code:  K7QM-2XPA   (valid 10 minutes, one use, admin device)')).toBe('  │  Code:  ‹redacted›   (valid 10 minutes, one use, admin device)')
+    expect(redact('{"code":"K7QM2XPA","name":"Phone"}')).toBe('{"code":"‹redacted›","name":"Phone"}')
+    expect(redact('open https://192.168.1.5:7420/#pair=K7QM-2XPA&fp=ab12')).toBe('open https://192.168.1.5:7420/#pair=‹redacted›&fp=ab12')
+    // …but not error codes, ids or names that only look a bit like them.
+    for (const kept of ["code: 'not-found'", 'code=ENOENT', 'code: EADDRINUSE', 'GET /cb?code=1', 'Code: ABCD-EFGH-IJKL', 'mindeck_live', 'MINDECK_ALLOWED_HOSTS_AND_MORE_NAMES', 'code: K0QM-2XPA']) {
+      expect(redact(kept), kept).toBe(kept)
+    }
   })
 
   it('writes lines to ~/Mindeck/logs (0600), keeps recent warnings and errors, formats errors with their stack', async () => {

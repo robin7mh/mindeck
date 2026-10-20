@@ -50,6 +50,7 @@ export function FolderPicker({
 
   useEffect(() => {
     void open()
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the first listing, once; later ones follow clicks
   }, [])
 
   const sep = listing?.path.includes('\\') ? '\\' : '/'
@@ -59,7 +60,7 @@ export function FolderPicker({
     <div
       role="dialog"
       aria-label={title}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-void/70 p-4 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-void/70 p-4 backdrop-blur-xs"
       onKeyDown={(e) => e.key === 'Escape' && onClose()}
     >
       <div className="panel flex max-h-[80vh] w-full max-w-lg flex-col overflow-hidden">
@@ -99,7 +100,7 @@ export function FolderPicker({
             value={typed}
             onChange={(e) => setTyped(e.target.value)}
             spellCheck={false}
-            className="min-w-0 flex-1 rounded-md border border-hud/70 bg-surface/70 px-2 py-1 font-mono text-[12px] text-text-primary outline-none focus:border-cyan/60"
+            className="min-w-0 flex-1 rounded-md border border-hud/70 bg-surface/70 px-2 py-1 font-mono text-[12px] text-text-primary outline-hidden focus:border-cyan/60"
           />
         </form>
 
@@ -111,7 +112,7 @@ export function FolderPicker({
                 type="button"
                 onClick={() => void open(root)}
                 className={cn(
-                  'max-w-full truncate rounded border px-1.5 py-0.5 font-mono text-[10.5px]',
+                  'max-w-full truncate rounded-sm border px-1.5 py-0.5 font-mono text-[10.5px]',
                   root === listing.path ? 'border-cyan/50 text-cyan' : 'border-hud/60 text-text-muted hover:border-cyan/40 hover:text-cyan'
                 )}
               >
@@ -137,7 +138,7 @@ export function FolderPicker({
                 key={name}
                 type="button"
                 onClick={() => void open(join(listing.path, name))}
-                className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left font-sans text-[13px] text-text-secondary hover:bg-cyan/[0.06] hover:text-text-primary"
+                className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left font-sans text-[13px] text-text-secondary hover:bg-cyan/6 hover:text-text-primary"
               >
                 <Folder size={14} className="shrink-0 text-cyan/80" />
                 <span className="truncate">{name}</span>
@@ -151,7 +152,7 @@ export function FolderPicker({
             type="button"
             disabled={!listing}
             onClick={() => listing && onPick(listing.path)}
-            className="flex shrink-0 items-center gap-1.5 rounded-md border border-cyan/50 bg-cyan/[0.10] px-3 py-1.5 font-sans text-[12px] font-medium text-cyan hover:bg-cyan/[0.16] disabled:opacity-40"
+            className="flex shrink-0 items-center gap-1.5 rounded-md border border-cyan/50 bg-cyan/[0.10] px-3 py-1.5 font-sans text-[12px] font-medium text-cyan hover:bg-cyan/16 disabled:opacity-40"
           >
             <Check size={13} /> {confirmLabel ?? t.folderPicker.select}
           </button>

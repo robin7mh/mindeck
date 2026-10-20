@@ -71,6 +71,13 @@ describe('Mindeck MCP server', () => {
     })
     expect(MEMORY_TOOLS).toContain('project_context')
   })
+
+  it('tools run pinned to the session’s project (an agent never reads another one)', async () => {
+    const seen = vi.fn(async (_input: { q: string }, toolCtx: { projectId?: string; onlyProject?: boolean }) => JSON.stringify(toolCtx))
+    const pinned = createMcpHandler(new ToolRegistry([tool('project_context', seen)]), '1', ['project_context'])
+    await pinned(ctx, { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'project_context', arguments: { q: '' } } })
+    expect(seen.mock.calls[0][1]).toMatchObject({ projectId: 'p1', onlyProject: true })
+  })
 })
 
 describe('Mindeck MCP server · pictures and who calls', () => {

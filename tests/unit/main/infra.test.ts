@@ -42,7 +42,7 @@ vi.mock('electron', () => ({
 
 import { bindIpc } from '../../../electron/ipc/registry'
 import { Router } from '../../../electron/ipc/router'
-import { IPC_CHANNELS } from '../../../src/shared/ipc/contract'
+import { CHANNEL_ACCESS, IPC_CHANNELS } from '../../../src/shared/ipc/contract'
 import { registerContextIpc } from '../../../electron/ipc/context.ipc'
 import { registerProjectIpc } from '../../../electron/ipc/projects.ipc'
 import { registerSystemIpc } from '../../../electron/ipc/system.ipc'
@@ -146,6 +146,51 @@ describe('ipc router', () => {
     expect(await router.dispatch('projects:add', { path: '/srv/x' }, remoteCtx)).toMatchObject({ ok: true })
     expect(guard).toHaveBeenCalledWith('projects:add', { path: '/srv/x' }, remoteCtx)
     expect(guard).toHaveBeenCalledTimes(3) // the admin call too, never the desktop's
+  })
+
+  it('trusted channels (data beyond the shared folders) need the admin role or remote shells (BE-SEC-08)', async () => {
+    let terminal = false
+    const router = new Router({ remoteTerminal: () => terminal })
+    router.register('mongo:connections', () => [])
+    expect(await router.dispatch('mongo:connections', undefined, ipcCtx)).toEqual({ ok: true, data: [] })
+    expect(await router.dispatch('mongo:connections', undefined, { ...remoteCtx, role: 'member' })).toMatchObject({ ok: false, error: { code: 'remote-terminal-disabled' } })
+    expect(await router.dispatch('mongo:connections', undefined, { ...remoteCtx, role: 'admin' })).toEqual({ ok: true, data: [] })
+    terminal = true
+    expect(await router.dispatch('mongo:connections', undefined, { ...remoteCtx, role: 'member' })).toEqual({ ok: true, data: [] })
+  })
+
+  it('a member device leaves the desktop’s global settings alone (BE-SEC-05, BE-SEC-18)', () => {
+    for (const channel of ['memory:setVault', 'memory:setDailyNotes', 'ai:configure', 'agents:setPushSettings', 'cloud:forgotPassword', 'cloud:syncPush', 'cloud:syncPull'] as const) {
+      expect(CHANNEL_ACCESS[channel], channel).toBe('admin')
+    }
+    for (const channel of ['ai:inlineComplete', 'ai:inlineEdit'] as const) expect(CHANNEL_ACCESS[channel], channel).toBe('terminal')
+    for (const channel of ['mongo:connections', 'mongo:databases', 'mongo:collections', 'mongo:find', 'mongo:indexes'] as const) expect(CHANNEL_ACCESS[channel], channel).toBe('trusted')
+  })
+
+  it('the OS’s own errors reach a device as a reference, the details go to the log (BE-SEC-19)', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const router = new Router({ remoteTerminal: () => false })
+    const enoent = Object.assign(new Error("ENOENT: no such file or directory, open '/Users/robin/secret/x'"), { code: 'ENOENT', syscall: 'open' })
+    const thrown: unknown[] = [enoent, Object.assign(new Error('spawn EACCES'), { code: 'EACCES' }), 'a string', null]
+    router.register('memory:status', () => {
+      throw thrown.shift()
+    })
+    expect(await router.dispatch('memory:status', undefined, ipcCtx)).toEqual({ ok: false, error: { code: 'ENOENT', message: enoent.message } }) // the desktop sees it all
+    const generic = expect.stringMatching(/^Something went wrong on the Mindeck core \(ref [0-9a-f]{8}\)$/)
+    expect(await router.dispatch('memory:status', undefined, remoteCtx)).toEqual({ ok: false, error: { code: 'EACCES', message: generic } })
+    expect(await router.dispatch('memory:status', undefined, remoteCtx)).toEqual({ ok: false, error: { code: 'error', message: generic } })
+    expect(await router.dispatch('memory:status', undefined, remoteCtx)).toEqual({ ok: false, error: { code: 'error', message: generic } })
+    expect(error).toHaveBeenCalledWith(expect.stringMatching(/^\[router\] memory:status failed \(ref [0-9a-f]{8}\):$/), 'a string')
+    // Mindeck's own errors are written for people: they reach the device as they are.
+    router.register('memory:list', () => {
+      throw Object.assign(new Error('Note not found: a.md'), { code: 'not-found' })
+    })
+    router.register('memory:graph', () => {
+      throw new Error('The vault is busy')
+    })
+    expect(await router.dispatch('memory:list', undefined, remoteCtx)).toEqual({ ok: false, error: { code: 'not-found', message: 'Note not found: a.md' } })
+    expect(await router.dispatch('memory:graph', undefined, remoteCtx)).toEqual({ ok: false, error: { code: 'error', message: 'The vault is busy' } })
+    error.mockRestore()
   })
 
   it('a remote call’s answer is shaped for the device (lists trimmed); the desktop’s never', async () => {
@@ -432,11 +477,11 @@ describe('ipc handler modules bind every channel to its service', () => {
         ['mongo:collections', { id: 'c', db: 'd' }, 'collections', ['c', 'd']],
         ['mongo:createCollection', { id: 'c', db: 'd', name: 'n' }, 'createCollection', ['c', 'd', 'n']],
         ['mongo:dropCollection', { id: 'c', db: 'd', name: 'n' }, 'dropCollection', ['c', 'd', 'n']],
-        ['mongo:find', { id: 'c', db: 'd', collection: 'u', query: { limit: 5 } }, 'find', ['c', 'd', 'u', { limit: 5 }]],
+        ['mongo:find', { id: 'c', db: 'd', collection: 'u', query: { limit: 5 } }, 'find', ['c', 'd', 'u', { limit: 5 }, { serverJs: true }]],
         ['mongo:insert', { id: 'c', db: 'd', collection: 'u', document: '{}' }, 'insert', ['c', 'd', 'u', '{}']],
         ['mongo:replace', { id: 'c', db: 'd', collection: 'u', docId: '1', document: '{}' }, 'replace', ['c', 'd', 'u', '1', '{}']],
         ['mongo:delete', { id: 'c', db: 'd', collection: 'u', docId: '1' }, 'delete', ['c', 'd', 'u', '1']],
-        ['mongo:aggregate', { id: 'c', db: 'd', collection: 'u', pipeline: '[]' }, 'aggregate', ['c', 'd', 'u', '[]']],
+        ['mongo:aggregate', { id: 'c', db: 'd', collection: 'u', pipeline: '[]' }, 'aggregate', ['c', 'd', 'u', '[]', { serverJs: true }]],
         ['mongo:indexes', { id: 'c', db: 'd', collection: 'u' }, 'indexes', ['c', 'd', 'u']]
       ]
     ],
@@ -520,7 +565,10 @@ describe('ipc handler modules bind every channel to its service', () => {
         ['agents:branch', { id: 'i' }, 'branch', ['i']],
         ['agents:diff', { id: 'i', path: 'a.ts' }, 'diff', ['i', 'a.ts']],
         ['agents:accept', { id: 'i' }, 'accept', ['i']],
-        ['agents:discard', { id: 'i' }, 'discard', ['i']]
+        ['agents:discard', { id: 'i' }, 'discard', ['i']],
+        ['agents:rename', { id: 'i', title: 'Fix login' }, 'rename', ['i', 'Fix login']],
+        ['agents:shell', { id: 'i' }, 'shell', ['i']],
+        ['agents:openInEditor', { id: 'i' }, 'openInEditor', ['i']]
       ]
     ]
   ] as const)('%s', async (_name, register, cases) => {

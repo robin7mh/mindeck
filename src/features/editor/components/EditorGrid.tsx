@@ -1,6 +1,7 @@
-import { useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode, type RefObject } from 'react'
+import { useRef, type KeyboardEvent, type ReactNode, type RefObject } from 'react'
 import { cn } from '@/lib/cn'
 import { useT } from '@/lib/i18n'
+import { usePointerDrag, type DragPoint } from '@/lib/pointerDrag'
 import { useEditor } from '../store'
 import { gridSashes, groupOrder, groupRects, type Sash } from '../groups'
 
@@ -14,7 +15,6 @@ const pct = (f: number) => `${f * 100}%`
 /** A line between groups: drag it, double-click it for equal sizes, or focus it and use the arrow keys. */
 function GridSash({ sash, stage }: { sash: Sash; stage: RefObject<HTMLDivElement> }) {
   const t = useT()
-  const [dragging, setDragging] = useState(false)
   const row = sash.orientation === 'row'
 
   const set = (at: number) => {
@@ -22,16 +22,12 @@ function GridSash({ sash, stage }: { sash: Sash; stage: RefObject<HTMLDivElement
     const size = row ? box.width : box.height
     useEditor.getState().resizeGrid(sash, at, size > 0 ? MIN_PX / size : 0)
   }
-  const fromPointer = (e: PointerEvent) => {
+  const fromPointer = (p: DragPoint) => {
     const box = stage.current!.getBoundingClientRect()
-    const [offset, size] = row ? [e.clientX - box.left, box.width] : [e.clientY - box.top, box.height]
+    const [offset, size] = row ? [p.clientX - box.left, box.width] : [p.clientY - box.top, box.height]
     return size > 0 ? offset / size : sash.at
   }
-  const end = (e: PointerEvent<HTMLDivElement>) => {
-    if (!dragging) return
-    e.currentTarget.releasePointerCapture?.(e.pointerId)
-    setDragging(false)
-  }
+  const { dragging, onPointerDown } = usePointerDrag({ onMove: (p) => set(fromPointer(p)) })
   const onKeyDown = (e: KeyboardEvent) => {
     const keys: Record<string, number> = row ? { ArrowLeft: -STEP, ArrowRight: STEP } : { ArrowUp: -STEP, ArrowDown: STEP }
     if (!(e.key in keys)) return
@@ -54,17 +50,10 @@ function GridSash({ sash, stage }: { sash: Sash; stage: RefObject<HTMLDivElement
       aria-valuenow={Math.round(sash.at * 100)}
       title={t.editor.resizeHint}
       style={style}
-      onPointerDown={(e) => {
-        e.preventDefault()
-        e.currentTarget.setPointerCapture?.(e.pointerId)
-        setDragging(true)
-      }}
-      onPointerMove={(e) => dragging && set(fromPointer(e))}
-      onPointerUp={end}
-      onPointerCancel={end}
+      onPointerDown={onPointerDown}
       onDoubleClick={() => useEditor.getState().evenGrid(sash.path)}
       onKeyDown={onKeyDown}
-      className={cn('group absolute z-20 flex items-center justify-center outline-none', row ? 'cursor-col-resize' : 'cursor-row-resize')}
+      className={cn('group absolute z-20 flex items-center justify-center outline-hidden', row ? 'cursor-col-resize' : 'cursor-row-resize')}
     >
       <span
         className={cn(

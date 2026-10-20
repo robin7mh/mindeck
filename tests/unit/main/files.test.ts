@@ -1,5 +1,5 @@
 import { chmod, mkdir, readFile, readdir, realpath, stat, symlink, utimes, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { tempDir } from './helpers'
 import { FilesService, MAX_EDIT_BYTES } from '../../../electron/main/services/files/FilesService'
@@ -109,6 +109,21 @@ describe('FilesService', () => {
     await expect(service.write('p', 'dir', 'x')).rejects.toMatchObject({ code: 'not-a-file' })
     await expect(service.write('p', 'dir/x/y', 'x')).rejects.toMatchObject({ code: 'ENOTDIR' })
     await expect(service.write('p', '../evil.ts', 'x')).rejects.toMatchObject({ code: 'outside-project' })
+  })
+
+  it('never writes through a dangling link to outside the project (BE-SEC-02)', async () => {
+    const { root, service } = await project({ 'docs/readme.md': '' })
+    const elsewhere = await tempDir()
+    await symlink(join(elsewhere, 'autostart', 'x.desktop'), join(root, 'docs', 'setup.md'))
+    await symlink(join('..', '..', basename(elsewhere), 'pwned.txt'), join(root, 'docs', 'notes.txt')) // relative, like one checked into a repo
+    await expect(service.write('p', 'docs/setup.md', '[Desktop Entry]')).rejects.toMatchObject({ code: 'outside-project' })
+    await expect(service.write('p', 'docs/notes.txt', 'x')).rejects.toMatchObject({ code: 'outside-project' })
+    await expect(service.create('p', 'docs/setup.md', 'file')).rejects.toMatchObject({ code: 'outside-project' })
+    expect(await readdir(elsewhere)).toEqual([])
+    // one that stays inside is written through, as before
+    await symlink('readme.md', join(root, 'docs', 'alias.md'))
+    await service.write('p', 'docs/alias.md', 'hi')
+    expect(await readFile(join(root, 'docs', 'readme.md'), 'utf8')).toBe('hi')
   })
 
   it('creates files and folders (with parents); refuses taken names and the project folder', async () => {

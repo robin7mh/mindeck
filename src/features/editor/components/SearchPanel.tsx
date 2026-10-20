@@ -6,10 +6,10 @@ import { useT } from '@/lib/i18n'
 import { useSearch } from '../search'
 
 const toggle = (on: boolean) =>
-  cn('flex h-6 w-6 shrink-0 items-center justify-center rounded transition-colors', on ? 'bg-cyan/15 text-cyan' : 'text-text-muted hover:bg-elevated hover:text-text-primary')
-const icon = 'flex h-5 w-5 shrink-0 items-center justify-center rounded text-text-muted transition-colors hover:bg-elevated hover:text-text-primary disabled:opacity-40'
+  cn('flex h-6 w-6 shrink-0 items-center justify-center rounded-sm transition-colors', on ? 'bg-cyan/15 text-cyan' : 'text-text-muted hover:bg-elevated hover:text-text-primary')
+const icon = 'flex h-5 w-5 shrink-0 items-center justify-center rounded-sm text-text-muted transition-colors hover:bg-elevated hover:text-text-primary disabled:opacity-40'
 const field = 'flex items-center gap-1 rounded-md border border-hud/60 bg-surface/50 px-2 focus-within:border-cyan/50'
-const input = 'min-w-0 flex-1 bg-transparent py-1.5 font-sans text-[12.5px] text-text-primary outline-none placeholder:text-text-muted'
+const input = 'min-w-0 flex-1 bg-transparent py-1.5 font-sans text-[12.5px] text-text-primary outline-hidden placeholder:text-text-muted'
 
 /** Searching runs this long after the last keystroke. */
 const DEBOUNCE_MS = 300
@@ -50,6 +50,7 @@ export function SearchPanel({ readOnly = false }: { readOnly?: boolean }) {
     setBudget(ROWS)
     const timer = window.setTimeout(() => void useSearch.getState().run(), DEBOUNCE_MS)
     return () => window.clearTimeout(timer)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- new results must not search again; only the query does
   }, [pattern, regex, caseSensitive, wholeWord, include, exclude])
 
   const total = useMemo(() => results.reduce((n, f) => n + f.matches.length, 0), [results])
@@ -185,7 +186,7 @@ export function SearchPanel({ readOnly = false }: { readOnly?: boolean }) {
                             <ins className="bg-green/15 text-green no-underline">{replacedText(m, replace, options)}</ins>
                           </>
                         ) : (
-                          <mark className="rounded-sm bg-amber/25 text-text-primary">{m.text}</mark>
+                          <mark className="rounded-xs bg-amber/25 text-text-primary">{m.text}</mark>
                         )}
                         {m.after}
                       </span>

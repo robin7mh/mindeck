@@ -87,14 +87,14 @@ function AskBar({ onNavigate }: { onNavigate: (id: ModuleId) => void }) {
     void a.send(question)
   }
   return (
-    <form onSubmit={submit} className="flex items-center gap-2 rounded-lg border border-hud/70 bg-surface/60 px-3 py-2 backdrop-blur focus-within:border-cyan/50">
+    <form onSubmit={submit} className="flex items-center gap-2 rounded-lg border border-hud/70 bg-surface/60 px-3 py-2 backdrop-blur-sm focus-within:border-cyan/50">
       <Sparkles size={15} className="shrink-0 text-cyan" />
       <input
         aria-label={t.dashboard.askLabel}
         value={text}
         onChange={(e) => setText(e.target.value)}
         placeholder={t.dashboard.ask}
-        className="min-w-0 flex-1 bg-transparent font-sans text-[14px] text-text-primary outline-none placeholder:text-text-muted"
+        className="min-w-0 flex-1 bg-transparent font-sans text-[14px] text-text-primary outline-hidden placeholder:text-text-muted"
       />
       <button type="submit" aria-label={t.dashboard.askSubmit} disabled={!text.trim()} className="text-cyan disabled:opacity-30">
         <Send size={15} />
@@ -125,7 +125,7 @@ function Tile({
             type="button"
             onClick={onOpen}
             aria-label={t.dashboard.open(title)}
-            className="ml-auto rounded p-0.5 text-text-muted transition-colors hover:text-cyan"
+            className="ml-auto rounded-sm p-0.5 text-text-muted transition-colors hover:text-cyan"
           >
             <ArrowUpRight size={14} />
           </button>
@@ -189,7 +189,7 @@ function ProjectsTile({ onNavigate }: { onNavigate: (id: ModuleId) => void }) {
                 <button
                   type="button"
                   onClick={() => open(p.id)}
-                  className="flex w-full items-center gap-2 rounded px-1 py-0.5 text-left transition-colors hover:bg-elevated/50"
+                  className="flex w-full items-center gap-2 rounded-sm px-1 py-0.5 text-left transition-colors hover:bg-elevated/50"
                 >
                   <StatusDot tone={!p.git?.isRepo ? 'muted' : p.git.dirty ? 'warn' : 'ok'} pulse={false} />
                   <span className="min-w-0 flex-1 truncate font-sans text-[12.5px] text-text-secondary">{p.name}</span>

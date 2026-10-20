@@ -14,7 +14,8 @@ import type { EventHub } from '../core/EventHub'
 import type { AuthService } from '../services/auth/AuthService'
 import type { SettingsService } from '../services/settings/SettingsService'
 import type { Certificates, TlsCredentials } from './Certificates'
-import { HttpServer } from './HttpServer'
+import { HttpServer, allowedHostsFromEnv } from './HttpServer'
+import { rateLimitsFromEnv } from './RateLimit'
 
 /** How often a running HTTPS server checks that its certificate still fits (end, addresses). */
 const RENEW_CHECK_MS = 12 * 60 * 60_000
@@ -91,7 +92,9 @@ export class ServerController {
       urls: this.urls(),
       error: this.error,
       configurable: !this.opts.fixedConfig,
-      ...(this.tls ? { tls: { fingerprint: this.tls.fingerprint, expiresAt: this.tls.expiresAt, selfSigned: this.tls.selfSigned } } : {})
+      ...(this.tls
+        ? { tls: { fingerprint: this.tls.fingerprint, spkiFingerprint: this.tls.spkiFingerprint, expiresAt: this.tls.expiresAt, selfSigned: this.tls.selfSigned } }
+        : {})
     }
   }
 
@@ -107,7 +110,9 @@ export class ServerController {
       webRoot: this.opts.webRoot,
       remoteTerminal: () => this.config.remoteTerminal,
       onClients: this.opts.onClients,
-      scope: this.opts.scope
+      scope: this.opts.scope,
+      allowedHosts: allowedHostsFromEnv(),
+      rateLimits: rateLimitsFromEnv()
     })
     try {
       // No plain fallback: a certificate that cannot be made or read keeps the server off.
@@ -158,7 +163,10 @@ export class ServerController {
     }
     const next = { ...this.config, ...patch }
     const restart = (['enabled', 'lan', 'tls', 'port'] as const).some((k) => next[k] !== this.config[k])
+    // What devices may see changes: events kept for their reconnect were sorted by the old rules.
+    const rescope = next.remoteTerminal !== this.config.remoteTerminal || next.remoteRoots.join('\n') !== this.config.remoteRoots.join('\n')
     this.config = next
+    if (rescope) this.http?.resetReplay()
     await this.opts.settings.update({ server: next })
     if (restart) {
       await this.stop()
@@ -170,7 +178,7 @@ export class ServerController {
   async createPairingCode(role?: DeviceRole): Promise<PairingCode> {
     await this.renewTls()
     const code = await this.opts.auth.createPairingCode(role)
-    return { ...code, urls: this.urls(), ...(this.tls ? { fingerprint: this.tls.fingerprint } : {}) }
+    return { ...code, urls: this.urls(), ...(this.tls ? { fingerprint: this.tls.fingerprint, spkiFingerprint: this.tls.spkiFingerprint } : {}) }
   }
 
   devices(): Promise<Device[]> {

@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { ArrowDown, ArrowUp, Braces, Check, Eraser, Loader2, Play, Plus, RotateCcw, Square, Trash2, Wrench, X } from 'lucide-react'
-import DOMPurify from 'dompurify'
-import { marked } from 'marked'
 import type { NotebookOutput } from '@shared/types/notebook'
 import { cn } from '@/lib/cn'
 import { useT } from '@/lib/i18n'
+import { interceptLinks } from '@/lib/links'
+import { sanitizeFrameHtml } from '@/lib/sanitize'
+import { Markdown } from '@/components/ui/Markdown'
+import { renderMarkdown } from '@/features/memory/markdown'
 import { Select } from '@/components/ui/Select'
 import { monaco, THEME } from '../monaco/setup'
 import { joinSource, notebookLanguage, splitSource, stripAnsi, updateCell, type Cell } from '../notebook/doc'
@@ -12,8 +14,8 @@ import { notebookSession } from '../notebook/session'
 import { fileUri } from './CodeEditor'
 import type { EditorTab } from '../store'
 
-const tool = 'flex h-7 items-center gap-1 rounded px-2 font-sans text-[12px] text-text-secondary transition-colors hover:bg-elevated hover:text-text-primary disabled:pointer-events-none disabled:opacity-40'
-const icon = 'flex h-6 w-6 items-center justify-center rounded text-text-muted hover:bg-elevated hover:text-text-primary disabled:opacity-40'
+const tool = 'flex h-7 items-center gap-1 rounded-sm px-2 font-sans text-[12px] text-text-secondary transition-colors hover:bg-elevated hover:text-text-primary disabled:pointer-events-none disabled:opacity-40'
+const icon = 'flex h-6 w-6 items-center justify-center rounded-sm text-text-muted hover:bg-elevated hover:text-text-primary disabled:opacity-40'
 type Run = 'stay' | 'next' | 'insert'
 
 /** One cell's code, in its own small Monaco editor that grows with its text. */
@@ -63,6 +65,7 @@ function CellEditor({ value, language, readOnly, focus, onChange, onRun, onEscap
       model.dispose()
     }
     // The editor lives as long as the cell; text from outside comes in below.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- see above
   }, [])
 
   // The file changed under the cell (undo in the JSON, a reload from disk): show it.
@@ -78,30 +81,34 @@ function CellEditor({ value, language, readOnly, focus, onChange, onRun, onEscap
   return <div ref={host} className="min-h-8 w-full" />
 }
 
-/** HTML from a kernel (pandas tables, rich reprs): in a frame of its own, without scripts. */
+/**
+ * HTML from a kernel (pandas tables, rich reprs): sanitized, in a frame of its
+ * own. `allow-same-origin` (to measure the height) must never meet
+ * `allow-scripts`: together they would hand the frame the app itself.
+ */
 function HtmlOutput({ html }: { html: string }) {
   const frame = useRef<HTMLIFrameElement>(null)
   // The app's light or dark: without the same colour scheme the frame paints itself white.
   const root = getComputedStyle(document.documentElement)
   const scheme = root.colorScheme || 'normal'
   const color = getComputedStyle(document.body).color
-  const doc = `<!doctype html><html><head><meta charset="utf-8"><style>:root{color-scheme:${scheme}}body{margin:0;font:12.5px ui-sans-serif,system-ui,sans-serif;color:${color};background:transparent;overflow:auto}table{border-collapse:collapse}th,td{border:1px solid rgba(140,160,190,.3);padding:2px 8px;text-align:right}th{background:rgba(140,160,190,.12)}a{color:#38d6e8}</style></head><body>${html}</body></html>`
+  const doc = `<!doctype html><html><head><meta charset="utf-8"><style>:root{color-scheme:${scheme}}body{margin:0;font:12.5px ui-sans-serif,system-ui,sans-serif;color:${color};background:transparent;overflow:auto}table{border-collapse:collapse}th,td{border:1px solid rgba(140,160,190,.3);padding:2px 8px;text-align:right}th{background:rgba(140,160,190,.12)}a{color:#38d6e8}</style></head><body>${sanitizeFrameHtml(html)}</body></html>`
   const fit = () => {
     const el = frame.current!
     el.style.height = `${Math.min(600, el.contentDocument!.body.scrollHeight + 4)}px`
   }
-  return <iframe ref={frame} title="output" sandbox="allow-same-origin" srcDoc={doc} onLoad={fit} className="h-8 w-full rounded border-0 bg-transparent" />
+  return <iframe ref={frame} title="output" sandbox="allow-same-origin" srcDoc={doc} onLoad={fit} className="h-8 w-full rounded-sm border-0 bg-transparent" />
 }
 
 const text = (value: unknown) => (Array.isArray(value) ? value.join('') : String(value ?? ''))
 
 /** One output, in the richest form the kernel gave and Mindeck shows. */
 function Output({ output }: { output: NotebookOutput }) {
-  const pre = 'max-h-[420px] overflow-auto whitespace-pre-wrap break-words font-mono text-[12px] leading-[1.5]'
+  const pre = 'max-h-[420px] overflow-auto whitespace-pre-wrap wrap-break-word font-mono text-[12px] leading-normal'
   if (output.output_type === 'stream') return <pre className={cn(pre, output.name === 'stderr' ? 'text-danger/90' : 'text-text-secondary')}>{stripAnsi(joinSource(output.text))}</pre>
   if (output.output_type === 'error')
     return (
-      <pre role="alert" className={cn(pre, 'rounded border border-danger/30 bg-danger/[0.06] px-2 py-1 text-text-secondary')}>
+      <pre role="alert" className={cn(pre, 'rounded-sm border border-danger/30 bg-danger/6 px-2 py-1 text-text-secondary')}>
         <span className="text-danger">{`${output.ename}: ${output.evalue}`}</span>
         {output.traceback.length > 1 && `\n${stripAnsi(output.traceback.join('\n'))}`}
       </pre>
@@ -109,11 +116,11 @@ function Output({ output }: { output: NotebookOutput }) {
   const data = output.data
   if (data['image/png'] || data['image/jpeg']) {
     const type = data['image/png'] ? 'image/png' : 'image/jpeg'
-    return <img alt="" src={`data:${type};base64,${text(data[type]).replace(/\s/g, '')}`} className="max-w-full rounded bg-white/90" />
+    return <img alt="" src={`data:${type};base64,${text(data[type]).replace(/\s/g, '')}`} className="max-w-full rounded-sm bg-white/90" />
   }
-  if (data['image/svg+xml']) return <img alt="" src={`data:image/svg+xml;charset=utf-8,${encodeURIComponent(text(data['image/svg+xml']))}`} className="max-w-full rounded bg-white/90" />
+  if (data['image/svg+xml']) return <img alt="" src={`data:image/svg+xml;charset=utf-8,${encodeURIComponent(text(data['image/svg+xml']))}`} className="max-w-full rounded-sm bg-white/90" />
   if (data['text/html']) return <HtmlOutput html={text(data['text/html'])} />
-  if (data['text/markdown']) return <div className="md-prose" dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(marked.parse(text(data['text/markdown']), { async: false })) }} />
+  if (data['text/markdown']) return <Markdown text={text(data['text/markdown'])} />
   if (data['application/json'] !== undefined) return <pre className={cn(pre, 'text-text-secondary')}>{JSON.stringify(data['application/json'], null, 2)}</pre>
   return <pre className={cn(pre, 'text-text-primary')}>{stripAnsi(text(data['text/plain']))}</pre>
 }
@@ -139,7 +146,7 @@ function CellView({ cell, index, count, language, readOnly, running, queued, foc
   const source = joinSource(cell.source)
   const [editing, setEditing] = useState(cell.cell_type !== 'markdown' || !source || focus)
   const markdown = cell.cell_type === 'markdown'
-  const html = useMemo(() => (markdown && !editing ? DOMPurify.sanitize(marked.parse(source, { async: false })) : ''), [markdown, editing, source])
+  const html = useMemo(() => (markdown && !editing ? renderMarkdown(source) : ''), [markdown, editing, source])
   const run = (how: Run) => {
     if (markdown) setEditing(false)
     onRun(cell.key, how)
@@ -161,11 +168,12 @@ function CellView({ cell, index, count, language, readOnly, running, queued, foc
           <div
             role="article"
             onDoubleClick={() => !readOnly && setEditing(true)}
+            onClick={interceptLinks}
             className="md-prose min-h-6 cursor-text px-1"
             dangerouslySetInnerHTML={{ __html: html || `<p class="text-text-muted">${t.emptyMarkdown}</p>` }}
           />
         ) : (
-          <div className={cn('overflow-hidden rounded border border-hud/50', cell.cell_type === 'code' ? 'bg-void/40' : 'bg-surface/40')}>
+          <div className={cn('overflow-hidden rounded-sm border border-hud/50', cell.cell_type === 'code' ? 'bg-void/40' : 'bg-surface/40')}>
             <CellEditor value={source} language={markdown ? 'markdown' : cell.cell_type === 'raw' ? 'plaintext' : language} readOnly={readOnly} focus={focus} onChange={(s) => onChange(cell.key, s)} onRun={run} onEscape={markdown ? () => setEditing(false) : undefined} />
           </div>
         )}
@@ -178,7 +186,7 @@ function CellView({ cell, index, count, language, readOnly, running, queued, foc
         )}
       </div>
       {!readOnly && (
-        <div className="absolute right-1 top-1 hidden items-center gap-0.5 rounded bg-elevated/90 group-hover:flex group-focus-within:flex">
+        <div className="absolute right-1 top-1 hidden items-center gap-0.5 rounded-sm bg-elevated/90 group-hover:flex group-focus-within:flex">
           {markdown && editing && (
             <button type="button" aria-label={t.done} title={t.done} onClick={() => setEditing(false)} className={icon}>
               <Check size={12} />
@@ -295,7 +303,7 @@ export default function NotebookView({ tab, readOnly, onRaw }: Props) {
         </div>
       </div>
       {error && (
-        <p role="alert" className="flex shrink-0 items-start gap-2 border-b border-danger/30 bg-danger/[0.06] px-3 py-1.5 font-sans text-[12px] text-danger">
+        <p role="alert" className="flex shrink-0 items-start gap-2 border-b border-danger/30 bg-danger/6 px-3 py-1.5 font-sans text-[12px] text-danger">
           <span className="flex-1 whitespace-pre-wrap">{error}</span>
           <button type="button" aria-label={t.dismiss} onClick={() => session.clearError()}>
             <X size={12} />

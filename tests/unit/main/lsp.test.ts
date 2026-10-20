@@ -1,11 +1,12 @@
 import { EventEmitter } from 'node:events'
-import { mkdir, realpath, writeFile } from 'node:fs/promises'
+import { mkdir, realpath, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
 import { afterAll, describe, expect, it } from 'vitest'
 import { tempDir } from './helpers'
 import { bundledTsserver, findTsserver, LspService } from '../../../electron/main/services/lsp/LspService'
 import { TsServer, type TsProcess } from '../../../electron/main/services/lsp/TsServer'
+import { spawnNode, type NodeLauncher } from '../../../electron/main/lib/nodeProcess'
 
 const A = `export interface User {\n  /** The display name. */\n  name: string\n}\n\n/**\n * Says hello.\n * @param user who to greet\n */\nexport function greet(user: User, loud = false): string {\n  return loud ? user.name.toUpperCase() : user.name\n}\n`
 const B = `import { greet } from './a'\n\nconst who = { name: 'Ada' }\ngreet(who, )\nconst n: number = greet(who)\n`
@@ -29,12 +30,14 @@ const make = (root: string | undefined, opts: Partial<ConstructorParameters<type
 afterAll(() => services.forEach((s) => s.dispose()))
 
 describe('LspService (real tsserver)', () => {
-  it('finds the project’s TypeScript walking up, else Mindeck’s own', async () => {
+  it('finds the project’s TypeScript in its root — never in a parent folder — else Mindeck’s own', async () => {
     const root = await tempDir()
     await mkdir(join(root, 'node_modules/typescript/lib'), { recursive: true })
     await writeFile(join(root, 'node_modules/typescript/lib/tsserver.js'), '')
     await mkdir(join(root, 'packages/app'), { recursive: true })
-    expect(findTsserver(join(root, 'packages/app'))).toBe(join(root, 'node_modules/typescript/lib/tsserver.js'))
+    expect(findTsserver(root)).toBe(join(root, 'node_modules/typescript/lib/tsserver.js'))
+    // A node_modules above the project (~/Downloads/node_modules) isn't the project's.
+    expect(findTsserver(join(root, 'packages/app'))).toBeUndefined()
     expect(findTsserver('/')).toBeUndefined()
     expect(bundledTsserver()).toMatch(/typescript[/\\]lib[/\\]tsserver\.js$/)
     // Packaged: Node can't run a file inside the asar archive — the unpacked copy is used.
@@ -44,6 +47,53 @@ describe('LspService (real tsserver)', () => {
         throw new Error('not shipped')
       })
     ).toBeUndefined()
+  })
+
+  it('a project that isn’t trusted gets Mindeck’s TypeScript, never its own tsserver.js; trusting it switches, open files kept', async () => {
+    const root = await project()
+    // The attack: a repository that brings its own "TypeScript".
+    await mkdir(join(root, 'node_modules/typescript/lib'), { recursive: true })
+    const planted = join(root, 'node_modules/typescript/lib/tsserver.js')
+    await writeFile(planted, 'require("fs").writeFileSync("pwned", "")')
+    let trusted = false
+    const started: { tsserver: string; proc: FakeProc }[] = []
+    const lsp = make(root, {
+      trusted: () => trusted,
+      start: (tsserver, _cwd, onExit) => {
+        const proc = new FakeProc()
+        started.push({ tsserver, proc })
+        return new TsServer(proc as unknown as TsProcess, onExit)
+      }
+    })
+    await lsp.retrust('p') // no server yet: nothing to switch
+    expect(await lsp.open('p', 'src/a.ts', A)).toMatchObject({ available: true })
+    expect(started.map((s) => s.tsserver)).toEqual([bundledTsserver()])
+    await lsp.retrust('p') // still restricted: the same server
+    expect(started).toHaveLength(1)
+
+    trusted = true
+    await lsp.retrust('p')
+    expect(started.map((s) => s.tsserver)).toEqual([bundledTsserver(), planted])
+    expect(started[0].proc.killed).toBe(true)
+    const reopened = started[1].proc.sent.find((r) => r.command === 'updateOpen')!.arguments as { openFiles: { file: string; fileContent: string }[] }
+    expect(reopened.openFiles).toEqual([expect.objectContaining({ file: join(await realpath(root), 'src/a.ts'), fileContent: A })])
+
+    // A server that can't start for the other kind: the project has none until a file opens again.
+    trusted = false
+    const none = make(root, { trusted: () => trusted, locate: (_r, t) => (t ? undefined : bundledTsserver()) })
+    expect(await none.open('p', 'src/a.ts', A)).toMatchObject({ available: true })
+    trusted = true
+    await none.retrust('p')
+    await expect(none.hover('p', 'src/a.ts', 1, 1)).rejects.toMatchObject({ code: 'lsp-unavailable' })
+
+    // The folder is gone by then: no server, and no error either (the next open says so).
+    const gone = await project()
+    trusted = false
+    const lost = make(gone, { trusted: () => trusted, start: () => new TsServer(new FakeProc() as unknown as TsProcess) })
+    expect(await lost.open('p', 'src/a.ts', A)).toMatchObject({ available: true })
+    await rm(gone, { recursive: true, force: true })
+    trusted = true
+    await expect(lost.retrust('p')).resolves.toBeUndefined()
   })
 
   it('answers hovers, completions (with auto-imports), definitions, references, signatures, renames and fixes', { timeout: 60_000 }, async () => {
@@ -102,6 +152,8 @@ describe('LspService (real tsserver)', () => {
     expect(fixes[0].title).toBe('Add import from "./c"')
     expect(fixes[0].files[0]).toMatchObject({ path: 'src/b.ts' })
     expect(await lsp.codeFixes('p', 'src/b.ts', missing.range, [])).toEqual([])
+    // a file tsserver doesn't know: no fixes, no error
+    expect(await lsp.codeFixes('p', 'src/nope.ts', missing.range, [2304])).toEqual([])
     expect(await make(root).codeFixes('p', 'src/b.ts', missing.range, [2304])).toEqual([]) // no server yet
 
     await lsp.close('p', 'src/b.ts')
@@ -109,6 +161,18 @@ describe('LspService (real tsserver)', () => {
     expect(await lsp.diagnostics('p', ['src/b.ts'])).toEqual({})
     // Opening an open file again just updates it.
     expect(await lsp.open('p', 'src/a.ts', `${A}\n`)).toMatchObject({ available: true })
+  })
+
+  it('tsserver runs with the platform’s Node (a utility process on the desktop): no ELECTRON_RUN_AS_NODE', { timeout: 60_000 }, async () => {
+    const root = await project()
+    const calls: Parameters<NodeLauncher>[] = []
+    const lsp = make(root, { node: (args, opts) => (calls.push([args, opts]), spawnNode(args, opts)) })
+    expect(await lsp.open('p', 'src/b.ts', B)).toEqual({ available: true, language: 'typescript' })
+    expect((await lsp.hover('p', 'src/b.ts', 4, 2))?.display).toContain('greet(')
+    const [[args, opts]] = calls
+    expect(args).toEqual([bundledTsserver(), '--disableAutomaticTypingAcquisition'])
+    expect(opts).toMatchObject({ cwd: root, name: 'TypeScript', unsignedLibraries: true })
+    expect(opts.env).not.toHaveProperty('ELECTRON_RUN_AS_NODE')
   })
 
   it('without TypeScript, before any open, for unknown projects', async () => {

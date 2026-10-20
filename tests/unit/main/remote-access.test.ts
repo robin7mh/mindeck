@@ -78,6 +78,16 @@ describe('RemoteAccess · folders', () => {
     expect(await m.access.folder(join(m.home, 'Mindeck', 'vault'))).toBe(join(m.home, 'Mindeck', 'vault'))
   })
 
+  it('guards Mindeck\'s data folder by its path while it doesn\'t exist yet', async () => {
+    const base = await tempDir()
+    const later = join(base, 'Mindeck', 'data')
+    await mkdir(join(base, 'other'))
+    const m = await machine({ protectedDirs: [later], roots: () => [join(base, 'other')] })
+    expect(await m.access.folder(join(base, 'other'))).toBe(join(base, 'other')) // the guard is taken now
+    await mkdir(later, { recursive: true })
+    await expect(m.access.folder(later)).rejects.toThrow("Mindeck's own data")
+  })
+
   it('refuses folders whose names are on the deny list', async () => {
     const m = await machine()
     await mkdir(join(m.code, 'id_rsa'), { recursive: true })
@@ -153,10 +163,14 @@ describe('RemoteAccess · projects and files', () => {
 
   it('denies keys and credentials by name, on any separator, ignoring case', () => {
     const m = { access: new RemoteAccess({ roots: () => [], projects: () => [], remoteShell: () => false, dirs: async () => ({ path: '', parent: null, home: '', dirs: [] }), protectedDirs: [] }) }
-    for (const bad of ['.ssh/config', '.env', '.env.local', 'config\\.AWS\\credentials', 'certs/server.pem', 'tls.key', 'id_rsa', 'keys/id_ed25519.pub', 'Library/Keychains/login.keychain-db', '.mozilla/x', 'Login Data', '.npmrc', 'a/.git-credentials']) {
+    for (const bad of ['.ssh/config', '.env', '.env.local', 'config\\.AWS\\credentials', 'certs/server.pem', 'tls.key', 'id_rsa', 'keys/id_ed25519.pub', 'Library/Keychains/login.keychain-db', '.mozilla/x', 'Login Data', '.npmrc', 'a/.git-credentials',
+      // BE-SEC-06: tokens in remote URLs, package-manager and infrastructure credentials
+      '.git/config', '.git', 'sub/.GIT/credentials', '.yarnrc.yml', '.yarnrc', 'site/.htpasswd', '.terraformrc', '.dockercfg', '.boto', '.s3cfg', '.my.cnf',
+      'infra/terraform.tfstate', 'terraform.tfstate.backup', 'credentials.json', 'credentials-prod.json', 'gcp/my-service-account.json', 'sa/service_account_key.json',
+      'android/release.jks', 'app.keystore', 'putty.ppk', 'vault.kdbx', 'config/secrets.yml', 'secret.yaml', 'secrets.json', 'wp-config.php']) {
       expect(() => m.access.file(bad), bad).toThrow('off-limits')
     }
-    for (const ok of ['src/app.ts', '.gitignore', '.github/workflows/ci.yml', 'id_utils.py', 'docs/keys.md', 'environment.ts']) {
+    for (const ok of ['src/app.ts', '.gitignore', '.gitattributes', '.gitmodules', '.github/workflows/ci.yml', 'id_utils.py', 'docs/keys.md', 'environment.ts', 'src/credentials.ts', 'terraform/main.tf', 'docs/secrets.md', 'wp-config-sample.php', 'package.json', '.yarn/releases/yarn.cjs']) {
       expect(() => m.access.file(ok), ok).not.toThrow()
     }
   })
@@ -166,12 +180,36 @@ describe('RemoteAccess · projects and files', () => {
     await m.access.check('projects:add', { path: join(m.code, 'app') })
     await expect(m.access.check('projects:add', { path: m.home })).rejects.toMatchObject({ code: 'remote-forbidden' })
     await expect(m.access.check('memory:setVault', { path: join(m.home, '.ssh') })).rejects.toMatchObject({ code: 'remote-forbidden' })
+    // The vault is never a project's folder, one holding a project or one inside it — its notes would be project files (BE-SEC-05).
+    await mkdir(join(m.code, 'notes'))
+    await expect(m.access.check('memory:setVault', { path: join(m.code, 'notes') })).rejects.toThrow('name-home cannot be the vault') // inside the project at home
+    const atHome = m.projects.splice(m.projects.findIndex((p) => p.id === 'home'), 1)
+    await m.access.check('memory:setVault', { path: join(m.code, 'notes') })
+    for (const path of [join(m.code, 'app'), m.code, join(m.code, 'app', 'src'), join(m.desk, 'sub')]) {
+      await expect(m.access.check('memory:setVault', { path }), path).rejects.toMatchObject({ code: 'remote-forbidden', message: expect.stringContaining('cannot be the vault') })
+    }
+    m.setShells(true) // a shell could write there anyway
+    await m.access.check('memory:setVault', { path: join(m.code, 'app') })
+    m.setShells(false)
+    m.projects.push(...atHome)
     await m.access.check('files:read', { projectId: 'desk', path: 'src/a.ts' })
     await expect(m.access.check('files:read', { projectId: 'desk', path: '.env' })).rejects.toMatchObject({ code: 'remote-forbidden' })
     await expect(m.access.check('files:stat', { projectId: 'desk', paths: ['a', 'b/id_rsa', 3] })).rejects.toThrow('id_rsa')
     await expect(m.access.check('files:list', { projectId: 'desk', dir: '.aws' })).rejects.toThrow('.aws')
+    await expect(m.access.check('files:read', { projectId: 'desk', path: '.git/config' })).rejects.toThrow('.git is off-limits')
+    await expect(m.access.check('files:list', { projectId: 'desk', dir: '.git' })).rejects.toThrow('.git is off-limits')
     await expect(m.access.check('files:read', { projectId: 'home', path: 'notes.txt' })).rejects.toThrow('the home folder')
+    // Trusting (an admin device) only for a project the device may use.
+    await m.access.check('projects:trust', { id: 'desk', trusted: true })
+    await expect(m.access.check('projects:trust', { id: 'home', trusted: true })).rejects.toMatchObject({ code: 'remote-forbidden' })
     await expect(m.access.check('agents:diff', { id: 's', path: 'secrets/prod.pem' })).rejects.toThrow('prod.pem')
+    // Project channels that name their project as `id` (BE-SEC-07).
+    for (const channel of ['projects:remove', 'projects:refresh', 'projects:pull'] as const) {
+      await m.access.check(channel, { id: 'desk' })
+      await expect(m.access.check(channel, { id: 'home' }), channel).rejects.toThrow('the home folder')
+      await expect(m.access.check(channel, { id: 'remote-out' }), channel).rejects.toThrow('not in a folder shared')
+    }
+    await m.access.check('agents:get', { id: 'home' }) // an id that is no project's
     await m.access.check('memory:read', { path: '.env.md' }) // a vault note: no project, no file rule
     await m.access.check('app:info', undefined)
   })

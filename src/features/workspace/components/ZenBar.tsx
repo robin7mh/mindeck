@@ -25,7 +25,7 @@ export function ZenBar() {
         type="button"
         onClick={() => useWorkspace.getState().setZen(false)}
         title={`${t.workspace.exitZen} (${keyLabel('zen')})`}
-        className="no-drag flex items-center gap-1.5 rounded px-2 py-1 font-sans text-[12px] text-text-muted transition-colors hover:bg-elevated hover:text-text-primary"
+        className="no-drag flex items-center gap-1.5 rounded-sm px-2 py-1 font-sans text-[12px] text-text-muted transition-colors hover:bg-elevated hover:text-text-primary"
       >
         <Shrink size={13} /> {t.workspace.exitZen}
       </button>

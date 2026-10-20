@@ -59,6 +59,14 @@ export async function userPath(platform: NodeJS.Platform = process.platform, env
   return [login, env.PATH].filter(Boolean).join(':')
 }
 
+/**
+ * The environment the user's own terminal has: Mindeck's (shellEnv) with
+ * their PATH — for programs that start theirs (docker, php) without a shell.
+ */
+export async function userEnv(path: () => Promise<string> = userPath): Promise<Record<string, string>> {
+  return withPath(shellEnv(), await path())
+}
+
 /** At most this many lines of a failed install go into its error. */
 const TAIL = 12
 

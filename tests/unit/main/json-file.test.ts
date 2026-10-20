@@ -2,7 +2,7 @@ import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { tempDir } from './helpers'
-import { corruptName, readJson, readJsonFile } from '../../../electron/main/lib/jsonFile'
+import { corruptName, readJson, readJsonFile, readJsonOrThrow } from '../../../electron/main/lib/jsonFile'
 
 const at = new Date('2026-10-15T09:30:00.000Z')
 
@@ -43,6 +43,20 @@ describe('readJsonFile', () => {
     // a folder where the file should be: unreadable
     await mkdir(join(dir, 'folder.json'))
     expect(await readJsonFile(join(dir, 'folder.json'))).toEqual({ status: 'damaged' })
+    expect(warn.mock.calls.at(-1)![0]).toMatch(/cannot read .*folder\.json/)
+  })
+
+  it('for a store that writes itself back whole: a file it cannot read throws instead of reading as empty', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const dir = await tempDir()
+    await writeFile(join(dir, 'a.json'), '{"v":1}')
+    expect(await readJsonOrThrow(join(dir, 'a.json'))).toEqual({ v: 1 })
+    expect(await readJsonOrThrow(join(dir, 'none.json'))).toBeUndefined()
+    await writeFile(join(dir, 'bad.json'), '{')
+    expect(await readJsonOrThrow(join(dir, 'bad.json'))).toBeUndefined() // damaged: set aside, as always
+    expect((await readdir(dir)).some((f) => f.startsWith('bad.corrupt-'))).toBe(true)
+    await mkdir(join(dir, 'folder.json'))
+    await expect(readJsonOrThrow(join(dir, 'folder.json'))).rejects.toMatchObject({ code: 'EISDIR' })
     expect(warn.mock.calls.at(-1)![0]).toMatch(/cannot read .*folder\.json/)
   })
 

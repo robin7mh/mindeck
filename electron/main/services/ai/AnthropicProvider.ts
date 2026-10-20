@@ -13,6 +13,9 @@ const CLOUD_CODES: Record<string, string> = {
   license_required: 'license-required',
   ai_unavailable: 'ai-unavailable',
   ai_rate_limited: 'rate-limited',
+  // An admin switched the cloud AI off for this account; a document by URL / Files API id the cloud can't price.
+  ai_blocked: 'ai-blocked',
+  ai_unsupported_content: 'ai-unsupported-content',
   session_invalid: 'session_expired',
   unauthorized: 'session_expired'
 }

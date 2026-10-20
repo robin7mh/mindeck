@@ -1,4 +1,4 @@
-import { app, BrowserWindow, crashReporter, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, powerMonitor, protocol, shell, Tray } from 'electron'
+import { app, BrowserWindow, crashReporter, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, powerMonitor, protocol, session, shell, Tray } from 'electron'
 import { existsSync } from 'node:fs'
 import { isAbsolute, join } from 'node:path'
 import { release, type } from 'node:os'
@@ -17,6 +17,7 @@ import { createBrowserHost } from './main/platform/browser/host'
 import { isFullScreenKey } from './main/platform/browser/shortcuts'
 import { FILE_SCHEME, serveFile } from './main/platform/fileProtocol'
 import { appMenuTemplate } from './main/platform/menu'
+import { guardSession } from './main/platform/sessionGuard'
 
 /** A 1×1 picture for drags whose file has no icon. */
 const DRAG_ICON = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
@@ -329,6 +330,8 @@ async function startCore(): Promise<void> {
 
 app.whenReady().then(async () => {
   if (!primary) return
+  // Mindeck's page gets full screen and the clipboard (Paste reads it) — no microphone, camera, location or screen.
+  guardSession(session.defaultSession, isAppUrl)
   protocol.handle(FILE_SCHEME, (request) =>
     serveFile(request, {
       thumbnail: async (path, size) => {
@@ -339,7 +342,16 @@ app.whenReady().then(async () => {
   )
   // Mindeck's own menu: Electron's default one would reload the UI on ⌘R and close the window on ⌘W.
   Menu.setApplicationMenu(Menu.buildFromTemplate(appMenuTemplate(process.platform, !app.isPackaged)))
-  await startCore()
+  try {
+    await startCore()
+  } catch (err) {
+    // No window, no tray: a Mindeck left running would only hold the single-instance lock, and
+    // every later start would end at once. Say why, then really end.
+    console.error('[app] the core failed to start', err)
+    dialog.showErrorBox('Mindeck could not start', `${err instanceof Error ? err.message : String(err)}\n\nDetails are in the log: ${paths.logsDir}`)
+    app.exit(1)
+    return
+  }
   createWindow()
   // The Dock (macOS), or a second start: the window back — a new one if it really closed.
   const bringBack = () => (mainWindow ? lifecycle.reveal(mainWindow) : createWindow())
@@ -354,9 +366,10 @@ app.on('before-quit', (event) => lifecycle.onBeforeQuit(event))
 // without asking — no one is at the window to answer, and Mindeck must not linger.
 for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) process.on(signal, () => lifecycle.quitNow())
 
-// A helper process (GPU, network, a utility) ended unexpectedly — for the log.
+// A helper process (GPU, network, a utility) ended unexpectedly — for the log. While
+// quitting, Mindeck ends its own helpers (tsserver, the lint worker): that is no news.
 app.on('child-process-gone', (_event, details) => {
-  if (details.reason === 'clean-exit') return
+  if (details.reason === 'clean-exit' || (details.reason === 'killed' && lifecycle.isQuitting)) return
   console.warn(`[app] ${details.type}${details.name ? ` (${details.name})` : ''} process gone: ${details.reason}, exit code ${details.exitCode}`)
 })
 

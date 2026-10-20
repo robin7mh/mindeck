@@ -82,7 +82,7 @@ export const idOf = (spki: Buffer) =>
 /** A signed CRX3 package of `archive`, like the Web Store's. */
 export function crx(
   archive: Buffer,
-  opts: { keys?: ReturnType<typeof keyPair>[]; idKey?: Buffer; badSignature?: boolean; extra?: Buffer; noSignedData?: boolean; ecdsa?: boolean } = {}
+  opts: { keys?: ReturnType<typeof keyPair>[]; idKey?: Buffer; badSignature?: boolean; extra?: Buffer; proofExtra?: Buffer; noSignedData?: boolean; ecdsa?: boolean } = {}
 ): Buffer {
   const keys = opts.keys ?? [keyPair()]
   const crxId = createHash('sha256')
@@ -95,7 +95,7 @@ export function crx(
   const message = Buffer.concat([Buffer.from('CRX3 SignedData\x00', 'latin1'), size, signedData, archive])
   const proofs = keys.map((k) => {
     const signature = opts.badSignature ? Buffer.from('nope') : sign('sha256', message, k.privateKey)
-    return field(opts.ecdsa ? 3 : 2, Buffer.concat([field(1, k.spki), field(2, signature)]))
+    return field(opts.ecdsa ? 3 : 2, Buffer.concat([field(1, k.spki), field(2, signature), opts.proofExtra ?? Buffer.alloc(0)]))
   })
   const header = Buffer.concat([...proofs, opts.extra ?? Buffer.alloc(0), opts.noSignedData ? Buffer.alloc(0) : field(10000, signedData)])
   const head = Buffer.alloc(12)

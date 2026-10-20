@@ -64,7 +64,7 @@ test('workspace: two panes side by side with agents, terminal and browser — di
     await expect.poll(fits).toBe(true)
 
     // zen mode: only the panes (and the way out)
-    await page.keyboard.press('Control+Alt+z')
+    await page.keyboard.press('ControlOrMeta+Alt+z')
     await expect(page.getByText('Mindeck · Zen mode')).toBeVisible()
     await expect(page.getByTitle('Terminal', { exact: true })).toHaveCount(0) // no side navigation
     await expect(page.getByTestId('pane-head-agents')).toBeVisible()
@@ -80,7 +80,7 @@ test('workspace: two panes side by side with agents, terminal and browser — di
     await expect(page.getByTestId('pane-head-editor')).toBeVisible()
     await expect(page.getByTestId('pane-head-terminal')).toBeVisible()
     await expect(page.getByTestId('pane-head-agents')).toHaveCount(0)
-    await page.keyboard.press('Control+Alt+3')
+    await page.keyboard.press('ControlOrMeta+Alt+3')
     await expect(page.getByTestId('pane-head-agents')).toBeVisible()
     await expect(page.getByTestId('pane-head-browser')).toBeVisible()
     await expect(divider).toHaveAttribute('aria-valuenow', '35')

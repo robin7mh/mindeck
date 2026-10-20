@@ -195,6 +195,7 @@ describe('extensions · installing', () => {
     const pkg = storePackage()
     serve(routes, [pkg])
     await service.install({ source: 'store', input: pkg.id })
+    await service.setEnabled(pkg.id, false) // switched off: nothing loaded to unload
     host.loadExtension.mockResolvedValueOnce({ id: pkg.id })
     await service.install({ source: 'folder', path: folder })
     expect(service.list()).toEqual([expect.objectContaining({ id: pkg.id, source: 'folder' })])
@@ -239,6 +240,11 @@ describe('extensions · managing', () => {
     host.loadExtension.mockRejectedValueOnce(new Error('Manifest key is invalid'))
     const failed = await service.setEnabled(pkg.id, true)
     expect(failed.error).toBe('Manifest key is invalid')
+    host.unloadExtension.mockClear()
+    expect((await service.setEnabled(pkg.id, false)).enabled).toBe(false) // it never loaded: nothing to unload
+    expect(host.unloadExtension).not.toHaveBeenCalled()
+    host.loadExtension.mockRejectedValueOnce(new Error('Manifest key is invalid'))
+    await service.setEnabled(pkg.id, true)
     host.loadExtension.mockRejectedValueOnce('odd')
     expect((await service.setEnabled(pkg.id, true)).error).toBe('odd')
     expect((await service.setEnabled(pkg.id, true)).error).toBeUndefined()
@@ -348,6 +354,22 @@ describe('extensions · managing', () => {
     expect(fetch).not.toHaveBeenCalled()
   })
 
+  it('the first look finding the store down is no crash', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'setInterval', 'clearTimeout', 'clearInterval'] })
+    const { service, host, routes, fetch } = await setup()
+    const pkg = storePackage()
+    serve(routes, [pkg])
+    await service.attach(host)
+    await service.install({ source: 'store', input: pkg.id })
+    routes.set('https://clients2.google.com/', () => response('down', 503))
+    fetch.mockClear()
+    await vi.advanceTimersByTimeAsync(2 * 60 * 1000)
+    expect(fetch).toHaveBeenCalled()
+    await expect(service.checkUpdates()).rejects.toThrow('HTTP 503') // queued after the first: that one is over
+    expect(service.list()).toEqual([expect.objectContaining({ id: pkg.id, version: '1.0.0' })])
+    service.detach()
+  })
+
   it('waits for the next update window after a recent check, and needs no network without store extensions', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'setInterval', 'clearTimeout', 'clearInterval'] })
     const now = Date.UTC(2026, 9, 15)
@@ -358,5 +380,8 @@ describe('extensions · managing', () => {
     expect(fetch).not.toHaveBeenCalled()
     await vi.advanceTimersByTimeAsync(60 * 60 * 1000 + 1)
     expect(fetch).not.toHaveBeenCalled() // nothing to ask about
+    // That check saves its time: let the write land (checks run one after another) before the folder goes.
+    await service.checkUpdates()
+    service.dispose()
   })
 })

@@ -3,8 +3,12 @@
 # installer (signed when a certificate or Azure Trusted Signing is set up),
 # Linux AppImage + .deb per architecture (node-pty is compiled there, so each
 # architecture builds on its own runner). The latest*.yml feeds go along for
-# electron-updater. A manual run builds everything and keeps it as workflow
-# artifacts — no release. Secrets: docs/RELEASE.md.
+# electron-updater. The Remote-SSH / Dev Containers server packages (linux x64 +
+# arm64) are built first: the app bakes in their SHA-256 and checks every
+# package against it. Nothing is built before typecheck and unit tests pass,
+# and a tag without the signing secrets fails instead of shipping unsigned
+# installers. A manual run builds everything and keeps it as workflow
+# artifacts — no release (unsigned is allowed there). Secrets: docs/RELEASE.md.
 name: Release
 
 on:
@@ -20,8 +24,69 @@ permissions:
   contents: read
 
 jobs:
+  test:
+    name: Typecheck + unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run test:coverage
+
+  remote:
+    name: Server package linux-${{ matrix.arch }}
+    needs: test
+    strategy:
+      matrix:
+        include:
+          - arch: x64
+            os: ubuntu-latest
+          - arch: arm64
+            os: ubuntu-24.04-arm
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 22
+      - name: Build (Mindeck Cloud baked in, as in the app)
+        run: npm run remote:bundle -- ${{ matrix.arch }}
+        env:
+          MINDECK_CLOUD_URL: ${{ vars.MINDECK_CLOUD_URL }}
+          MINDECK_CLOUD_KEY: ${{ secrets.MINDECK_CLOUD_KEY }}
+      # What the desktop does on a remote host: unpack, start it with its own node, ask for its health.
+      - name: The package starts and answers
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          file="out/remote/mindeck-server-${version}-linux-${{ matrix.arch }}.tar.gz"
+          mkdir -p "$RUNNER_TEMP/srv" "$RUNNER_TEMP/home"
+          tar xzf "$file" -C "$RUNNER_TEMP/srv"
+          test "$(cat "$RUNNER_TEMP/srv/VERSION")" = "$version"
+          MINDECK_HOME="$RUNNER_TEMP/home" MINDECK_PORT=17420 "$RUNNER_TEMP/srv/node" "$RUNNER_TEMP/srv/out/server/index.cjs" > "$RUNNER_TEMP/server.log" 2>&1 &
+          pid=$!
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:17420/api/health; then kill "$pid"; exit 0; fi
+            sleep 1
+          done
+          cat "$RUNNER_TEMP/server.log"
+          echo "::error::The server package did not start"
+          exit 1
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: remote-${{ matrix.arch }}
+          retention-days: 14
+          if-no-files-found: error
+          path: out/remote/mindeck-server-*.tar.gz
+
   build:
     name: ${{ matrix.name }}
+    needs: remote
     strategy:
       fail-fast: false
       matrix:
@@ -48,8 +113,8 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 22
           cache: npm
@@ -74,7 +139,25 @@ jobs:
 
       - run: npm ci
 
-      - name: Build (Mindeck Cloud baked in)
+      # The app checks every server package it installs on a remote host against these.
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: remote-*
+          path: out/remote-packages
+          merge-multiple: true
+      - name: The server packages' SHA-256
+        run: |
+          node -e '
+            const { createHash } = require("node:crypto"), fs = require("node:fs")
+            const version = require("./package.json").version
+            for (const arch of ["x64", "arm64"]) {
+              const file = `out/remote-packages/mindeck-server-${version}-linux-${arch}.tar.gz`
+              const sha = createHash("sha256").update(fs.readFileSync(file)).digest("hex")
+              fs.appendFileSync(process.env.GITHUB_ENV, `MINDECK_REMOTE_SHA256_${arch.toUpperCase()}=${sha}\n`)
+              console.log(`${arch}: ${sha}`)
+            }'
+
+      - name: Build (Mindeck Cloud and the server packages' SHA-256 baked in)
         run: npm run build
         env:
           MINDECK_CLOUD_URL: ${{ vars.MINDECK_CLOUD_URL }}
@@ -90,13 +173,17 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           args=(--mac --arm64 --x64 --publish never)
+          # A release reaches every user through the updater: signed and notarized, or not at all.
+          release=$([[ "$GITHUB_REF" == refs/tags/v* ]] && echo 1 || true)
           if [ -z "$CSC_LINK" ]; then
+            if [ -n "$release" ]; then echo "::error::CSC_LINK is not set — a release must be signed and notarized (docs/RELEASE.md)."; exit 1; fi
             echo "::warning::CSC_LINK is not set — the macOS build is NOT signed or notarized; Gatekeeper blocks it on other Macs."
             unset CSC_LINK CSC_KEY_PASSWORD
             export CSC_IDENTITY_AUTO_DISCOVERY=false
             args+=(-c.mac.identity=null)
             unset APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID
           elif [ -z "$APPLE_ID" ] || [ -z "$APPLE_APP_SPECIFIC_PASSWORD" ] || [ -z "$APPLE_TEAM_ID" ]; then
+            if [ -n "$release" ]; then echo "::error::APPLE_ID / APPLE_APP_SPECIFIC_PASSWORD / APPLE_TEAM_ID are incomplete — a release must be notarized."; exit 1; fi
             echo "::warning::APPLE_ID / APPLE_APP_SPECIFIC_PASSWORD / APPLE_TEAM_ID are incomplete — signed, but NOT notarized."
             unset APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID
           fi
@@ -128,6 +215,9 @@ jobs:
               "-c.win.azureSignOptions.certificateProfileName=$AZURE_CERT_PROFILE"
               "-c.win.azureSignOptions.publisherName=$AZURE_PUBLISHER_NAME"
             )
+          elif [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "::error::Neither WIN_CSC_LINK nor the AZURE_* secrets are set — a release must be signed (docs/RELEASE.md)."
+            exit 1
           else
             echo "::warning::Neither WIN_CSC_LINK nor the AZURE_* secrets are set — the Windows installer is NOT signed; SmartScreen warns on every download."
             unset WIN_CSC_LINK WIN_CSC_KEY_PASSWORD
@@ -147,7 +237,7 @@ jobs:
       - name: What was built
         run: ls -l release/
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: release-${{ matrix.platform }}-${{ matrix.arch }}
           retention-days: 14
@@ -170,9 +260,15 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: release-*
+          path: release
+          merge-multiple: true
+      # The server packages for Remote-SSH / Dev Containers: the app downloads them from this release.
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: remote-*
           path: release
           merge-multiple: true
 
@@ -181,15 +277,17 @@ jobs:
         working-directory: release
         run: |
           missing=0
+          version="${GITHUB_REF_NAME#v}"
           for file in Mindeck-mac-arm64.dmg Mindeck-mac-x64.dmg Mindeck-mac-arm64.zip Mindeck-mac-x64.zip \
                       Mindeck-Setup.exe Mindeck.AppImage Mindeck.deb Mindeck-arm64.AppImage Mindeck-arm64.deb \
-                      latest-mac.yml latest.yml latest-linux.yml latest-linux-arm64.yml; do
+                      latest-mac.yml latest.yml latest-linux.yml latest-linux-arm64.yml \
+                      "mindeck-server-${version}-linux-x64.tar.gz" "mindeck-server-${version}-linux-arm64.tar.gz"; do
             if [ ! -f "$file" ]; then echo "::error::$file is missing"; missing=1; fi
           done
           ls -l
           exit $missing
 
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           files: release/*
           fail_on_unmatched_files: true

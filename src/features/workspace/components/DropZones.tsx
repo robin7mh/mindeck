@@ -81,7 +81,7 @@ export function DropZones({ panes, rectOf }: { panes: Pane[]; rectOf: (pane: Pan
           <div key={pane.id} data-testid={`drop-${pane.module}`} style={boxStyle(rectOf(pane))} className="absolute z-40 rounded-lg border border-dashed border-cyan/40 bg-void/30">
             {lit && (
               <div style={PREVIEW[lit]} className="pointer-events-none absolute flex items-center justify-center rounded-md border border-cyan/70 bg-cyan/[0.14] shadow-[0_0_24px_rgb(var(--accent-cyan)/0.25)]">
-                <span className="rounded bg-panel/90 px-2 py-1 font-sans text-[12px] font-medium text-cyan">
+                <span className="rounded-sm bg-panel/90 px-2 py-1 font-sans text-[12px] font-medium text-cyan">
                   {lit === 'center' ? t.workspace.dropHere(t.nav[module]) : t.workspace.dropSide[lit]}
                 </span>
               </div>

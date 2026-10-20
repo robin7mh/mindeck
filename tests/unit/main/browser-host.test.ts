@@ -664,8 +664,9 @@ describe('the browser host · helpers', () => {
   })
 
   it('configures the browser profile once, however many windows come and go — and asks the current one', () => {
-    setup()
+    const first = setup()
     const { ev, open } = setup()
+    first.host.dispose() // an older window going away leaves the current one asked
     expect(h.uaSets).toBe(1)
     expect(h.partitions.every((p) => p === 'persist:mindeck-browser')).toBe(true)
     // the profile's questions go to the window open now, naming the tab they come from

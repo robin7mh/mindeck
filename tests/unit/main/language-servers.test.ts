@@ -56,7 +56,7 @@ const pos = (line: number, character: number) => ({ line, character })
 const lsRange = (l1: number, c1: number, l2: number, c2: number) => ({ start: pos(l1, c1), end: pos(l2, c2) })
 const range = (l1: number, o1: number, l2: number, o2: number) => ({ start: { line: l1, offset: o1 }, end: { line: l2, offset: o2 } })
 
-async function setup(handlers: Record<string, Handler> = {}, opts: { languages?: string[] } = {}) {
+async function setup(handlers: Record<string, Handler> = {}, opts: { languages?: string[]; trusted?: (id: string) => boolean } = {}) {
   const root = await tempDir('mindeck-ls-')
   await mkdir(join(root, 'src'))
   for (const f of ['src/a.py', 'src/b.py', 'main.go', 'Dockerfile', 'notes.txt']) await writeFile(join(root, f), '')
@@ -66,6 +66,7 @@ async function setup(handlers: Record<string, Handler> = {}, opts: { languages?:
   const spawned: { command: string; args: string[]; cwd: string }[] = []
   const backend = new GenericBackend({
     resolveRoot: (id) => (id.startsWith('p') ? root : undefined),
+    trusted: (id) => opts.trusted?.(id) ?? true,
     tools: { dir: '/tools', locate: async (id) => ((opts.languages ?? ['python', 'dockerfile']).includes(id) ? `/bin/${id}-ls` : undefined) },
     spawn: (command, args, cwd) => {
       spawned.push({ command, args, cwd })
@@ -173,22 +174,31 @@ describe('LspClient', () => {
     expect(exited).toBe(1)
     server.emit('exit')
     expect(exited).toBe(1)
+
+    // A server that refuses to shut down is ended all the same.
+    const stubborn = new FakeServer({ shutdown: () => Promise.reject(new Error('busy')) })
+    await new LspClient(stubborn as unknown as RpcProcess).dispose()
+    expect(stubborn.killed).toBe(true)
   })
 
   it('a reply to a server request after the server stopped is dropped', async () => {
     let release!: (v: unknown) => void
     const server = new FakeServer()
     new LspClient(server as unknown as RpcProcess, { onRequest: () => new Promise((r) => (release = r)) })
+    let refuse!: (e: Error) => void
     const failing = new FakeServer()
-    new LspClient(failing as unknown as RpcProcess, { onRequest: () => Promise.reject(new Error('x')) })
+    new LspClient(failing as unknown as RpcProcess, { onRequest: () => new Promise((_r, reject) => (refuse = reject)) })
     server.send({ jsonrpc: '2.0', id: 1, method: 'slow' })
     failing.send({ jsonrpc: '2.0', id: 1, method: 'slow' })
     await tick()
     failing.received = []
     server.emit('exit')
+    failing.emit('exit')
     release('late')
+    refuse(new Error('x')) // an error after it stopped: dropped too
     await tick()
     expect(server.received.filter((m) => m.id === 1)).toEqual([])
+    expect(failing.received.filter((m) => m.id === 1)).toEqual([])
   })
 
   it('frames: odd headers are skipped, broken bodies dropped, split chunks joined', () => {
@@ -480,7 +490,7 @@ describe('GenericBackend', () => {
     const root = await tempDir('mindeck-ls-real-')
     await writeFile(join(root, 'a.py'), '')
     const pushed: string[] = []
-    const backend = new GenericBackend({ resolveRoot: () => root, tools: { dir: '/t', locate: async () => FAKE_LSP }, onDiagnostics: ({ projectId }) => pushed.push(projectId) })
+    const backend = new GenericBackend({ resolveRoot: () => root, trusted: () => true, tools: { dir: '/t', locate: async () => FAKE_LSP }, onDiagnostics: ({ projectId }) => pushed.push(projectId) })
     expect(await backend.open('p', 'a.py', 'x')).toEqual({ available: true })
     for (let i = 0; i < 100 && !pushed.length; i += 1) await tick(20)
     expect((await backend.diagnostics('p', ['a.py']))['a.py']).toEqual([expect.objectContaining({ message: 'fake problem', source: 'Pyright' })])
@@ -540,12 +550,38 @@ describe('server commands and initialization options', () => {
   })
 })
 
+describe('language servers and workspace trust', () => {
+  it('a project that isn’t trusted starts no server (they run its code); restricted again, its servers stop', async () => {
+    let trusted = false
+    const t = await setup({}, { trusted: () => trusted })
+    expect(await t.backend.open('p1', 'src/a.py', 'x')).toEqual({ available: false })
+    expect(t.spawned).toHaveLength(0)
+    await expect(t.backend.executeCommand('p1', 'python', 'x', [])).rejects.toMatchObject({ code: 'untrusted' })
+
+    trusted = true
+    expect(await t.backend.open('p1', 'src/a.py', 'x')).toEqual({ available: true })
+    expect(await t.backend.open('p2', 'src/a.py', 'x')).toEqual({ available: true })
+    expect(t.spawned).toHaveLength(2)
+    trusted = false
+    await t.backend.forget('p1')
+    expect(t.servers[0].killed).toBe(true)
+    expect(t.servers[1].killed).toBe(false)
+    expect(await t.backend.open('p1', 'src/a.py', 'x')).toEqual({ available: false })
+    await t.backend.dispose()
+    // Without a trust check at all: restricted, nothing starts.
+    const root = await tempDir()
+    const unchecked = new GenericBackend({ resolveRoot: () => root, tools: { dir: '/t', locate: async () => FAKE_LSP } })
+    expect(await unchecked.open('p1', 'src/a.py', 'x')).toEqual({ available: false })
+  })
+})
+
 describe('LspService routes each file to its backend', () => {
   it('TypeScript to tsserver, the rest to language servers; diagnostics merged', async () => {
     const { root } = await setup()
     const servers: FakeServer[] = []
     const lsp = new LspService({
       resolveRoot: () => root,
+      trusted: () => true,
       locate: () => undefined, // no tsserver
       servers: {
         tools: { dir: '/t', locate: async () => '/bin/ls-x' },
@@ -591,7 +627,7 @@ describe('LspService routes each file to its backend', () => {
     expect(servers[0].killed).toBe(true)
 
     // Without a ToolsService there are no language servers.
-    const bare = new LspService({ resolveRoot: () => root, locate: () => undefined })
+    const bare = new LspService({ resolveRoot: () => root, trusted: () => true, locate: () => undefined })
     expect(await bare.open('p', 'src/a.py', '')).toEqual({ available: false, language: 'python' })
     bare.dispose()
   })

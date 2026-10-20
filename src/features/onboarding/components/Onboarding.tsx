@@ -91,7 +91,7 @@ function DoneStep() {
         <p className="mt-1 font-sans text-[13px] text-text-secondary">{o.doneIntro}</p>
       </div>
       <ul className="space-y-2">
-        <li className="rounded-md border border-cyan/40 bg-cyan/[0.04] p-2.5">
+        <li className="rounded-md border border-cyan/40 bg-cyan/4 p-2.5">
           <div className="flex gap-2.5">
             <Columns2 size={14} className="mt-0.5 shrink-0 text-cyan" />
             <span>
@@ -137,7 +137,7 @@ function Wizard() {
   const next = () => (last ? finish() : go(steps[index + 1].id))
 
   return (
-    <div role="dialog" aria-modal="true" aria-label={o.title} className="fixed inset-0 z-[90] flex items-center justify-center bg-void/80 p-4 backdrop-blur-sm">
+    <div role="dialog" aria-modal="true" aria-label={o.title} className="fixed inset-0 z-90 flex items-center justify-center bg-void/80 p-4 backdrop-blur-xs">
       <Panel
         title={o.title}
         corners

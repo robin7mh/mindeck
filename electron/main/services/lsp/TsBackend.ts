@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs'
 import { realpath } from 'node:fs/promises'
 import { createRequire } from 'node:module'
-import { dirname, isAbsolute, join, relative, sep } from 'node:path'
+import { isAbsolute, join, relative, sep } from 'node:path'
 import type {
   LspCodeFix,
   LspCompletion,
@@ -16,6 +16,7 @@ import type {
   LspTextEdit
 } from '@shared/types/lsp'
 import { confine } from '../../lib/confine'
+import type { NodeLauncher } from '../../lib/nodeProcess'
 import { TsServer, type TsDiagnostic } from './TsServer'
 
 function coded(code: string, message: string): Error {
@@ -37,12 +38,14 @@ const range = (s: Span): LspRange => ({ start: s.start, end: s.end })
 const MAX_SERVERS = 3
 const MAX_COMPLETIONS = 1000
 
-/** Where a project's own TypeScript lives (VS Code's "workspace version"), walking up for monorepos. */
-export function findTsserver(dir: string): string | undefined {
-  const candidate = join(dir, 'node_modules', 'typescript', 'lib', 'tsserver.js')
-  if (existsSync(candidate)) return candidate
-  const parent = dirname(dir)
-  return parent === dir ? undefined : findTsserver(parent)
+/**
+ * Where a project's own TypeScript lives (VS Code's "workspace version"): in
+ * its root's node_modules — never a parent folder's (a `node_modules` in
+ * ~/Downloads isn't the project's).
+ */
+export function findTsserver(root: string): string | undefined {
+  const candidate = join(root, 'node_modules', 'typescript', 'lib', 'tsserver.js')
+  return existsSync(candidate) ? candidate : undefined
 }
 
 /** Mindeck's own TypeScript (shipped with the app, unpacked from the asar archive so Node can run it). */
@@ -56,6 +59,8 @@ export function bundledTsserver(resolve: (id: string) => string = createRequire(
 
 interface Session {
   root: string
+  /** Started for a trusted project (with its own TypeScript). */
+  trusted: boolean
   server: TsServer
   /** Open files (absolute) → their current text. */
   open: Map<string, string>
@@ -64,9 +69,13 @@ interface Session {
 
 export interface TsOptions {
   resolveRoot: (projectId: string) => string | undefined
-  /** tsserver.js for a project root; default: the project's own, else Mindeck's. */
-  locate?: (root: string) => string | undefined
+  /** Whether the project is trusted (WorkspaceTrust); restricted when not, or without this. */
+  trusted?: (projectId: string) => boolean
+  /** tsserver.js for a project root; default: a trusted project's own, else Mindeck's. */
+  locate?: (root: string, trusted: boolean) => string | undefined
   start?: (tsserver: string, root: string, onExit: () => void) => TsServer
+  /** How tsserver runs as a Node program (Platform.node). */
+  node?: NodeLauncher
 }
 
 /**
@@ -232,12 +241,30 @@ export class TsBackend {
     return fixes.map((fix) => ({ title: fix.description, files: this.edits(session, fix.changes) }))
   }
 
+  /** The project's trust changed: a server of the other kind takes over, with the open files. */
+  async retrust(projectId: string): Promise<void> {
+    const old = this.sessions.get(projectId)
+    if (!old || old.trusted === this.trusts(projectId)) return
+    this.sessions.delete(projectId)
+    old.server.dispose()
+    const session = await this.session(projectId)
+    if (!session) return
+    for (const [file, content] of old.open) {
+      session.open.set(file, content)
+      await session.server.request('updateOpen', { openFiles: [{ file, fileContent: content, projectRootPath: session.root }] })
+    }
+  }
+
   dispose(): void {
     for (const s of this.sessions.values()) s.server.dispose()
     this.sessions.clear()
   }
 
   // --- helpers ---
+
+  private trusts(projectId: string): boolean {
+    return this.opts.trusted?.(projectId) ?? false
+  }
 
   private async session(projectId: string): Promise<Session | undefined> {
     const existing = this.sessions.get(projectId)
@@ -247,7 +274,10 @@ export class TsBackend {
     }
     const root = this.opts.resolveRoot(projectId)
     if (!root) throw coded('not-found', `Unknown project: ${projectId}`)
-    const tsserver = (this.opts.locate ?? ((r: string) => findTsserver(r) ?? bundledTsserver()))(root)
+    // Restricted: Mindeck's own TypeScript — a project's tsserver.js (and the
+    // tsconfig plugins it loads from node_modules) is the project's code.
+    const trusted = this.trusts(projectId)
+    const tsserver = (this.opts.locate ?? ((r: string, t: boolean) => (t ? findTsserver(r) : undefined) ?? bundledTsserver()))(root, trusted)
     if (!tsserver) return undefined
     // Over the limit: the project used longest ago gives its server up.
     if (this.sessions.size >= MAX_SERVERS) {
@@ -255,12 +285,12 @@ export class TsBackend {
       this.sessions.get(oldest)!.server.dispose()
       this.sessions.delete(oldest)
     }
-    const start = this.opts.start ?? ((ts, cwd, onExit) => TsServer.start(ts, cwd, onExit))
+    const start = this.opts.start ?? ((ts, cwd, onExit) => TsServer.start(ts, cwd, onExit, this.opts.node))
     const server = start(tsserver, root, () => {
       if (this.sessions.get(projectId)?.server === server) this.sessions.delete(projectId)
     })
     // Paths go to tsserver resolved (confine follows symlinks); answers are made relative to the same root.
-    const session: Session = { root: await realpath(root), server, open: new Map(), used: ++this.clock }
+    const session: Session = { root: await realpath(root), trusted, server, open: new Map(), used: ++this.clock }
     this.sessions.set(projectId, session)
     await server.request('configure', {
       preferences: {

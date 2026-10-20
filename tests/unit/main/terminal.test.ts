@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join, basename } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 import { tempDir, tick } from './helpers'
 
 type FakePty = {
@@ -73,7 +73,7 @@ import type { TerminalSettings, TerminalSnapshot } from '@shared/types/terminal'
 const realPlatform = process.platform
 const setPlatform = (p: NodeJS.Platform) => Object.defineProperty(process, 'platform', { value: p })
 
-let emit: ReturnType<typeof vi.fn>
+let emit: Mock
 let svc: TerminalService
 let projectDir: string
 let dataDir: string
@@ -298,6 +298,22 @@ describe('TerminalService.spawnProgram (agents)', () => {
     h.ptys[0].exit(2)
     expect(onExit).toHaveBeenCalledOnce()
     expect(onExit).toHaveBeenCalledWith(2)
+  })
+
+  it('an exception after a process ended is logged — it never escapes into node-pty (that would end the app)', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const info = await svc.spawnProgram({
+      title: 'x',
+      cwd: projectDir,
+      command: { file: 'claude', args: [] },
+      onExit: () => {
+        throw new Error('listener broke')
+      }
+    })
+    expect(() => pty().exit(1)).not.toThrow()
+    expect(error).toHaveBeenCalledWith(`[terminal] after ${info.id} ended:`, expect.objectContaining({ message: 'listener broke' }))
+    expect(svc.info(info.id)).toBeUndefined()
+    error.mockRestore()
   })
 
   it('on Windows starts the program directly', async () => {

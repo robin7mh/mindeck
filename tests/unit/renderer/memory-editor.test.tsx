@@ -81,7 +81,7 @@ describe('NoteList', () => {
     expect(folderNames).toEqual(['Ideen', 'Ideen/Sub', 'Leer', 'Loose', 'Zeta'])
     const titles = [...container.querySelectorAll('span.min-w-0.flex-1.truncate')].map((e) => e.textContent)
     expect(titles.slice(0, 2)).toEqual(['Alpha', 'Root'])
-    expect(screen.getByText('A').closest('button')!.className).toContain('bg-cyan/[0.08]')
+    expect(screen.getByText('A').closest('button')!.className).toContain('bg-cyan/8')
     expect(screen.getByText('Root').nextElementSibling).toHaveTextContent('2') // link count
     expect(screen.getByText('Alpha').nextElementSibling).toBeNull()
     expect(screen.getAllByText('Empty — drop notes here')).toHaveLength(2) // Leer, Zeta
@@ -155,7 +155,7 @@ describe('NoteList', () => {
   it('inline create: note at root, folder inside a folder; Enter, Escape and blur', () => {
     const p = listProps({ creating: { kind: 'note', parent: '' } })
     const { rerender } = render(<NoteList {...p} />)
-    const input = screen.getByPlaceholderText('Note title…')
+    const input = screen.getByRole('textbox', { name: 'Note title…' })
     expect(input).toHaveFocus()
     expect(input.parentElement!.className).toContain('pl-2')
     fireEvent.change(input, { target: { value: 'Neu' } })
@@ -168,7 +168,7 @@ describe('NoteList', () => {
     expect(p.onSubmitCreate).toHaveBeenCalledTimes(2)
 
     rerender(<NoteList {...p} creating={{ kind: 'folder', parent: 'Leer' }} />)
-    const folderInput = screen.getByPlaceholderText('Folder name…')
+    const folderInput = screen.getByRole('textbox', { name: 'Folder name…' })
     expect(folderInput.parentElement!.className).toContain('pl-7')
     expect(screen.getAllByText('Empty — drop notes here')).toHaveLength(1) // Leer shows the input instead
     fireEvent.blur(folderInput) // blank → cancel
@@ -378,8 +378,8 @@ describe('NoteEditor', () => {
     expect(p.onOpenOrCreate).toHaveBeenLastCalledWith('')
     fireEvent.click(screen.getByText('web'))
     fireEvent.click(screen.getByText('mail'))
-    expect(open).toHaveBeenCalledWith('https://example.com', '_blank')
-    expect(open).toHaveBeenCalledWith('mailto:a@b.c', '_blank')
+    expect(open).toHaveBeenCalledWith('https://example.com', '_blank', 'noopener,noreferrer')
+    expect(open).toHaveBeenCalledWith('mailto:a@b.c', '_blank', 'noopener,noreferrer')
     fireEvent.click(screen.getByText('rel'))
     expect(p.onOpen).toHaveBeenLastCalledWith('Other.md')
     fireEvent.click(screen.getByText('new'))
@@ -427,7 +427,7 @@ describe('NoteEditor', () => {
     expect(p.onOpenOrCreate).toHaveBeenLastCalledWith('Other')
     const hrefs = container.querySelectorAll('[data-href]')
     click(hrefs[0])
-    expect(open).toHaveBeenCalledWith('https://w.dev', '_blank')
+    expect(open).toHaveBeenCalledWith('https://w.dev', '_blank', 'noopener,noreferrer')
     click(hrefs[1])
     expect(p.onOpenOrCreate).toHaveBeenLastCalledWith('Neu.md')
     click(hrefs[2])

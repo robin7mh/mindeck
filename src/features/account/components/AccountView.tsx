@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import { ArrowDownToLine, ArrowUpFromLine, CloudCog, Languages, Loader2, LogOut, RefreshCw, Server, ShoppingCart, UserRound } from 'lucide-react'
-import type { CloudLicense, CloudStatus } from '@shared/types/cloud'
+import { offlineDaysLeft, type CloudLicense, type CloudStatus } from '@shared/types/cloud'
 import { Panel } from '@/components/ui/Panel'
 import { Card } from '@/components/ui/Card'
 import { LanguageSwitch } from '@/components/ui/LanguageSwitch'
@@ -40,6 +40,10 @@ function AccountCard({ status }: { status: CloudStatus }) {
   }
   const lifetime = license?.plan === 'lifetime'
   const cloud = useCloud.getState()
+  const date = (iso: string) => new Intl.DateTimeFormat(intlLocale(), { dateStyle: 'medium' }).format(new Date(iso))
+  // Offline, the certificate holds longer than the lease (a year, renewed with every heartbeat).
+  const offlineUntil = status.offlineUntil ?? status.validUntil
+  const daysLeft = offlineDaysLeft(status)
   return (
     <div className="flex flex-col gap-3">
       <div className="flex items-center gap-3">
@@ -54,7 +58,7 @@ function AccountCard({ status }: { status: CloudStatus }) {
           <span
             className={cn(
               'shrink-0 rounded-full border px-2.5 py-0.5 font-mono text-[10.5px] uppercase tracking-wider',
-              lifetime ? 'border-cyan/50 bg-cyan/[0.08] text-cyan' : 'border-blue/50 bg-blue/[0.08] text-blue'
+              lifetime ? 'border-cyan/50 bg-cyan/8 text-cyan' : 'border-blue/50 bg-blue/8 text-blue'
             )}
           >
             {lifetime ? t.cloud.lifetime : t.cloud.trial}
@@ -62,9 +66,15 @@ function AccountCard({ status }: { status: CloudStatus }) {
         )}
       </div>
       {license && !lifetime && <TrialMeter license={license} />}
-      {lifetime && status.validUntil && (
-        <p className="font-mono text-[11px] text-text-muted">
-          {t.cloud.offlineUntil(new Intl.DateTimeFormat(intlLocale(), { dateStyle: 'medium' }).format(new Date(status.validUntil)))}
+      {lifetime && offlineUntil && <p className="font-mono text-[11px] text-text-muted">{t.cloud.offlineUntil(date(offlineUntil))}</p>}
+      {daysLeft !== null && (
+        <p role="status" className="rounded-md border border-amber/40 bg-amber/6 p-2.5 font-sans text-[12px] text-amber">
+          {t.cloud.offlineEnding(daysLeft, date(status.offlineUntil!))}
+        </p>
+      )}
+      {status.state === 'license_suspended' && (
+        <p role="status" className="rounded-md border border-amber/40 bg-amber/6 p-2.5 font-sans text-[12px] text-amber">
+          <span className="font-semibold">{t.cloud.suspendedTitle}.</span> {t.cloud.suspendedIntro}
         </p>
       )}
       <CloudNotice />
@@ -107,13 +117,13 @@ function SyncCard({ signedIn }: { signedIn: boolean }) {
         </div>
       )}
       {conflict ? (
-        <div role="alertdialog" aria-label={t.sync.conflict} className="space-y-2 rounded-md border border-amber/40 bg-amber/[0.06] p-2.5">
+        <div role="alertdialog" aria-label={t.sync.conflict} className="space-y-2 rounded-md border border-amber/40 bg-amber/6 p-2.5">
           <p className="font-sans text-[12.5px] text-text-primary">{t.sync.conflict}</p>
           <div className="flex flex-wrap gap-2">
-            <button type="button" disabled={!!busy} onClick={() => void sync.pull()} className={cn(primaryButton, '!py-1.5')}>
+            <button type="button" disabled={!!busy} onClick={() => void sync.pull()} className={cn(primaryButton, 'py-1.5!')}>
               <ArrowDownToLine size={13} /> {t.sync.takeTheirs}
             </button>
-            <button type="button" disabled={!!busy} onClick={() => void sync.push(true)} className={cn(quietButton, '!py-1.5')}>
+            <button type="button" disabled={!!busy} onClick={() => void sync.push(true)} className={cn(quietButton, 'py-1.5!')}>
               {t.sync.keepMine}
             </button>
           </div>
@@ -167,17 +177,17 @@ function UpdateRow() {
       <span className="w-24 shrink-0 font-mono text-[11px] uppercase tracking-wider text-text-muted">{t.update.label}</span>
       <span className={cn('font-mono text-[12px]', status.state === 'error' ? 'text-danger' : 'text-text-secondary')}>{error ?? text}</span>
       {status.state === 'ready' ? (
-        <button type="button" onClick={() => void update.install()} className={cn(primaryButton, 'ml-auto !py-1.5')}>
+        <button type="button" onClick={() => void update.install()} className={cn(primaryButton, 'ml-auto py-1.5!')}>
           {t.update.install}
         </button>
       ) : status.state === 'available' && status.downloadUrl ? (
-        <a href={status.downloadUrl} target="_blank" rel="noreferrer" className={cn(primaryButton, 'ml-auto !py-1.5')}>
+        <a href={status.downloadUrl} target="_blank" rel="noreferrer" className={cn(primaryButton, 'ml-auto py-1.5!')}>
           {t.update.download}
         </a>
       ) : (
         status.state !== 'disabled' &&
         status.state !== 'downloading' && (
-          <button type="button" disabled={status.state === 'checking'} onClick={() => void update.check()} className={cn(quietButton, 'ml-auto !py-1.5')}>
+          <button type="button" disabled={status.state === 'checking'} onClick={() => void update.check()} className={cn(quietButton, 'ml-auto py-1.5!')}>
             {t.update.check}
           </button>
         )
@@ -220,7 +230,7 @@ export function AccountView() {
               {rows.map(([k, v]) => (
                 <div key={k} className="flex gap-3">
                   <dt className="w-24 shrink-0 font-mono text-[11px] uppercase tracking-wider text-text-muted">{k}</dt>
-                  <dd className="flex min-w-0 items-center gap-1.5 break-words font-mono text-[12px] text-text-secondary">
+                  <dd className="flex min-w-0 items-center gap-1.5 wrap-break-word font-mono text-[12px] text-text-secondary">
                     {v}
                   </dd>
                 </div>

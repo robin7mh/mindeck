@@ -5,11 +5,23 @@ import { extname, join, relative, sep } from 'node:path'
 import type { LiveServerSettings } from '@shared/types/migrate'
 import type { LiveServerStatus } from '@shared/types/live'
 import { confine } from '../../lib/confine'
+import { isDeniedName } from '../../server/RemoteAccess'
 
 function coded(code: string, message: string): Error {
   return Object.assign(new Error(message), { code })
 }
 
+/**
+ * The names the server answers to. It listens on 127.0.0.1 only, but a web page
+ * can rebind its own name to 127.0.0.1 (DNS rebinding) and then read answers
+ * same-origin — its Host header still says `evil.example`.
+ */
+const LOCAL_HOST = /^(127\.0\.0\.1|localhost|\[::1\])(:\d{1,5})?$/i
+
+/** Never served: dotfiles and folders (`.env`, `.git/config` — `.well-known` excepted) and keys or credentials. */
+export function isPrivatePath(path: string): boolean {
+  return path.split(/[\\/]+/).some((name) => (name.startsWith('.') && name !== '.well-known') || isDeniedName(name))
+}
 
 const TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -176,7 +188,17 @@ export class LiveServerService {
   }
 
   private async serve(root: string, clients: Set<ServerResponse>, req: IncomingMessage, res: ServerResponse): Promise<void> {
-    const path = decodeURIComponent(new URL(req.url!, 'http://x').pathname)
+    if (!LOCAL_HOST.test(req.headers.host ?? '')) {
+      res.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' })
+      return void res.end('Forbidden')
+    }
+    let path: string
+    try {
+      path = decodeURIComponent(new URL(req.url!, 'http://x').pathname)
+    } catch {
+      res.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' })
+      return void res.end('Bad request')
+    }
     if (path === EVENTS) {
       res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' })
       res.write(': connected\n\n')
@@ -185,7 +207,10 @@ export class LiveServerService {
       return
     }
     try {
+      if (isPrivatePath(path)) throw coded('not-found', 'private')
       let file = await confine(root, `.${path}`)
+      // …and what it really is: `config.txt -> .env` is just as private.
+      if (isPrivatePath(relative(await realpath(root), await realpath(file)))) throw coded('not-found', 'private')
       let info = await stat(file)
       if (info.isDirectory()) {
         const index = join(file, 'index.html')
@@ -206,7 +231,7 @@ export class LiveServerService {
   /** A folder without index.html: its entries as links. */
   private async listing(root: string, dir: string, res: ServerResponse): Promise<void> {
     const rel = relative(root, dir).split(sep).join('/')
-    const entries = (await readdir(dir, { withFileTypes: true })).filter((e) => !e.name.startsWith('.'))
+    const entries = (await readdir(dir, { withFileTypes: true })).filter((e) => !isPrivatePath(e.name))
     const items = entries
       .sort((a, b) => Number(b.isDirectory()) - Number(a.isDirectory()) || a.name.localeCompare(b.name))
       .map((e) => `<li><a href="${encodeURIComponent(e.name)}${e.isDirectory() ? '/' : ''}">${escape(e.name)}${e.isDirectory() ? '/' : ''}</a></li>`)

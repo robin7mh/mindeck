@@ -13,3 +13,5 @@ coverage/
 test-results/
 playwright-report/
 release/
+# docker-compose.yml mounts it as the core's /projects by default
+/projects/

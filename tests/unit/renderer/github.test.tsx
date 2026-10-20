@@ -176,9 +176,24 @@ describe('GitHub store', () => {
     expect(await g().comment('again')).toBe(false)
     useGitHub.setState({ busy: undefined })
 
-    github({ 'github:checkout': () => fail('local changes would be overwritten'), 'github:view': () => fail('not found'), 'github:fileDiff': () => fail('HTTP 502'), 'github:list': () => [] })
+    github({
+      'github:checkout': () => fail('local changes would be overwritten'),
+      'github:merge': () => fail('not mergeable'),
+      'github:comment': () => fail('locked'),
+      'github:review': () => fail('locked'),
+      'github:view': () => fail('not found'),
+      'github:fileDiff': () => fail('HTTP 502'),
+      'github:list': () => []
+    })
     await g().checkout()
     expect(g().error).toBe('local changes would be overwritten')
+    refresh.mockClear()
+    await g().merge('merge', false)
+    expect(g().error).toBe('not mergeable')
+    expect(refresh).not.toHaveBeenCalled() // nothing merged: nothing to reload
+    expect(await g().comment('x')).toBe(false)
+    expect(g().error).toBe('locked')
+    expect(await g().review('approve', '')).toBe(false)
     await g().openFile('x')
     expect(g().error).toBe('HTTP 502')
     await g().open(99)

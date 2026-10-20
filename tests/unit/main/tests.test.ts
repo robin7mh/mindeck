@@ -1,11 +1,23 @@
 import { EventEmitter } from 'node:events'
-import { chmod, mkdir, realpath, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, realpath, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { tempDir, tick } from './helpers'
 import { detect, goResults, goTests, jestResults, jsTests, junitResults, localBin, pyTests, TestService, tidyMessage, type TestOptions } from '../../../electron/main/services/tests/TestService'
 import type { TestRunState } from '@shared/types/tests'
+
+// Pass-through fs that refuses to list one folder — the same everywhere, root (CI containers, where a
+// chmod 000 changes nothing) or not.
+const fsDeny = vi.hoisted(() => ({ dir: undefined as string | undefined }))
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const real = await importOriginal<typeof import('node:fs/promises')>()
+  const readdir = ((path: string, ...rest: never[]) =>
+    path === fsDeny.dir
+      ? Promise.reject(Object.assign(new Error(`EACCES: permission denied, scandir '${path}'`), { code: 'EACCES' }))
+      : (real.readdir as (...a: unknown[]) => unknown)(path, ...rest)) as typeof real.readdir
+  return { ...real, readdir }
+})
 
 describe('finding tests without running them', () => {
   it('JS / TS: describe / it / test, nested, with .only / .skip / .each and template names', async () => {
@@ -296,7 +308,7 @@ describe('TestService', () => {
     await writeFile(join(root, 'go.mod'), 'module m\n')
     await mkdir(join(root, 'locked'))
     await writeFile(join(root, 'locked/a_test.go'), 'func TestA(t *testing.T) {}\n')
-    await chmod(join(root, 'locked'), 0o000)
+    fsDeny.dir = join(root, 'locked')
     await mkdir(join(root, 'many'))
     await Promise.all(Array.from({ length: 3001 }, (_, i) => writeFile(join(root, 'many', `t${i}_test.go`), `func TestN${i}(t *testing.T) {}\n`)))
     try {
@@ -304,7 +316,7 @@ describe('TestService', () => {
       expect(items).toHaveLength(3000)
       expect(items.every((i) => i.path.startsWith('many/'))).toBe(true)
     } finally {
-      await chmod(join(root, 'locked'), 0o755)
+      fsDeny.dir = undefined
     }
   })
 
@@ -454,8 +466,11 @@ describe('TestService', () => {
       ['go', 'test', '-json', '-run', '^(TestC)$', './pkg'],
       ['go', 'test', '-json', '-run', '^TestC$', './pkg']
     ])
-    // A go.mod without a module line still reads.
+    // A go.mod without a module line still reads; one that can't be read is no module either.
     await writeFile(join(root, 'go.mod'), '')
+    expect((await h.service.run('p', 'pkg::TestC')).results['pkg::TestC'].state).toBe('skipped')
+    await rm(join(root, 'go.mod'))
+    await mkdir(join(root, 'go.mod'))
     expect((await h.service.run('p', 'pkg::TestC')).results['pkg::TestC'].state).toBe('skipped')
   })
 

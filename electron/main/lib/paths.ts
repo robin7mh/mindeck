@@ -69,7 +69,7 @@ export function mindeckPaths(home = homedir()): MindeckPaths {
  * One-time copy of the old hidden data folder (Electron's userData, before
  * 2026-10-02 — only the desktop app ever had one) into ~/Mindeck/data. Copy, not
  * move: the original stays untouched as a backup (with a note pointing to the
- * new place). Runs before the DB is opened, so the SQLite files are at rest.
+ * new place). Runs before any service opens its files, so they are at rest.
  */
 export function migrateLegacyData(paths: MindeckPaths, legacyDataDir: string): boolean {
   if (existsSync(paths.dataDir) || !existsSync(legacyDataDir)) return false

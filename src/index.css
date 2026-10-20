@@ -1,12 +1,34 @@
-@import '@fontsource-variable/inter';
-@import '@fontsource/jetbrains-mono/400.css';
-@import '@fontsource/jetbrains-mono/500.css';
-@import '@fontsource/jetbrains-mono/700.css';
-@import '@xterm/xterm/css/xterm.css';
+@import 'tailwindcss' source(none);
 
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@config '../tailwind.config.ts';
+
+/*
+ * Tailwind CSS v3's defaults that v4 changed, so the app looks and behaves
+ * the same: borders without a color are gray-200 (the base layer below makes
+ * them --border-hud), placeholders gray-400, buttons show the pointer, and
+ * `hover:` also applies on touch screens (v4 limits it to devices that can hover).
+ */
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-gray-200, currentcolor);
+  }
+
+  input::placeholder,
+  textarea::placeholder {
+    color: var(--color-gray-400);
+  }
+
+  button:not(:disabled),
+  [role='button']:not(:disabled) {
+    cursor: pointer;
+  }
+}
+
+@custom-variant hover (&:hover);
 
 /*
  * SINGLE SOURCE OF TRUTH for color.
@@ -147,7 +169,7 @@
 
   /* The one panel treatment. Reused everywhere to keep borders consistent. */
   .panel {
-    @apply relative rounded-lg border bg-panel/70 backdrop-blur-sm;
+    @apply relative rounded-lg border bg-panel/70 backdrop-blur-xs;
     border-color: rgb(var(--border-hud) / 0.7);
   }
 
@@ -218,10 +240,10 @@
     @apply text-text-muted;
   }
   .md-prose .md-tag {
-    @apply rounded border border-hud/60 bg-elevated/50 px-1 py-px font-mono text-[11px] text-purple;
+    @apply rounded-sm border border-hud/60 bg-elevated/50 px-1 py-px font-mono text-[11px] text-purple;
   }
   .md-prose code {
-    @apply rounded bg-elevated/70 px-1 py-px font-mono text-[12px] text-text-primary;
+    @apply rounded-sm bg-elevated/70 px-1 py-px font-mono text-[12px] text-text-primary;
   }
   .md-prose pre {
     @apply overflow-x-auto rounded-md border border-hud/50 bg-surface/60 p-3;
@@ -247,128 +269,136 @@
   }
   /* Pictures in read mode come from the vault (filled in by the note view). */
   .md-prose img {
-    @apply my-2 max-w-full rounded border border-hud/40;
+    @apply my-2 max-w-full rounded-sm border border-hud/40;
   }
   .md-prose img.missing {
     @apply border-dashed px-2 py-1 font-mono text-[11px] text-text-muted;
   }
 
-  /* The note editor (CodeMirror): Live Preview looks like the read mode. */
-  .note-editor .cm-editor {
-    @apply h-full bg-transparent font-sans text-[14px] leading-[1.75] text-text-primary;
-  }
-  .note-editor .cm-editor.cm-focused {
-    outline: none;
-  }
-  .note-editor .cm-scroller {
-    @apply px-5 py-4 font-sans;
-  }
-  .note-editor .cm-content {
-    @apply mx-auto max-w-3xl caret-cyan;
-  }
-  .note-editor .cm-cursor {
-    border-left-color: rgb(var(--accent-cyan));
-  }
-  .note-editor .cm-selectionBackground,
-  .note-editor .cm-focused .cm-selectionBackground {
-    background: rgb(var(--accent-cyan) / 0.18) !important;
-  }
-  .note-editor .cm-placeholder {
-    @apply whitespace-pre-wrap text-text-muted/60;
-  }
-  .note-editor .cm-md-h1 {
-    @apply text-[22px] font-semibold text-text-primary;
-  }
-  .note-editor .cm-md-h2 {
-    @apply text-[18px] font-semibold text-text-primary;
-  }
-  .note-editor .cm-md-h3 {
-    @apply text-[15px] font-semibold text-text-primary;
-  }
-  .note-editor .cm-md-h4,
-  .note-editor .cm-md-h5,
-  .note-editor .cm-md-h6 {
-    @apply font-semibold text-text-primary;
-  }
-  .note-editor .cm-md-strong,
-  .note-editor .cm-md-hl-strong {
-    @apply font-semibold text-text-primary;
-  }
-  .note-editor .cm-md-em,
-  .note-editor .cm-md-hl-em {
-    @apply italic;
-  }
-  .note-editor .cm-md-strike,
-  .note-editor .cm-md-hl-strike,
-  .note-editor .cm-md-done {
-    @apply text-text-muted line-through;
-  }
-  .note-editor .cm-md-code,
-  .note-editor .cm-md-hl-code {
-    @apply rounded bg-elevated/70 px-1 font-mono text-[12.5px];
-  }
-  .note-editor .cm-md-codeblock {
-    @apply bg-surface/60 font-mono text-[12.5px] text-text-secondary;
-  }
-  .note-editor .cm-md-codeblock .cm-md-code {
-    @apply bg-transparent p-0;
-  }
-  .note-editor .cm-md-codeinfo {
-    @apply font-mono text-[10.5px] uppercase text-text-muted;
-  }
-  .note-editor .cm-md-quote {
-    @apply border-l-2 border-cyan/40 pl-3 text-text-muted;
-  }
-  .note-editor .cm-md-link,
-  .note-editor .cm-md-wikilink,
-  .note-editor .cm-md-hl-link {
-    @apply cursor-pointer text-cyan;
-  }
-  .note-editor .cm-md-link[data-live],
-  .note-editor .cm-md-wikilink[data-live] {
-    @apply underline decoration-cyan/30 underline-offset-2 hover:decoration-cyan;
-  }
-  .note-editor .cm-md-unresolved {
-    @apply text-text-muted;
-  }
-  .note-editor .cm-md-tag,
-  .note-editor .cm-md-hl-tag {
-    @apply rounded border border-hud/60 bg-elevated/50 px-1 font-mono text-[12px] text-purple;
-  }
-  .note-editor .cm-md-hl-heading {
-    @apply font-semibold text-text-primary;
-  }
-  .note-editor .cm-md-hl-quote {
-    @apply text-text-muted;
-  }
-  .note-editor .cm-md-hl-mark {
-    @apply text-text-muted;
-  }
-  .note-editor .cm-md-bullet {
-    @apply mr-1 inline-block w-3 text-text-muted;
-  }
-  .note-editor .cm-md-checkbox {
-    @apply mr-1.5 cursor-pointer align-middle accent-cyan;
-  }
-  .note-editor .cm-md-hr {
-    @apply inline-block w-full border-t border-hud/60 align-middle;
-  }
-  .note-editor .cm-md-embed img {
-    @apply my-1 inline-block max-w-full rounded border border-hud/40;
-  }
-  .note-editor .cm-md-embed-missing {
-    @apply rounded border border-dashed border-hud/60 px-1.5 font-mono text-[11px] text-text-muted;
-  }
-  .note-editor .cm-tooltip-autocomplete {
-    @apply rounded-md border border-hud/60 bg-panel font-sans text-[12.5px] shadow-lg;
-  }
-  .note-editor .cm-tooltip-autocomplete ul li[aria-selected] {
-    @apply bg-cyan/10 text-text-primary;
-  }
-  .note-editor .cm-completionDetail {
-    @apply ml-2 font-mono text-[10px] not-italic text-text-muted;
-  }
+}
 
+/*
+ * The note editor (CodeMirror) — outside any layer: CodeMirror's own styles
+ * are unlayered and would beat every cascade layer.
+ */
+/* Live Preview looks like the read mode. */
+.note-editor .cm-editor {
+  @apply h-full bg-transparent font-sans text-[14px] leading-[1.75] text-text-primary;
+}
+.note-editor .cm-editor.cm-focused {
+  outline: none;
+}
+.note-editor .cm-scroller {
+  @apply px-5 py-4 font-sans;
+}
+.note-editor .cm-content {
+  @apply mx-auto max-w-3xl caret-cyan;
+}
+.note-editor .cm-cursor {
+  border-left-color: rgb(var(--accent-cyan));
+}
+.note-editor .cm-selectionBackground,
+.note-editor .cm-focused .cm-selectionBackground {
+  background: rgb(var(--accent-cyan) / 0.18) !important;
+}
+.note-editor .cm-placeholder {
+  @apply whitespace-pre-wrap text-text-muted/60;
+}
+.note-editor .cm-md-h1 {
+  @apply text-[22px] font-semibold text-text-primary;
+}
+.note-editor .cm-md-h2 {
+  @apply text-[18px] font-semibold text-text-primary;
+}
+.note-editor .cm-md-h3 {
+  @apply text-[15px] font-semibold text-text-primary;
+}
+.note-editor .cm-md-h4,
+.note-editor .cm-md-h5,
+.note-editor .cm-md-h6 {
+  @apply font-semibold text-text-primary;
+}
+.note-editor .cm-md-strong,
+.note-editor .cm-md-hl-strong {
+  @apply font-semibold text-text-primary;
+}
+.note-editor .cm-md-em,
+.note-editor .cm-md-hl-em {
+  @apply italic;
+}
+.note-editor .cm-md-strike,
+.note-editor .cm-md-hl-strike,
+.note-editor .cm-md-done {
+  @apply text-text-muted line-through;
+}
+.note-editor .cm-md-code,
+.note-editor .cm-md-hl-code {
+  @apply rounded-sm bg-elevated/70 px-1 font-mono text-[12.5px];
+}
+.note-editor .cm-md-codeblock {
+  @apply bg-surface/60 font-mono text-[12.5px] text-text-secondary;
+}
+.note-editor .cm-md-codeblock .cm-md-code {
+  @apply bg-transparent p-0;
+}
+.note-editor .cm-md-codeinfo {
+  @apply font-mono text-[10.5px] uppercase text-text-muted;
+}
+.note-editor .cm-md-quote {
+  @apply border-l-2 border-cyan/40 pl-3 text-text-muted;
+}
+.note-editor .cm-md-link,
+.note-editor .cm-md-wikilink,
+.note-editor .cm-md-hl-link {
+  @apply cursor-pointer text-cyan;
+}
+.note-editor .cm-md-link[data-live],
+.note-editor .cm-md-wikilink[data-live] {
+  @apply underline decoration-cyan/30 underline-offset-2 hover:decoration-cyan;
+}
+.note-editor .cm-md-unresolved {
+  @apply text-text-muted;
+}
+.note-editor .cm-md-tag,
+.note-editor .cm-md-hl-tag {
+  @apply rounded-sm border border-hud/60 bg-elevated/50 px-1 font-mono text-[12px] text-purple;
+}
+.note-editor .cm-md-hl-heading {
+  @apply font-semibold text-text-primary;
+}
+.note-editor .cm-md-hl-quote {
+  @apply text-text-muted;
+}
+.note-editor .cm-md-hl-mark {
+  @apply text-text-muted;
+}
+.note-editor .cm-md-bullet {
+  @apply mr-1 inline-block w-3 text-text-muted;
+}
+.note-editor .cm-md-checkbox {
+  @apply mr-1.5 cursor-pointer align-middle accent-cyan;
+}
+.note-editor .cm-md-hr {
+  @apply inline-block w-full border-t border-hud/60 align-middle;
+}
+.note-editor .cm-md-embed img {
+  @apply my-1 inline-block max-w-full rounded-sm border border-hud/40;
+}
+.note-editor .cm-md-embed-missing {
+  @apply rounded-sm border border-dashed border-hud/60 px-1.5 font-mono text-[11px] text-text-muted;
+}
+.note-editor .cm-tooltip-autocomplete {
+  @apply rounded-md border border-hud/60 bg-panel font-sans text-[12.5px] shadow-lg;
+}
+.note-editor .cm-tooltip-autocomplete ul li[aria-selected] {
+  @apply bg-cyan/10 text-text-primary;
+}
+.note-editor .cm-completionDetail {
+  @apply ml-2 font-mono text-[10px] not-italic text-text-muted;
+}
+
+
+@layer components {
   /* Assistant replies: the same prose, a little denser. */
   .chat-prose {
     @apply text-[13.5px] leading-[1.65];
@@ -383,20 +413,18 @@
     margin-bottom: 0;
   }
   .md-prose img {
-    @apply max-w-full rounded;
+    @apply max-w-full rounded-sm;
   }
 }
 
-@layer utilities {
-  .drag-region {
-    -webkit-app-region: drag;
-  }
-  .no-drag {
-    -webkit-app-region: no-drag;
-  }
-  .text-glow-cyan {
-    text-shadow: 0 0 10px rgb(var(--accent-cyan) / calc(0.45 * var(--glow)));
-  }
+@utility drag-region {
+  -webkit-app-region: drag;
+}
+@utility no-drag {
+  -webkit-app-region: no-drag;
+}
+@utility text-glow-cyan {
+  text-shadow: 0 0 10px rgb(var(--accent-cyan) / calc(0.45 * var(--glow)));
 }
 
 /* Respect users who prefer reduced motion — kill decorative loops. */

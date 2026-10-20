@@ -50,6 +50,22 @@ describe('projects store', () => {
     expect(useProjects.getState().selectedId).toBeUndefined()
     list = [project('a'), project('b')]
     await s.load()
+    // GitHub Desktop can't be looked up: no button for it, the projects still load
+    const lookup = installBridge({ 'projects:list': () => list, 'projects:githubDesktop': () => Promise.reject(new Error('mdfind failed')) })
+    await s.load()
+    expect(useProjects.getState()).toMatchObject({ githubDesktop: null, projects: [expect.objectContaining({ id: 'a' }), expect.objectContaining({ id: 'b' })] })
+    expect(lookup.invoke).toHaveBeenCalledWith('projects:githubDesktop', undefined)
+    installBridge({
+      'projects:list': () => list,
+      'projects:pickFolder': () => ({ path: '/new' }),
+      'projects:add': () => project('c'),
+      'projects:refresh': ({ id }: { id: string }) => ({ ...project(id), name: 'fresh' }),
+      'projects:remove': () => undefined,
+      'projects:openInEditor': () => undefined,
+      'projects:openInGitHubDesktop': () => undefined,
+      'projects:githubDesktop': () => 'GitHub Desktop',
+      'projects:pull': ({ id }: { id: string }) => ({ ...project(id), name: 'pulled' })
+    })
 
     await s.addViaPicker()
     expect(useProjects.getState()).toMatchObject({ selectedId: 'c' })
@@ -502,6 +518,48 @@ describe('memory store', () => {
     await m().save() // nothing to do
     useMemory.setState({ note: undefined })
     await m().save() // no note
+  })
+
+  it('a save answered after another note was opened never puts that note\'s text into the saved one', async () => {
+    const { files, routes } = vault(['A.md', 'B.md'])
+    await m().open('A.md')
+    // The autosave of A is in flight; its read-back answers late (HTTP in the web UI is unordered).
+    let release: () => void = () => {}
+    const read = routes['memory:read']
+    let slow = true
+    routes['memory:read'] = (p: never) => {
+      if (slow && (p as { path: string }).path === 'A.md') {
+        slow = false
+        return new Promise((r) => (release = () => r(read(p))))
+      }
+      return read(p)
+    }
+    m().setDraft('A edited')
+    const saving = m().save()
+    await m().open('B.md')
+    expect(m()).toMatchObject({ note: { path: 'B.md' }, draft: 'body' })
+    release()
+    await saving
+    // Still B with B's text — and nothing unsaved that the next autosave would write into A.
+    expect(m()).toMatchObject({ note: { path: 'B.md' }, draft: 'body', saving: false })
+    await m().save()
+    expect(files.get('A.md')!.body).toBe('A edited')
+    expect(files.get('B.md')!.body).toBe('body')
+  })
+
+  it('two quick opens: the note clicked last wins, not the one answered last', async () => {
+    const { routes } = vault(['A.md', 'B.md'])
+    const read = routes['memory:read']
+    const answers: (() => void)[] = []
+    routes['memory:read'] = (p: never) => new Promise((r) => answers.push(() => r(read(p))))
+    const a = m().open('A.md')
+    const b = m().open('B.md')
+    await settle()
+    answers[1]() // B first
+    await b
+    answers[0]() // A late
+    await a
+    expect(m().note!.path).toBe('B.md')
   })
 
   it('reports save failures and opening errors', async () => {

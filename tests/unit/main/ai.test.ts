@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type Server } from 'node:http'
-import { chmod, mkdir, readFile, readdir, stat, symlink, writeFile } from 'node:fs/promises'
+import { chmod, lstat, mkdir, readFile, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import Anthropic from '@anthropic-ai/sdk'
@@ -184,6 +184,8 @@ describe('AnthropicProvider', () => {
       expect(await refused(403, { code: 'license_required', message: 'Lizenz fehlt.' })).toMatchObject({ code: 'license-required' })
       expect(await refused(503, { code: 'ai_unavailable', message: 'Pause.' })).toMatchObject({ code: 'ai-unavailable' })
       expect(await refused(429, { code: 'ai_rate_limited', message: 'Busy.' })).toMatchObject({ code: 'rate-limited' })
+      expect(await refused(403, { code: 'ai_blocked', message: 'Switched off.' })).toEqual({ code: 'ai-blocked', message: 'Switched off.' })
+      expect(await refused(400, { code: 'ai_unsupported_content', message: 'Document by URL.', details: { path: 'messages.0.content.1' } })).toMatchObject({ code: 'ai-unsupported-content' })
       expect(await refused(401, { code: 'session_invalid', message: 'Session expired or revoked' })).toMatchObject({ code: 'session_expired' })
       expect(await refused(400, { code: 'invalid_input' })).toEqual({ code: 'ai-error', message: 'invalid_input' })
       // Not the cloud's words (a proxy in between): as for Anthropic itself.
@@ -256,9 +258,11 @@ describe('AnthropicProvider', () => {
       { type: 'server_tool_use', id: 's3', name: 'web_fetch', input: {} } as never,
       { type: 'web_fetch_tool_result', tool_use_id: 's3', content: {} } as never,
       { type: 'server_tool_use', id: 's4', name: 'web_search', input: {} } as never,
-      { type: 'web_search_tool_result', tool_use_id: 's4', content: [{}] } as never
+      { type: 'web_search_tool_result', tool_use_id: 's4', content: [{}] } as never,
+      { type: 'thinking', thinking: 'hm', signature: 'sig' } as never
     ])
     expect(fetched.serverTools.map((s) => s.output)).toEqual(['https://x', 'error: url_not_allowed', 'fetched', ' — '])
+    expect(fetched.blocks.at(-1)).toEqual({ type: 'opaque', data: { type: 'thinking', thinking: 'hm', signature: 'sig' } }) // kept for replay
   })
 })
 
@@ -290,6 +294,68 @@ describe('SecretStore', () => {
     expect(await new SecretStore(join(dir, 'bad.json')).get('k')).toBeUndefined()
     await writeFile(join(dir, 'null.json'), '{"secrets":null}')
     expect(await new SecretStore(join(dir, 'null.json')).get('k')).toBeUndefined()
+  })
+
+  it('changes at the same time all land (none builds on a stale copy); a failed one doesn’t stop the next', async () => {
+    const dir = await tempDir()
+    const file = join(dir, 'secrets.json')
+    const store = new SecretStore(file)
+    // e.g. the cloud heartbeat saves its certificate while the user saves a Mongo connection and a key
+    await Promise.all([store.set('offline', 'cert'), store.set('mongo', 'uri'), store.set('ai', 'sk-1')])
+    expect(JSON.parse(await readFile(file, 'utf8')).secrets).toEqual({ offline: 'cert', mongo: 'uri', ai: 'sk-1' })
+    await Promise.all([store.set('mongo', null), store.set('remote', 'tok')])
+    const again = new SecretStore(file)
+    expect(await Promise.all(['offline', 'mongo', 'ai', 'remote'].map((k) => again.get(k)))).toEqual(['cert', undefined, 'sk-1', 'tok'])
+
+    const blocked = new SecretStore(join(dir, 'missing-dir', 'x', 'secrets.json'))
+    await writeFile(join(dir, 'missing-dir'), '') // a file where its folder would be: writing fails
+    await expect(blocked.set('a', '1')).rejects.toThrow()
+    await rm(join(dir, 'missing-dir'))
+    await blocked.set('b', '2')
+    expect(await blocked.get('b')).toBe('2')
+    expect(await blocked.get('a')).toBeUndefined()
+  })
+
+  it('values encrypted by a keychain that is gone stay locked: never handed out, never mixed with plain ones', async () => {
+    const dir = await tempDir()
+    const file = join(dir, 'secrets.json')
+    const cipher = { encrypt: (p: string) => `enc:${p}`, decrypt: (s: string) => s.replace(/^enc:/, '') }
+    await new SecretStore(file, cipher).set('ai', 'sk-1')
+    const before = await readFile(file, 'utf8')
+    // e.g. Linux with the keyring locked: no cipher this time
+    const locked = new SecretStore(file)
+    expect(await locked.get('ai')).toBeUndefined() // not the cipher text as if it were the key
+    await expect(locked.set('mongo', 'uri')).rejects.toMatchObject({ code: 'secrets-locked' })
+    expect(await readFile(file, 'utf8')).toBe(before)
+    // The keychain is back: all there.
+    expect(await new SecretStore(file, cipher).get('ai')).toBe('sk-1')
+  })
+
+  it('plain values from a start without keychain are read, and encrypted with the next save', async () => {
+    const dir = await tempDir()
+    const file = join(dir, 'secrets.json')
+    const cipher = { encrypt: (p: string) => `enc:${p}`, decrypt: (s: string) => s.replace(/^enc:/, '') }
+    await new SecretStore(file).set('ai', 'sk-1')
+    const store = new SecretStore(file, cipher)
+    expect(await store.get('ai')).toBe('sk-1')
+    await store.set('mongo', 'uri')
+    expect(JSON.parse(await readFile(file, 'utf8'))).toMatchObject({ encrypted: true, secrets: { ai: 'enc:sk-1', mongo: 'enc:uri' } })
+    expect(await new SecretStore(file, cipher).get('ai')).toBe('sk-1')
+    // A file from before the flag: encrypted when this machine encrypts.
+    await writeFile(join(dir, 'old.json'), JSON.stringify({ secrets: { ai: 'enc:sk-2' } }))
+    expect(await new SecretStore(join(dir, 'old.json'), cipher).get('ai')).toBe('sk-2')
+    expect(await new SecretStore(join(dir, 'old.json')).get('ai')).toBe('enc:sk-2')
+  })
+
+  it.skipIf(process.platform === 'win32')('a file that can’t be read right now: nothing to give, and it is not written over', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const dir = await tempDir()
+    const file = join(dir, 'secrets.json')
+    await symlink(file, file) // every read fails (ELOOP), like EACCES or EIO would
+    const store = new SecretStore(file)
+    expect(await store.get('ai')).toBeUndefined()
+    await expect(store.set('ai', 'sk-1')).rejects.toMatchObject({ code: 'ELOOP' })
+    expect((await lstat(file)).isSymbolicLink()).toBe(true)
   })
 })
 
@@ -521,6 +587,13 @@ describe('built-in tools', () => {
     expect(await run(t, 'project_context', { projectId: 'demo' })).toContain('(scan truncated)')
     await expect(run(t, 'project_context', {})).rejects.toMatchObject({ code: 'no-project' })
     await expect(run(t, 'project_context', { projectId: 'zzz' })).rejects.toThrow('Unknown project: zzz')
+    // An agent (MCP) is pinned to its session's project: another one — by id or name — is unknown to it (BE-SEC-28).
+    const pinned = (input: unknown) => t.find((x) => x.name === 'project_context')!.run(input as never, { projectId: 'p1', onlyProject: true, signal })
+    expect(await pinned({})).toContain('Project demo')
+    expect(await pinned({ projectId: 'demo' })).toContain('Project demo')
+    await expect(pinned({ projectId: 'p2' })).rejects.toThrow('Unknown project: p2')
+    await expect(pinned({ projectId: 'other' })).rejects.toThrow('Unknown project: other')
+    expect(deps.context.get).not.toHaveBeenCalledWith('p2')
 
     expect(await run(t, 'project_list_files', {}, 'p1')).toBe('src/\nbig.txt\nbin.dat\nescape\nREADME.md')
     expect(await run(t, 'project_list_files', { dir: 'src' }, 'p1')).toBe('a.ts')
@@ -537,6 +610,11 @@ describe('built-in tools', () => {
     expect(await run(t, 'project_write_file', { path: 'new/dir/b.ts', content: 'hello', reason: 'r' }, 'p1')).toBe(`Wrote ${join('new', 'dir', 'b.ts')} (5 characters)`)
     expect(await readFile(join(root, 'new', 'dir', 'b.ts'), 'utf8')).toBe('hello')
     expect(await run(t, 'project_write_file', { path: '.', content: '', reason: 'r' }, 'p1').catch((e) => e.code)).toBeDefined()
+    // A dangling link in the project never writes outside it (BE-SEC-02).
+    const elsewhere = await tempDir()
+    await symlink(join(elsewhere, 'autostart.desktop'), join(root, 'setup.md'))
+    await expect(run(t, 'project_write_file', { path: 'setup.md', content: 'x', reason: 'r' }, 'p1')).rejects.toMatchObject({ code: 'outside-project' })
+    expect(await readdir(elsewhere)).toEqual([])
     expect(summary(t, 'project_write_file', { path: 'a', content: 'xyz' })).toBe('Write 3 characters to a')
     expect(summary(t, 'project_read_file', { path: 'a' })).toBe('Read the file a')
     expect(summary(t, 'project_list_files', {})).toBe('List the files in the project root')

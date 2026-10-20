@@ -11,7 +11,7 @@ import { usePalette } from '../store'
 
 /** A key hint in the footer. */
 function Kbd({ children }: { children: ReactNode }) {
-  return <kbd className="rounded border border-hud/70 bg-surface/70 px-1 font-mono text-[10px] text-text-secondary">{children}</kbd>
+  return <kbd className="rounded-sm border border-hud/70 bg-surface/70 px-1 font-mono text-[10px] text-text-secondary">{children}</kbd>
 }
 
 /**
@@ -37,7 +37,8 @@ export function CommandPalette() {
     return subscribeCommands(() => setTick((n) => n + 1))
   }, [])
 
-  // `tick`: what the sources list has changed.
+  // `tick`: what the sources list has changed — allCommands reads them, so it counts as a dependency here.
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- tick stands for the command sources outside React
   const commands = useMemo(() => allCommands(t), [t, tick])
   const { recent, results } = useMemo(() => searchCommands(commands, query, recentIds), [commands, query, recentIds])
   const items = [...recent, ...results]
@@ -88,7 +89,7 @@ export function CommandPalette() {
   )
 
   return (
-    <div className="fixed inset-0 z-[80] flex justify-center bg-void/50 px-4 pt-[12vh] backdrop-blur-[2px]" onMouseDown={cancel}>
+    <div className="fixed inset-0 z-80 flex justify-center bg-void/50 px-4 pt-[12vh] backdrop-blur-[2px]" onMouseDown={cancel}>
       <div
         role="dialog"
         aria-modal="true"
@@ -122,7 +123,7 @@ export function CommandPalette() {
                 run(items[current])
               }
             }}
-            className="min-w-0 flex-1 bg-transparent py-3 font-sans text-[14px] text-text-primary outline-none placeholder:text-text-muted"
+            className="min-w-0 flex-1 bg-transparent py-3 font-sans text-[14px] text-text-primary outline-hidden placeholder:text-text-muted"
           />
         </div>
         <ul ref={list} id="palette-list" role="listbox" aria-label={c.title} className="min-h-0 flex-1 overflow-y-auto p-1">

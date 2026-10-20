@@ -87,6 +87,8 @@ describe('RemoteScope · calls', () => {
       { id: 'e3', conversationId: 'c2' },
       { id: 'e4' }
     ])
+    // Running Live Servers name their project and folder: only the device's own (BE-SEC-07).
+    expect(await s.result('liveServer:status', [{ projectId: 'private', root: 'site' }, { projectId: 'shared', root: '' }])).toEqual([{ projectId: 'shared', root: '' }])
     const other = [{ id: 'p', path: '/x' }]
     expect(await s.result('projects:list', other)).toBe(other)
   })

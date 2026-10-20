@@ -307,11 +307,17 @@ export class TerminalService {
     }
     const session: Session = { info, pty, pending: '', buffer: '', end: 0, osc: '' }
     pty.onData((data) => this.push(session, data))
+    // node-pty can call this from its native exit callback: an exception thrown here would
+    // not reach Node's handlers but end the whole app (std::terminate) — log it instead.
     pty.onExit(({ exitCode }) => {
-      this.flush(session)
-      this.sessions.delete(info.id)
-      this.opts.emit('terminal:exit', { id: info.id, exitCode })
-      req.onExit?.(exitCode)
+      try {
+        this.flush(session)
+        this.sessions.delete(info.id)
+        this.opts.emit('terminal:exit', { id: info.id, exitCode })
+        req.onExit?.(exitCode)
+      } catch (err) {
+        console.error(`[terminal] after ${info.id} ended:`, err)
+      }
     })
     this.sessions.set(info.id, session)
     return info

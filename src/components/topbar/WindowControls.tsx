@@ -17,7 +17,7 @@ export function WindowControls() {
   }, [])
 
   const btn =
-    'no-drag flex h-7 w-9 items-center justify-center rounded text-text-muted transition-colors hover:text-text-primary'
+    'no-drag flex h-7 w-9 items-center justify-center rounded-sm text-text-muted transition-colors hover:text-text-primary'
 
   return (
     <div className="no-drag flex items-center gap-0.5">

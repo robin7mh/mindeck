@@ -6,7 +6,7 @@ import { useT } from '@/lib/i18n'
 /** Colorful (one hue per folder) vs. single color, plus the accent swatches. */
 export function GraphStyleControl({ style, onChange }: { style: GraphStyle; onChange: (s: GraphStyle) => void }) {
   const t = useT()
-  const seg = 'flex items-center gap-1.5 rounded px-2 py-1 font-sans text-[11px] font-medium transition-colors'
+  const seg = 'flex items-center gap-1.5 rounded-sm px-2 py-1 font-sans text-[11px] font-medium transition-colors'
   return (
     <div className="flex items-center gap-2">
       <div className="flex rounded-md border border-hud/60 bg-surface/50 p-0.5">

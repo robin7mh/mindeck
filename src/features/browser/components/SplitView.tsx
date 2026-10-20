@@ -1,9 +1,10 @@
-import { useState, type DragEvent, type KeyboardEvent, type PointerEvent, type RefObject } from 'react'
+import { useState, type DragEvent, type KeyboardEvent, type RefObject } from 'react'
 import { ArrowLeftRight, Columns2, Rows2, X } from 'lucide-react'
 import type { BrowserSplit } from '@shared/types/browser'
 import { cn } from '@/lib/cn'
 import { useT } from '@/lib/i18n'
 import { useOverlay } from '@/lib/overlay'
+import { usePointerDrag, type DragPoint } from '@/lib/pointerDrag'
 import { useActiveSplit, useBrowser } from '../store'
 import { TAB_DRAG } from '../tabs'
 
@@ -23,22 +24,21 @@ export function splitRatio(offset: number, total: number): number {
 /** The divider between the two pages: drag it, double-click it for half and half, or focus it and use the arrow keys. */
 export function SplitDivider({ split, area, onRatio }: { split: BrowserSplit; area: RefObject<HTMLDivElement>; onRatio: (ratio: number | null) => void }) {
   const t = useT()
-  const [dragging, setDragging] = useState(false)
-  // The pages are native views: while dragging over them, their pictures stand in.
-  useOverlay(dragging)
   const vertical = !!split.vertical
   const commit = (ratio: number) => void useBrowser.getState().run('browser:splitUpdate', { id: split.id, ratio })
-  const fromPointer = (e: PointerEvent) => {
+  const fromPointer = (at: DragPoint) => {
     const box = area.current!.getBoundingClientRect()
-    return vertical ? splitRatio(e.clientY - box.top, box.height) : splitRatio(e.clientX - box.left, box.width)
+    return vertical ? splitRatio(at.clientY - box.top, box.height) : splitRatio(at.clientX - box.left, box.width)
   }
-  const end = (e: PointerEvent<HTMLDivElement>) => {
-    if (!dragging) return
-    e.currentTarget.releasePointerCapture?.(e.pointerId)
-    setDragging(false)
-    onRatio(null)
-    commit(fromPointer(e))
-  }
+  const { dragging, onPointerDown } = usePointerDrag({
+    onMove: (at) => onRatio(fromPointer(at)),
+    onEnd: (at) => {
+      onRatio(null)
+      commit(fromPointer(at))
+    }
+  })
+  // The pages are native views: while dragging over them, their pictures stand in.
+  useOverlay(dragging)
   const onKeyDown = (e: KeyboardEvent) => {
     const keys: Record<string, number> = vertical ? { ArrowUp: -STEP, ArrowDown: STEP } : { ArrowLeft: -STEP, ArrowRight: STEP }
     if (e.key in keys) commit(split.ratio + keys[e.key])
@@ -58,17 +58,10 @@ export function SplitDivider({ split, area, onRatio }: { split: BrowserSplit; ar
         aria-valuenow={Math.round(split.ratio * 100)}
         title={t.browserTabs.divider}
         style={vertical ? { height: DIVIDER } : { width: DIVIDER }}
-        onPointerDown={(e) => {
-          e.preventDefault()
-          e.currentTarget.setPointerCapture?.(e.pointerId)
-          setDragging(true)
-        }}
-        onPointerMove={(e) => dragging && onRatio(fromPointer(e))}
-        onPointerUp={end}
-        onPointerCancel={end}
+        onPointerDown={onPointerDown}
         onDoubleClick={() => commit(0.5)}
         onKeyDown={onKeyDown}
-        className={cn('group flex shrink-0 items-center justify-center outline-none', vertical ? 'cursor-row-resize' : 'cursor-col-resize')}
+        className={cn('group flex shrink-0 items-center justify-center outline-hidden', vertical ? 'cursor-row-resize' : 'cursor-col-resize')}
       >
         <span className={cn('rounded-full transition-colors group-hover:bg-cyan/70 group-focus-visible:bg-cyan', dragging ? 'bg-cyan' : 'bg-hud/80', vertical ? 'h-0.5 w-10' : 'h-10 w-0.5')} />
       </div>
@@ -142,7 +135,7 @@ export function SplitTools({ tabId }: { tabId: string }) {
     )
   }
   return (
-    <div role="group" aria-label={t.browserTabs.splitView} className="flex shrink-0 items-center rounded-md border border-cyan/30 bg-cyan/[0.05]">
+    <div role="group" aria-label={t.browserTabs.splitView} className="flex shrink-0 items-center rounded-md border border-cyan/30 bg-cyan/5">
       <button type="button" aria-label={t.browserTabs.swapSides} title={t.browserTabs.swapSides} onClick={() => void run('browser:splitUpdate', { id: split.id, swap: true })} className={tool}>
         <ArrowLeftRight size={14} className={split.vertical ? 'rotate-90' : ''} />
       </button>

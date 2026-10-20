@@ -2,18 +2,18 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!-- The main app (hardened runtime, required for notarization). V8 needs JIT (MAP_JIT: allow-jit — not
      allow-unsigned-executable-memory, which Electron no longer needs).
-     disable-library-validation: the same binary runs the project's own ESLint and Prettier with their
-     plugins as Node (the lint worker, ELECTRON_RUN_AS_NODE) — and those may load native addons from the
-     project (unrs-resolver, @swc/core …) that are not signed with Mindeck's team ID. Mindeck's own native
-     modules (node-pty, ssh2, cpu-features) are signed with the app and would not need it.
+     No disable-library-validation: the main binary only loads Mindeck's own native modules (node-pty, ssh2,
+     cpu-features), signed with the app. The project's ESLint / Prettier plugins and their native addons run
+     in utility processes in the plugin helper (entitlements.mac.plugin.plist, build/sign.cjs) — and the
+     binary can't be started as Node to load anything else (the RunAsNode fuse is off).
      Camera and microphone: websites in Mindeck's browser may ask for them (video calls, recordings) —
-     macOS still asks the user once, with the texts in electron-builder.yml (extendInfo).
-     The helper apps (renderer, GPU, plugin) get entitlements.mac.inherit.plist: JIT only. -->
+     the browser's permission handler decides per site, and macOS still asks the user once, with the texts in
+     electron-builder.yml (extendInfo).
+     The other helper apps (renderer, GPU, the utility processes without project code) get
+     entitlements.mac.inherit.plist: JIT only. -->
 <plist version="1.0">
   <dict>
     <key>com.apple.security.cs.allow-jit</key>
-    <true/>
-    <key>com.apple.security.cs.disable-library-validation</key>
     <true/>
     <key>com.apple.security.device.camera</key>
     <true/>
