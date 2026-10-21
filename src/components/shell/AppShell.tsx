@@ -3,10 +3,11 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { TerminalSquare } from 'lucide-react'
 import { GlowBackground } from './GlowBackground'
 import { Panel } from '@/components/ui/Panel'
-import { isDesktop } from '@shared/ipc/client'
+import { isDesktop, onEvent } from '@shared/ipc/client'
 import { TopStatusBar } from '@/components/topbar/TopStatusBar'
 import { SideNavigation } from '@/components/nav/SideNavigation'
 import { TerminalView } from '@/features/terminal/components/TerminalView'
+import { useTerminals } from '@/features/terminal/store'
 import { EditorView } from '@/features/editor/components/EditorView'
 import { Dashboard } from '@/features/dashboard/components/Dashboard'
 import { ProjectsView } from '@/features/projects/components/ProjectsView'
@@ -108,10 +109,16 @@ export function AppShell() {
       // ⇧⌘P in a page: the command palette (the same key closes it).
       palette: () => usePalette.getState().toggle('commands')
     })
+    // An agent started a command in a terminal: that terminal comes on screen, beside the chat (which keeps the focus).
+    const offTerminal = onEvent('terminal:reveal', ({ info }) => {
+      void useTerminals.getState().reveal(info)
+      useWorkspace.getState().reveal('terminal')
+    })
     return () => {
       offAssistant()
       offAgents()
       offBrowser()
+      offTerminal()
     }
   }, [])
   // The chat open in the Agents module shows its approvals inline — no toast for it.

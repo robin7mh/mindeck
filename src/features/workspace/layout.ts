@@ -258,6 +258,20 @@ export function openBeside(layout: Layout, module: ModuleId): Layout {
   return place(grown, grown.focus, module)
 }
 
+/**
+ * Show `module` without taking the focus away (an agent's command in a
+ * terminal, beside its chat): as it is when on screen, else beside the
+ * focused pane (see `openBeside`) — with four panes, in the last of the others.
+ */
+export function reveal(layout: Layout, module: ModuleId): Layout {
+  if (visiblePanes(layout).some((p) => p.module === module)) return layout
+  const base: Layout = layout.maximized ? { ...layout, maximized: undefined } : layout
+  if (base.panes.some((p) => p.module === module)) return base
+  const keep = base.focus
+  if (base.panes.length >= SLOTS.grid) return { ...place(base, [...base.panes].reverse().find((p) => p.id !== keep)!.id, module), focus: keep }
+  return { ...openBeside(base, module), focus: keep }
+}
+
 /** Close a pane (the last one stays); the focus goes to its neighbour. */
 export function close(layout: Layout, paneId: string = layout.focus): Layout {
   const index = layout.panes.findIndex((p) => p.id === paneId)

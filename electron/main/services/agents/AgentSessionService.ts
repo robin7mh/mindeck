@@ -490,7 +490,14 @@ export class AgentSessionService {
   handleMcp(id: string, body: unknown): Promise<unknown> {
     const l = this.require(id)
     return this.deps.mcp(
-      { sessionId: id, agentId: l.session.kind, projectId: l.session.projectId, agent: AGENT_NAMES[l.session.kind], onCall: (tool, input) => this.usedNote(l, tool, input) },
+      {
+        sessionId: id,
+        agentId: l.session.kind,
+        projectId: l.session.projectId,
+        agent: AGENT_NAMES[l.session.kind],
+        cwd: l.session.cwd,
+        onCall: (tool, input) => this.usedNote(l, tool, input)
+      },
       body
     )
   }

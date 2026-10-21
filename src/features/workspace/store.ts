@@ -26,6 +26,8 @@ interface WorkspaceState {
   dropBeside(paneId: string, side: L.Side, module: ModuleId): void
   /** Open a module next to the focused pane ("Open in a new pane"). */
   openBeside(module: ModuleId): void
+  /** Put a module on screen, the focus staying where it is (e.g. a terminal an agent started a command in). */
+  reveal(module: ModuleId): void
   close(paneId?: string): void
   setPreset(preset: L.Preset): void
   resize(key: keyof L.Sizes, value: number): void
@@ -115,6 +117,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
     split: () => edit(L.split),
     dropBeside: (paneId, side, module) => edit((l) => L.dropBeside(l, paneId, side, module)),
     openBeside: (module) => edit((l) => L.openBeside(l, module)),
+    reveal: (module) => edit((l) => L.reveal(l, module)),
     close: (paneId) => edit((l) => L.close(l, paneId)),
     setPreset: (preset) => edit((l) => L.setPreset(l, preset)),
     resize: (key, value) => edit((l) => L.resize(l, key, value)),

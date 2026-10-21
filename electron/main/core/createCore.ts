@@ -44,6 +44,7 @@ import { registerFinderIpc } from '../../ipc/finder.ipc'
 import { BrowserService } from '../services/browser/BrowserService'
 import { FinderService, spotlightFor } from '../services/finder/FinderService'
 import { BROWSER_TOOLS, browserTools } from '../services/ai/tools/browser'
+import { TERMINAL_TOOLS, terminalTools } from '../services/ai/tools/terminal'
 import { EventHub } from './EventHub'
 import { ProjectRegistry } from '../services/projects/registry'
 import { ProjectService } from '../services/projects/ProjectService'
@@ -327,7 +328,7 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
     onRequest: (req) => hub.publish('permission:request', req),
     onResolved: (res) => hub.publish('permission:resolved', res)
   })
-  const tools = new ToolRegistry([...builtinTools({ vault, projects, context, system }), ...browserTools(browser)])
+  const tools = new ToolRegistry([...builtinTools({ vault, projects, context, system }), ...browserTools(browser), ...terminalTools({ terminal, projects })])
   const assistant = new AssistantService({
     ai,
     store: conversations,
@@ -374,9 +375,9 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
     events,
     projects: (id) => projects.list().find((p) => p.id === id),
     publish: (channel, payload) => hub.publish(channel, payload),
-    // The browser lives in the desktop window: only a desktop core offers it to agents.
-    // Its write tools pass Mindeck's own approval, whatever the agent's settings.
-    mcp: createMcpHandler(tools, opts.version, opts.mode === 'desktop' ? [...MEMORY_TOOLS, ...BROWSER_TOOLS] : MEMORY_TOOLS, permissions),
+    // The browser lives in the desktop window, and so do the terminals an agent's commands show up in:
+    // only a desktop core offers them to agents. Their write tools pass Mindeck's own approval, whatever the agent's settings.
+    mcp: createMcpHandler(tools, opts.version, opts.mode === 'desktop' ? [...MEMORY_TOOLS, ...BROWSER_TOOLS, ...TERMINAL_TOOLS] : MEMORY_TOOLS, permissions),
     journal: vaultJournal(vault),
     notify: opts.notify,
     push: (notice) => push.send(notice),

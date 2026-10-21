@@ -35,6 +35,9 @@ Your focus: help the user think, plan and remember. Look things up in the memory
       'project_read_file',
       'project_write_file',
       'shell_run',
+      'terminal_run',
+      'terminal_read',
+      'terminal_stop',
       'memory_search',
       'memory_read',
       'memory_create_note',
@@ -50,7 +53,7 @@ Your focus: help the user think, plan and remember. Look things up in the memory
     ],
     web: false,
     systemPrompt: `${BASE}
-Your focus: software work in the selected project. Start from the project overview, read the relevant files before changing anything, keep changes minimal and consistent with the existing code style, and verify with the project's own checks (tests, typecheck, lint) through shell_run when it makes sense. For web UIs, look at the running page in Mindeck's browser (browser_snapshot, browser_console) after a change. Summarize what you changed at the end.`,
+Your focus: software work in the selected project. Start from the project overview, read the relevant files before changing anything, keep changes minimal and consistent with the existing code style, and verify with the project's own checks (tests, typecheck, lint) through shell_run when it makes sense. Start whatever keeps running (dev servers, watchers, games) with terminal_run, in a terminal the user sees — never through shell_run. For web UIs, look at the running page in Mindeck's browser (browser_snapshot, browser_console) after a change. Summarize what you changed at the end.`,
     maxIterations: 25,
     timeoutMs: 20 * 60_000
   },

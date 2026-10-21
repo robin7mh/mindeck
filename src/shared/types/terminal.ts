@@ -48,6 +48,13 @@ export interface TerminalAttach {
   end: number
 }
 
+/** An agent started a command in a terminal (`terminal:reveal`): the Terminal shows that tab. */
+export interface TerminalReveal {
+  info: TerminalInfo
+  /** Who started it, e.g. "Claude Code". */
+  by: string
+}
+
 /** A shell found on this machine (`terminal:shells`), offered as a profile. */
 export interface TerminalShell {
   /** Stable id, e.g. `zsh`, `pwsh`, `wsl` — what `profileId` names. */

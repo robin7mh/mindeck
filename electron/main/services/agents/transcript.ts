@@ -40,7 +40,9 @@ const WRITE = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit'])
 
 /** read: looks only · write: changes files · execute: runs things (asked every time). */
 export function toolRisk(name: string): ToolRisk {
-  if (READ.has(name) || /^mcp__mindeck__(memory_search|memory_read|memory_list|project_context|browser_(tabs|snapshot|read|screenshot|console))$/.test(name)) return 'read'
+  if (READ.has(name) || /^mcp__mindeck__(memory_search|memory_read|memory_list|project_context|browser_(tabs|snapshot|read|screenshot|console)|terminal_read)$/.test(name)) return 'read'
+  // Starting a command in a Mindeck terminal is running one, like the agent's own shell.
+  if (name === 'mcp__mindeck__terminal_run') return 'execute'
   if (WRITE.has(name) || /^mcp__mindeck__/.test(name)) return 'write'
   return 'execute'
 }
@@ -92,6 +94,7 @@ const TITLES: Record<string, string> = {
 export function toolTitle(name: string): string {
   const mcp = /^mcp__([^_]+(?:_[^_]+)*)__(.+)$/.exec(name)
   if (mcp && mcp[1] === 'mindeck' && mcp[2].startsWith('browser_')) return `Mindeck browser · ${mcp[2].slice(8)}`
+  if (mcp && mcp[1] === 'mindeck' && mcp[2].startsWith('terminal_')) return `Mindeck terminal · ${mcp[2].slice(9)}`
   if (mcp) return mcp[1] === 'mindeck' ? `Mindeck memory · ${mcp[2].replace(/_/g, ' ')}` : `${mcp[1]} · ${mcp[2].replace(/_/g, ' ')}`
   return TITLES[name] ?? name
 }

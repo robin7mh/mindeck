@@ -10,6 +10,8 @@ export interface ToolContext {
   signal: AbortSignal
   /** Who calls (an agent's name, e.g. "Claude Code") — shown where the tool acts, like a browser tab. */
   agent?: string
+  /** The folder the agent works in (its session's: a worktree when isolated) — where its commands start. */
+  cwd?: string
 }
 
 /** A result block for clients that take more than text (MCP: screenshots as images). */

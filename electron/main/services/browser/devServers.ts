@@ -3,6 +3,9 @@ import type { DevServer } from '@shared/types/browser'
 /** Colors, cursor moves and OSC sequences (titles, hyperlinks) — what a terminal draws, not what it says. */
 const ANSI = /\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-Z\\-_]/g
 
+/** Terminal output without colors, cursor moves and OSC sequences. */
+export const stripAnsi = (text: string) => text.replace(ANSI, '')
+
 /** A local address with a port, the way dev servers announce themselves ("Local: http://localhost:5173/"). */
 const LOCAL_URL = /\bhttps?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\]|[a-z0-9-]+\.localhost):\d{2,5}(?:\/[^\s'"`<>)\]]*)?/gi
 

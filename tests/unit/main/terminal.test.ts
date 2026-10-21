@@ -14,6 +14,8 @@ type FakePty = {
   kill: ReturnType<typeof vi.fn>
   data: (d: string) => void
   exit: (code: number) => void
+  /** This PTY's foreground program, over `h.foreground` ('' = the shell itself). */
+  fg?: string
 }
 const h = vi.hoisted(() => ({
   ptys: [] as FakePty[],
@@ -41,6 +43,7 @@ vi.mock('node-pty', () => ({
     return {
       ...pty,
       get process() {
+        if (pty.fg !== undefined) return pty.fg || file.split('/').pop()
         if (h.foreground instanceof Error) throw h.foreground
         return h.foreground || file.split('/').pop()
       },
@@ -327,6 +330,68 @@ describe('TerminalService.spawnProgram (agents)', () => {
     await expect(svc.spawnProgram({ title: 'x', cwd: join(projectDir, 'nope'), command: { file: 'claude', args: [] } })).rejects.toMatchObject({
       code: 'not-found'
     })
+  })
+})
+
+describe('TerminalService.runVisible (an agent starts something the user sees)', () => {
+  const run = (command = 'npm run dev', cwd = projectDir) => svc.runVisible({ command, cwd, projectId: 'p1', by: 'Claude Code' })
+
+  it('without a free terminal: a new one in the folder, the command typed, the terminal revealed', async () => {
+    const res = await run()
+    expect(res).toMatchObject({ opened: true, start: 0, info: { title: 'demo', cwd: projectDir, projectId: 'p1' } })
+    expect(pty().opts.cwd).toBe(projectDir)
+    expect(pty().write).toHaveBeenCalledWith('npm run dev\r')
+    expect(emit).toHaveBeenCalledWith('terminal:reveal', { info: res.info, by: 'Claude Code' })
+    expect(svc.list().map((t) => t.id)).toEqual([res.info.id]) // a tab of the Terminal like any other
+  })
+
+  it('takes the first terminal waiting at its prompt: changes to the folder, clears what was half typed', async () => {
+    const busy = await svc.create({})
+    h.ptys[0].fg = 'node'
+    const free = await svc.create({})
+    await svc.create({}) // free as well, but later
+    pty().data('earlier output')
+    h.ptys[1].data('before')
+    const res = await run('npm start', join(projectDir, 'it\'s'))
+    expect(res).toMatchObject({ opened: false, info: { id: free.id }, start: 6 })
+    expect(h.ptys[1].write).toHaveBeenCalledWith(`\x05\x15cd '${join(projectDir, "it'\\''s")}' && npm start\r`)
+    expect(h.ptys[0].write).not.toHaveBeenCalled()
+    expect(h.ptys).toHaveLength(3)
+    expect(busy.id).not.toBe(free.id)
+
+    // What it printed since: the scrollback from `start` on.
+    h.ptys[1].data(' — ready on http://localhost:3000')
+    expect(svc.output(free.id, res.start)).toBe(' — ready on http://localhost:3000')
+    expect(svc.output(free.id)).toBe('before — ready on http://localhost:3000')
+    expect(() => svc.output('nope')).toThrow('Terminal session has ended')
+  })
+
+  it('never types into a busy shell, an agent, or a profile that runs a program of its own', async () => {
+    svc = service({ terminal: { profiles: [{ id: 'custom-top', name: 'top', command: 'htop', args: [], env: {} }] } })
+    await svc.create({ profileId: 'custom-top' }) // htop is its "shell": never free
+    await svc.spawnProgram({ title: 'Claude Code', cwd: projectDir, command: { file: 'claude', args: [] } })
+    await svc.create({})
+    pty().fg = 'vite'
+    const res = await run()
+    expect(res.opened).toBe(true)
+    expect(h.ptys).toHaveLength(4)
+    for (const p of h.ptys.slice(0, 3)) expect(p.write).not.toHaveBeenCalled()
+  })
+
+  it('PowerShell changes folder its own way; on Windows a new terminal (a busy one cannot be told)', async () => {
+    svc = service({ terminal: { profiles: [{ id: 'custom-pwsh', name: 'PowerShell', command: '/usr/local/bin/pwsh', args: [], env: {} }] } })
+    await svc.create({ profileId: 'custom-pwsh' })
+    await run('npm run dev', "/a/it's")
+    expect(pty().write).toHaveBeenCalledWith("Set-Location -LiteralPath '/a/it''s'; npm run dev\r")
+
+    setPlatform('win32')
+    expect((await run()).opened).toBe(true)
+    expect(pty().write).toHaveBeenCalledWith('npm run dev\r')
+  })
+
+  it('takes one command line', async () => {
+    for (const command of ['', '  ', 'a\nb', 'a\rb']) await expect(run(command)).rejects.toMatchObject({ code: 'bad-input' })
+    expect(h.ptys).toHaveLength(0)
   })
 })
 

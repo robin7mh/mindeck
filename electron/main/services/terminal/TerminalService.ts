@@ -12,6 +12,7 @@ import {
   type TerminalData,
   type TerminalExit,
   type TerminalInfo,
+  type TerminalReveal,
   type TerminalSettings,
   type TerminalShell,
   type TerminalSnapshot
@@ -40,6 +41,7 @@ type Emit = {
   (channel: 'terminal:data', payload: TerminalData): void
   (channel: 'terminal:exit', payload: TerminalExit): void
   (channel: 'terminal:info', payload: TerminalInfo): void
+  (channel: 'terminal:reveal', payload: TerminalReveal): void
 }
 
 function coded(code: string, message: string): Error {
@@ -108,6 +110,15 @@ function cwdLabel(cwd: string): string {
 }
 
 const isDir = (path: string) => stat(path).then((s) => s.isDirectory(), () => false)
+
+/** Shells a command can be typed into (a profile's own program, e.g. htop, is none). */
+const typable = (shell: string) => !!shellKind(shell) || /^(sh|dash|ksh)$/.test(shell)
+
+/** The command as typed into a shell that may be in another folder: change there first. */
+function inFolder(shell: string, cwd: string, command: string): string {
+  if (shellKind(shell) === 'pwsh') return `Set-Location -LiteralPath '${cwd.replace(/'/g, "''")}'; ${command}`
+  return `cd ${shellQuote(cwd)} && ${command}`
+}
 
 /**
  * Interactive shells for the user (phase PT). Distinct from agent command
@@ -321,6 +332,37 @@ export class TerminalService {
     })
     this.sessions.set(info.id, session)
     return info
+  }
+
+  /**
+   * Core-internal (an agent's terminal_run): run a command where the user sees
+   * it — in the first terminal waiting at its prompt (after changing to `cwd`),
+   * else in a new one there — and show that terminal (`terminal:reveal`).
+   * `start` is the terminal's output length before the command: what it printed
+   * since is `output(id, start)`.
+   */
+  async runVisible(req: { command: string; cwd: string; projectId?: string; by: string }): Promise<{ info: TerminalInfo; opened: boolean; start: number }> {
+    if (!req.command.trim() || req.command.length > MAX_WRITE || /[\r\n]/.test(req.command)) throw coded('bad-input', 'One command line, please')
+    // Windows reports no foreground program: whether a shell there is free can't be told, so a new one.
+    const free =
+      process.platform === 'win32' ? undefined : [...this.sessions.values()].find((s) => s.info.kind !== 'agent' && typable(s.info.shell) && !this.foreground(s))
+    let session = free
+    if (!session) session = this.require((await this.create({ projectId: req.projectId, cwd: req.cwd })).id)
+    this.flush(session)
+    const start = session.end
+    const { shell } = session.info
+    // A reused shell may sit in another folder, with something half typed at its prompt (cleared first: ^E^U).
+    const line = free ? inFolder(shell, req.cwd, req.command) : req.command
+    session.pty.write(`${free && shellKind(shell) !== 'pwsh' ? '\x05\x15' : ''}${line}\r`)
+    this.opts.emit('terminal:reveal', { info: session.info, by: req.by })
+    return { info: session.info, opened: !free, start }
+  }
+
+  /** What a session printed since `from` (its output length then), as far as the kept output reaches back. */
+  output(id: string, from = 0): string {
+    const s = this.require(id)
+    this.flush(s)
+    return s.buffer.slice(Math.max(0, from - (s.end - s.buffer.length)))
   }
 
   /** The Terminal module's tabs — agent PTYs live in the Agents module — with what runs in them now. */

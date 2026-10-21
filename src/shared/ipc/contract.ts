@@ -23,6 +23,7 @@ import type {
   TerminalData,
   TerminalExit,
   TerminalInfo,
+  TerminalReveal,
   TerminalSettings,
   TerminalShell,
   TerminalSnapshot
@@ -976,6 +977,8 @@ export interface IpcEvents {
   'terminal:exit': TerminalExit
   /** A session's folder changed (the shell reported it): new folder, label and title. */
   'terminal:info': TerminalInfo
+  /** An agent started a command in a terminal: show that terminal (and the Terminal module). */
+  'terminal:reveal': TerminalReveal
   'ai:delta': AiDelta
   'ai:inlineDelta': InlineDelta
   'ai:message': AiMessageUpdate
@@ -1023,6 +1026,7 @@ export const IPC_EVENTS: readonly IpcEvent[] = [
   'terminal:data',
   'terminal:exit',
   'terminal:info',
+  'terminal:reveal',
   'ai:delta',
   'ai:inlineDelta',
   'ai:message',
@@ -1054,7 +1058,7 @@ export const IPC_EVENTS: readonly IpcEvent[] = [
 ]
 
 /** Push events remote clients only receive when remote shells are enabled. */
-export const TERMINAL_EVENTS: readonly IpcEvent[] = ['terminal:data', 'terminal:exit', 'terminal:info', 'debug:session', 'debug:output', 'notebook:event']
+export const TERMINAL_EVENTS: readonly IpcEvent[] = ['terminal:data', 'terminal:exit', 'terminal:info', 'terminal:reveal', 'debug:session', 'debug:output', 'notebook:event']
 
 /** Push events that never leave the desktop window (the browser's tabs are private pages; Remote-SSH windows are the desktop's own). */
 export const DESKTOP_EVENTS: readonly IpcEvent[] = ['browser:state', 'browser:find', 'browser:command', 'browser:reveal', 'browser:bookmarks', 'browser:import', 'finder:progress', 'remote:changed']

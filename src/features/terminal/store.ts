@@ -51,6 +51,8 @@ interface TerminalState {
   close: (id: string) => Promise<void>
   /** Replace an exited tab with a fresh shell in the same place. */
   restart: (id: string) => Promise<void>
+  /** An agent started a command in this shell (`terminal:reveal`): its tab (added if new) is focused and on screen. */
+  reveal: (info: TerminalInfo) => Promise<void>
   /** Focus a tab (the view scrolls it into sight). */
   setActive: (id: string) => void
   /** Switch layout. Never opens shells — the user fills empty panes. */
@@ -191,6 +193,16 @@ function reattach(existing: TerminalInfo[], view: ReturnType<typeof lastView>): 
   return { tabs, layout, activeId }
 }
 
+/** The layouts by how many terminals they show at once; a further one still fits in the grid's scroll. */
+const GROWS: TerminalLayout[] = ['single', 'cols', 'grid']
+
+/** A layout that shows the `n`th terminal on the first screen: the one on screen, else the next one large enough. */
+export function layoutFor(layout: TerminalLayout, n: number): TerminalLayout {
+  const cells = (l: TerminalLayout) => LAYOUT_GRID[l].cols * LAYOUT_GRID[l].rows
+  if (n <= cells(layout)) return layout
+  return GROWS.find((l) => cells(l) >= n) ?? 'grid'
+}
+
 /** Puts a new shell's tab in place (after `after`, else at the end) and focuses it. */
 function add(info: TerminalInfo, after?: string) {
   useTerminals.setState((s) => {
@@ -222,8 +234,12 @@ export const useTerminals = create<TerminalState>((set, get) => ({
       await useTerminalSettings.getState().load()
       try {
         const existing = await ipc('terminal:list')
-        if (existing.length) set(reattach(existing, view))
-        else if (!(await restore()) && openHome) await get().open()
+        // A reload: the shells this window showed are still running. Else shells running already were
+        // started for an agent before the Terminal was opened: they join the last run's tabs.
+        if (existing.length && view) set(reattach(existing, view))
+        else if (await restore()) set((s) => ({ tabs: [...s.tabs, ...existing] }))
+        else if (existing.length) set(reattach(existing, view))
+        else if (openHome) await get().open()
       } catch (err) {
         set({ error: errorMessage(err) })
       }
@@ -305,6 +321,14 @@ export const useTerminals = create<TerminalState>((set, get) => ({
     } catch (err) {
       set({ error: errorMessage(err) })
     }
+  },
+
+  reveal: async (info) => {
+    await get().init(false)
+    set((s) => {
+      const tabs = s.tabs.some((t) => t.id === info.id) ? s.tabs : [...s.tabs, info]
+      return { tabs, activeId: info.id, layout: layoutFor(s.layout, tabs.findIndex((t) => t.id === info.id) + 1), error: undefined }
+    })
   },
 
   setActive: (id) => set({ activeId: id }),

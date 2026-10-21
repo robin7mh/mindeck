@@ -4,7 +4,7 @@ import { fail, installBridge, settle } from './bridge'
 
 import { useProjects, useSelectedProject } from '@/features/projects/store'
 import { useContextStore, useProjectContextEntry } from '@/features/context/store'
-import { LAYOUT_GRID, tabLabels, useTerminals } from '@/features/terminal/store'
+import { LAYOUT_GRID, layoutFor, tabLabels, useTerminals } from '@/features/terminal/store'
 import { folderColors, localNow, pictureName, useMemory } from '@/features/memory/store'
 import { useSystemMetrics } from '@/features/system/useSystemMetrics'
 import type { Note, NoteMeta } from '@shared/types/memory'
@@ -211,6 +211,35 @@ describe('terminal store', () => {
     useTerminals.getState().setLayout('cols')
     expect(useTerminals.getState().layout).toBe('cols')
     sessionStorage.removeItem('mindeck.terminal.view')
+  })
+
+  it('a terminal an agent started a command in: it joins the last run’s tabs, gets the focus and comes on screen', async () => {
+    const restored = [info({ cwd: '/h/a' }), info({ cwd: '/h/b' })]
+    const agents = info({ cwd: '/code/game' })
+    const queue = [...restored]
+    installBridge({
+      'terminal:list': () => [agents], // started before the Terminal was ever opened
+      'terminal:restore': () => ({ layout: 'single', active: 0, tabs: restored.map((t) => ({ title: '~', cwd: t.cwd, scrollback: '' })), savedAt: '2026-01-01T00:00:00Z' }),
+      'terminal:create': () => queue.shift()
+    })
+    sessionStorage.removeItem('mindeck.terminal.view') // a fresh window, not a reload
+    await useTerminals.getState().reveal(agents)
+    expect(useTerminals.getState().tabs.map((t) => t.id)).toEqual([restored[0].id, restored[1].id, agents.id])
+    expect(useTerminals.getState()).toMatchObject({ activeId: agents.id, layout: 'grid' }) // the third one shows on the first screen
+
+    // Terminal open already: a new shell is added (once), a known one only focused; the layout grows no more than needed.
+    const another = info()
+    await useTerminals.getState().reveal(another)
+    await useTerminals.getState().reveal(another)
+    expect(useTerminals.getState().tabs.map((t) => t.id)).toEqual([restored[0].id, restored[1].id, agents.id, another.id])
+    useTerminals.setState({ layout: 'single' })
+    await useTerminals.getState().reveal(restored[1])
+    expect(useTerminals.getState()).toMatchObject({ activeId: restored[1].id, layout: 'cols' })
+    await useTerminals.getState().reveal(restored[0])
+    expect(useTerminals.getState().layout).toBe('cols')
+    expect(layoutFor('rows', 2)).toBe('rows')
+    expect(layoutFor('rows', 3)).toBe('grid')
+    expect(layoutFor('cols', 7)).toBe('grid') // beyond four: the grid scrolls to it
   })
 
   it('a shell opened while the last run’s tabs are still coming back joins them instead of being replaced', async () => {

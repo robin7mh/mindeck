@@ -270,6 +270,26 @@ describe('opening beside a pane', () => {
     expect(L.openBeside(maximized, 'agents')).toMatchObject({ focus: 'p1', maximized: undefined })
     expect(modules(L.openBeside(maximized, 'editor'))).toEqual(['agents', 'editor', 'browser'])
   })
+
+  it('reveals a module without taking the focus: beside the focused pane, else in the last other one', () => {
+    const beside = L.reveal(single, 'terminal')
+    expect(beside).toMatchObject({ preset: 'columns', focus: 'p1' })
+    expect(modules(beside)).toEqual(['agents', 'terminal'])
+    const columns = L.makeLayout('columns', ['agents', 'browser'])
+    expect(L.reveal(columns, 'browser')).toBe(columns) // on screen: nothing moves, the focus stays
+    const three = L.reveal(columns, 'terminal')
+    expect(three).toMatchObject({ preset: 'main', focus: 'p1' })
+    expect(modules(three)).toEqual(['agents', 'terminal', 'browser'])
+    // Four panes: the last one that has no focus shows it.
+    const grid = L.makeLayout('grid', ['agents', 'browser', 'editor', 'files'])
+    expect(L.reveal(grid, 'terminal')).toMatchObject({ focus: 'p1' })
+    expect(modules(L.reveal(grid, 'terminal'))).toEqual(['agents', 'browser', 'editor', 'terminal'])
+    expect(modules(L.reveal(L.focus(grid, 'p4'), 'terminal'))).toEqual(['agents', 'browser', 'terminal', 'files'])
+    // A maximized pane steps back so the other one is seen; the focus stays.
+    const maximized = L.toggleMaximize(L.makeLayout('columns', ['agents', 'terminal']), 'p1')
+    expect(L.reveal(maximized, 'terminal')).toMatchObject({ focus: 'p1', maximized: undefined })
+    expect(L.reveal(maximized, 'agents')).toBe(maximized)
+  })
 })
 
 describe('workspace keys', () => {
