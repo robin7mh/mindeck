@@ -21,7 +21,6 @@ interface ProjectsState {
   pull: (id: string) => Promise<string | undefined>
   /** Trust a project (its own tools may run); resolves to the error message, or undefined when it worked. */
   trust: (id: string) => Promise<string | undefined>
-  openEditor: (id: string) => Promise<void>
   openInGitHubDesktop: (id: string) => Promise<void>
   select: (id: string) => void
 }
@@ -123,15 +122,6 @@ export const useProjects = create<ProjectsState>((set, get) => ({
       return undefined
     } catch (err) {
       return errorMessage(err)
-    }
-  },
-
-  openEditor: async (id) => {
-    set({ error: undefined })
-    try {
-      await ipc('projects:openInEditor', { id })
-    } catch (err) {
-      set({ error: errorMessage(err) })
     }
   },
 

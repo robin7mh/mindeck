@@ -81,7 +81,6 @@ describe('projects store', () => {
     expect(useProjects.getState().selectedId).toBe('a')
     await s.remove('c') // not selected → selection kept
     expect(useProjects.getState().selectedId).toBe('a')
-    await s.openEditor('a')
     await s.openInGitHubDesktop('a')
     expect(useProjects.getState().error).toBeUndefined()
   })
@@ -93,7 +92,7 @@ describe('projects store', () => {
 
     installBridge(
       Object.fromEntries(
-        ['projects:list', 'projects:pickFolder', 'projects:remove', 'projects:refresh', 'projects:pull', 'projects:openInEditor', 'projects:openInGitHubDesktop'].map(
+        ['projects:list', 'projects:pickFolder', 'projects:remove', 'projects:refresh', 'projects:pull', 'projects:openInGitHubDesktop'].map(
           (ch) => [ch, () => fail(`${ch} failed`)]
         )
       )
@@ -105,7 +104,6 @@ describe('projects store', () => {
       [() => s.remove('x'), 'projects:remove'],
       [() => s.refresh('x'), 'projects:refresh'],
       [() => s.pull('x'), 'projects:pull'],
-      [() => s.openEditor('x'), 'projects:openInEditor'],
       [() => s.openInGitHubDesktop('x'), 'projects:openInGitHubDesktop']
     ] as const) {
       await run()

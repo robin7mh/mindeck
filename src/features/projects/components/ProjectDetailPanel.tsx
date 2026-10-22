@@ -6,7 +6,6 @@ import {
   GitCommitHorizontal,
   ArrowUp,
   ArrowDown,
-  Code2,
   RefreshCw,
   Trash2,
   FileText,
@@ -37,7 +36,7 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
 
 export function ProjectDetailPanel({ project, onNavigate }: { project: Project; onNavigate: (module: ModuleId) => void }) {
   const t = useT()
-  const { refresh, pull, remove, openEditor, openInGitHubDesktop, githubDesktop, busyId } = useProjects()
+  const { refresh, pull, remove, openInGitHubDesktop, githubDesktop, busyId } = useProjects()
   const busy = busyId === project.id
   const g = project.git
   const s = project.stack
@@ -158,8 +157,6 @@ export function ProjectDetailPanel({ project, onNavigate }: { project: Project; 
 
       {/* actions */}
       <div className="flex flex-wrap gap-2 border-t border-hud/50 px-4 py-3">
-        {/* Opening apps on the host only makes sense in the desktop window. */}
-        {desktop && <ActionButton icon={Code2} label="VS Code" onClick={() => openEditor(project.id)} />}
         {shells && <ProjectTerminalMenu projectId={project.id} onShow={() => onNavigate('terminal')} />}
         {repo && <ActionButton icon={repo.Icon} label={repo.label} title={t.projects.openRepo(g!.webUrl!)} href={g!.webUrl} />}
         {desktop && githubDesktop && g?.isRepo && (
