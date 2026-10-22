@@ -131,12 +131,14 @@ test('browser: bookmark (⌘D), history page, tab search, private tab, shield, s
       ['Members only', false]
     ])
 
-    // a restart brings the tabs back — each with its back/forward list
+    // a restart starts with a new tab; ⌘⇧T brings the pages back — each with its back/forward list
     const again = (await restart()).page
     await again.getByTitle('Browser', { exact: true }).click()
-    await expect(again.getByRole('tab', { name: /Second page/ })).toBeVisible()
-    await expect(again.getByRole('tab', { name: /Members only/ })).toBeVisible()
+    await expect(again.getByRole('tab')).toHaveCount(1)
+    await expect(again.getByRole('tab', { name: /Second page|Members only/ })).toHaveCount(0)
     await expect(again.getByRole('alert').filter({ hasText: 'quit unexpectedly' })).toHaveCount(0) // a clean quit
+    for (let i = 0; i < 2; i++) await again.evaluate(() => window.mindeck!.invoke('browser:reopen'))
+    await expect(again.getByRole('tab', { name: /Members only/ })).toBeVisible()
     await again.getByRole('tab', { name: /Second page/ }).click()
     const back = again.getByRole('button', { name: 'Back', exact: true })
     await expect(back).toBeEnabled()

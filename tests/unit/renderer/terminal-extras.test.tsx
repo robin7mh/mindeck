@@ -430,6 +430,7 @@ describe('terminal store: restore, split, follow, save', () => {
     const a = info({ projectId: 'p1', profileId: 'zsh' })
     installBridge({ 'terminal:list': () => [a, info()], 'terminal:persist': persist })
     await useTerminals.getState().init()
+    useTerminalSettings.setState({ settings: { ...DEFAULT_TERMINAL_SETTINGS, restoreTabs: true } }) // asked for in Settings
     await saveNow() // what earlier tests left pending
     persist.mockClear()
     serializers.set(a.id, () => 'x'.repeat(SAVED_SCROLLBACK + 5))
@@ -451,7 +452,7 @@ describe('terminal store: restore, split, follow, save', () => {
     expect(persist).toHaveBeenCalledTimes(3)
 
     // restoring switched off: nothing is sent
-    useTerminalSettings.setState({ settings: { ...DEFAULT_TERMINAL_SETTINGS, restore: false } })
+    useTerminalSettings.setState({ settings: { ...DEFAULT_TERMINAL_SETTINGS, restoreTabs: false } })
     await saveNow()
     expect(persist).toHaveBeenCalledTimes(3)
     expect(snapshot().active).toBe(1)

@@ -65,7 +65,7 @@ describe('Settings → Terminal', () => {
       ['Blinking cursor', 'cursorBlink', false],
       ['Copy on select', 'copyOnSelect', true],
       ['GPU rendering', 'gpu', false],
-      ['Restore terminals', 'restore', false],
+      ['Restore terminals', 'restoreTabs', true],
       ['Shell integration', 'shellIntegration', false]
     ] as const) {
       fireEvent.click(screen.getByRole('switch', { name }))

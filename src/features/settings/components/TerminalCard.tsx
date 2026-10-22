@@ -165,7 +165,7 @@ export function TerminalCard() {
         <Toggle label={s.cursorBlink} checked={settings.cursorBlink} onChange={(cursorBlink) => set({ cursorBlink })} />
         <Toggle label={s.copyOnSelect} hint={s.copyOnSelectHint} checked={settings.copyOnSelect} onChange={(copyOnSelect) => set({ copyOnSelect })} />
         <Toggle label={s.gpu} hint={s.gpuHint} checked={settings.gpu} onChange={(gpu) => set({ gpu })} />
-        <Toggle label={s.restore} hint={s.restoreHint} checked={settings.restore} onChange={(restore) => set({ restore })} />
+        <Toggle label={s.restore} hint={s.restoreHint} checked={settings.restoreTabs} onChange={(restoreTabs) => set({ restoreTabs })} />
         <Toggle label={s.shellIntegration} hint={s.shellIntegrationHint} checked={settings.shellIntegration} onChange={(shellIntegration) => set({ shellIntegration })} />
       </div>
 

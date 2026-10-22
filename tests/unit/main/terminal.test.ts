@@ -408,7 +408,7 @@ describe('shellQuote', () => {
 
 describe('TerminalService settings and profiles', () => {
   it('fills in defaults; configure saves and resizes the kept output', async () => {
-    expect(svc.settings()).toMatchObject({ fontSize: 13, bufferKb: 256, restore: true, shellIntegration: false, profiles: [] })
+    expect(svc.settings()).toMatchObject({ fontSize: 13, bufferKb: 256, restoreTabs: false, shellIntegration: false, profiles: [] })
     const { id } = await svc.create({})
     expect(await svc.configure({ bufferKb: 64, fontSize: 15 })).toMatchObject({ bufferKb: 64, fontSize: 15 })
     expect(svc.settings().fontSize).toBe(15)
@@ -519,7 +519,18 @@ describe('TerminalService saves the tabs for the next start', () => {
     savedAt: '2026-10-15T10:00:00.000Z'
   }
 
-  it('persists and restores; nothing is kept when restoring is off', async () => {
+  it('a clean start by default: nothing restored — a `restore` saved by earlier versions (on by default then) no longer counts', async () => {
+    await svc.persist(snapshot)
+    expect(await svc.restore()).toBeNull()
+    await expect(readFile(join(dataDir, 'terminals.json'))).rejects.toMatchObject({ code: 'ENOENT' })
+    svc = service({ terminal: { restore: true } as never })
+    expect(svc.settings()).not.toHaveProperty('restore')
+    expect(svc.settings().restoreTabs).toBe(false)
+    expect(await svc.restore()).toBeNull()
+  })
+
+  it('persists and restores when asked to; nothing is kept when restoring is off', async () => {
+    svc = service({ terminal: { restoreTabs: true } })
     expect(await svc.restore()).toBeNull() // nothing saved yet
     await svc.persist(snapshot)
     expect(await svc.restore()).toEqual(snapshot)
@@ -550,7 +561,7 @@ describe('TerminalService saves the tabs for the next start', () => {
     await svc.saved()
     await expect(failing).rejects.toThrow()
     await rm(join(dataDir, 'terminals.json'), { recursive: true })
-    svc = service({ terminal: { restore: false } })
+    svc = service({ terminal: { restoreTabs: false } })
     expect(await svc.restore()).toBeNull()
     await svc.persist(snapshot)
     await expect(readFile(join(dataDir, 'terminals.json'))).rejects.toMatchObject({ code: 'ENOENT' })

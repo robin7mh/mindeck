@@ -1404,7 +1404,7 @@ agents: {
     gpu: 'GPU-Rendering',
     gpuHint: 'Zeichnet mit WebGL — fällt von selbst zurück, wenn die Grafikkarte es nicht kann.',
     restore: 'Terminals wiederherstellen',
-    restoreHint: 'Tabs, Layout, Ordner und letzte Ausgabe sind nach einem Neustart wieder da; die Shells starten neu.',
+    restoreHint: 'Tabs, Layout, Ordner und letzte Ausgabe sind nach einem Neustart wieder da; die Shells starten neu. Aus: jeder Start mit einem frischen Terminal in deinem Home-Ordner.',
     shellIntegration: 'Shell-Integration',
     shellIntegrationHint: 'bash, zsh, fish und PowerShell melden Ordner und jeden Befehl — zwischen Befehlen springen, fehlgeschlagene am Rand sehen. Deine Dotfiles bleiben unberührt.',
     defaultProfile: 'Standardprofil',

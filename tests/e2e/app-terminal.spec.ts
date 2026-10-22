@@ -1,8 +1,9 @@
 import { mkdirSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { expect, test } from './fixtures'
 
-test('terminal: find in the output (Ctrl+Shift+F), and after a restart the old output greyed above a new shell in the same folder', async ({ page, home, restart }) => {
+test('terminal: find in the output (Ctrl+Shift+F), and after a restart one clean shell in Home', async ({ page, home, restart }) => {
   const work = join(home, 'work')
   mkdirSync(work)
   await page.getByTitle('Terminal', { exact: true }).click()
@@ -26,13 +27,14 @@ test('terminal: find in the output (Ctrl+Shift+F), and after a restart the old o
   // the tab follows the shell into the folder before Mindeck quits
   await expect(page.getByRole('button', { name: /^Close .*work/ })).toBeVisible()
 
+  // nothing of the last run: one new shell, in Home (the last run's tabs only when asked for in Settings)
   const again = (await restart()).page
   await again.getByTitle('Terminal', { exact: true }).click()
-  const restored = again.locator('.xterm-rows').first()
-  await expect(restored).toContainText('marker-42') // the last run's output…
-  await expect(restored).toContainText(/Restored · /)
-  await expect(restored.locator('span', { hasText: 'marker-42' }).first()).toHaveClass(/xterm-fg-8/) // …greyed
+  const fresh = again.locator('.xterm-rows').first()
+  await expect(again.locator('.xterm-rows')).toHaveCount(1)
   await again.locator('.xterm-helper-textarea').first().focus()
   await again.keyboard.type('echo "now in $PWD"\n')
-  await expect(restored).toContainText(`now in ${work}`) // a new shell, where the old one was
+  await expect(fresh).toContainText(`now in ${homedir()}`)
+  await expect(fresh).not.toContainText('marker-42')
+  await expect(fresh).not.toContainText(/Restored · /)
 })

@@ -128,7 +128,8 @@ describe('BrowserService · private tabs and the agents’ container', () => {
     expect(b.reopen()).toMatchObject({ profile: 'agents' })
     await b.dispose()
     expect(JSON.parse(await readFile(join(dir, 'session.json'), 'utf8')).tabs.at(-1).profile).toBe('agents')
-    const restored = await setup({ session: { tabs: [{ id: 'a', url: 'https://x.dev/', profile: 'agents' }, { id: 'p', url: 'https://y.dev/', profile: 'private' }] } })
+    const restored = await setup({ session: { exit: 'running', tabs: [{ id: 'a', url: 'https://x.dev/', profile: 'agents' }, { id: 'p', url: 'https://y.dev/', profile: 'private' }] } })
+    restored.b.restoreSession(true) // after a crash
     expect(restored.b.state().tabs.map((t) => t.profile)).toEqual(['agents', undefined])
     // an agent's tab closed before the restart reopens in the container too
     const closed = await setup({

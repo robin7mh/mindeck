@@ -108,7 +108,7 @@ export function snapshot(): TerminalSnapshot {
 export async function saveNow(): Promise<void> {
   clearTimeout(saveTimer)
   saveTimer = undefined
-  if (!saving || !useTerminalSettings.getState().settings.restore) return
+  if (!saving || !useTerminalSettings.getState().settings.restoreTabs) return
   await ipc('terminal:persist', snapshot()).catch(() => {})
 }
 

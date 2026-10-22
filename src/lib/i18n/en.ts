@@ -1421,7 +1421,7 @@ agents: {
     gpu: 'GPU rendering',
     gpuHint: 'Draws with WebGL — falls back by itself when the graphics card can’t.',
     restore: 'Restore terminals',
-    restoreHint: 'Tabs, layout, folders and recent output come back after a restart; the shells start fresh.',
+    restoreHint: 'Tabs, layout, folders and recent output come back after a restart; the shells start fresh. Off: every start has one clean terminal in your home folder.',
     shellIntegration: 'Shell integration',
     shellIntegrationHint: 'bash, zsh, fish and PowerShell report their folder and each command — jump between commands, see failed ones at the margin. Your dotfiles stay untouched.',
     defaultProfile: 'Default profile',

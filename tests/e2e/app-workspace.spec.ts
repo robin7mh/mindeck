@@ -93,7 +93,7 @@ test('workspace: two panes side by side with agents, terminal and browser — di
     await expect(again.getByTestId('pane-head-browser')).toBeVisible()
     await expect(again.getByRole('separator', { name: 'Resize the columns' })).toHaveAttribute('aria-valuenow', '35')
     await expect(again.getByRole('button', { name: 'Layout and workspaces' })).toContainText('QA review')
-    await expect(again.getByRole('tab', { name: /Mindeck E2E/ })).toBeVisible()
+    await expect(again.getByRole('tab', { name: /Mindeck E2E/ })).toHaveCount(0) // the browser starts with a new tab
   } finally {
     await site.close()
   }

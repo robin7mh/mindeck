@@ -80,7 +80,7 @@ const terminalSettings = z
     bufferKb: range(TERMINAL_LIMITS.bufferKb).int(),
     copyOnSelect: z.boolean(),
     gpu: z.boolean(),
-    restore: z.boolean(),
+    restoreTabs: z.boolean(),
     shellIntegration: z.boolean(),
     defaultProfile: text(200),
     profiles: z.array(terminalProfile).max(TERMINAL_LIMITS.profiles)

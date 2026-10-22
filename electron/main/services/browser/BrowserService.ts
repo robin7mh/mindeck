@@ -273,10 +273,11 @@ export class BrowserService {
   }
 
   /**
-   * Loads the last session (tabs stay unloaded until shown, with their
-   * back/forward lists), closed tabs, downloads, the history, bookmarks and
-   * per-site choices. A session that ended in a crash is not reopened at once:
-   * its tabs wait for the user to restore them (a page may have caused it).
+   * Loads closed tabs, downloads, the history, bookmarks and per-site choices.
+   * Every start begins with one new tab: the pages of the last session wait
+   * in the closed tabs (⌘⇧T, the last one open first). A session that ended
+   * in a crash is not reopened at once either: its tabs wait for the user to
+   * restore them (a page may have caused it).
    */
   async init(): Promise<void> {
     await Promise.all([this.history.load(), this.bookmarks.load(), this.adblock.init(), this.extensions.init()])
@@ -308,15 +309,18 @@ export class BrowserService {
     }
     tabs = [...tabs.filter((t) => t.pinned), ...tabs.filter((t) => !t.pinned)]
     const activeId = tabs.find((t) => t.id === saved?.activeId)?.id
+    let lastSession: ClosedTab[] = []
     if (saved?.exit === 'running' && tabs.some((t) => t.url)) {
       const ids = new Set(tabs.map((t) => t.id))
       this.restorable = { tabs, activeId, groups: savedGroups(saved.groups), splits: savedSplits(saved.splits, ids) }
     } else {
-      this.tabs = tabs
-      this.arrangement.restore(saved?.groups, saved?.splits)
+      lastSession = tabs
+        .map((t, index) => ({ url: t.url, title: t.title, index, pinned: t.pinned, ...(t.nav ? { nav: t.nav } : {}), ...(t.profile ? { profile: t.profile } : {}) }))
+        .filter((t) => t.url)
+        .reverse()
     }
-    if (!this.tabs.length) this.tabs.push(this.model({ url: '' }))
-    this.activeId = (this.restorable ? undefined : activeId) ?? this.tabs[0].id
+    this.tabs = [this.model({ url: '' })]
+    this.activeId = this.tabs[0].id
     this.closed = (Array.isArray(saved?.closed) ? (saved.closed as Partial<ClosedTab>[]) : [])
       .filter((c) => typeof c?.url === 'string' && c.url && typeof c.index === 'number')
       // An agent's closed tab reopens in the agents' container, never in the user's profile.
@@ -329,7 +333,7 @@ export class BrowserService {
         ...(c.profile === 'agents' ? { profile: 'agents' as const } : {}),
         ...(typeof c.groupId === 'string' ? { groupId: c.groupId } : {})
       }))
-      .slice(0, MAX_CLOSED)
+    this.closed = [...lastSession, ...this.closed].slice(0, MAX_CLOSED)
     this.downloads = (Array.isArray(saved?.downloads) ? saved.downloads : [])
       .map(savedDownload)
       .filter((d): d is BrowserDownload => !!d)

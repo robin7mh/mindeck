@@ -135,10 +135,11 @@ describe('BrowserService · split view', () => {
   })
 
   it('follows the panes the UI reports, moves the focus to the side clicked into, and ends with a closed tab', async () => {
-    // tabs of the last session: they load once on screen
+    // tabs of a session brought back after a crash: they load once on screen
     const { b, host, events } = await setupBrowser({
-      session: { activeId: 'a', tabs: [{ id: 'a', url: 'https://a.dev/', title: 'A' }, { id: 'c', url: 'https://c.dev/', title: 'C' }] }
+      session: { exit: 'running', activeId: 'a', tabs: [{ id: 'a', url: 'https://a.dev/', title: 'A' }, { id: 'c', url: 'https://c.dev/', title: 'C' }] }
     })
+    b.restoreSession(true)
     b.attach(host)
     const [a, c] = b.state().tabs
     const s = b.split(a.id, c.id)
@@ -272,7 +273,7 @@ describe('BrowserService · keys and menus for groups and split view', () => {
 })
 
 describe('BrowserService · groups and splits across restarts', () => {
-  it('keeps groups and splits in the session — never private ones — and brings them back', async () => {
+  it('keeps groups and splits in the session — never private ones — for a crash; a clean start begins anew', async () => {
     const { b, dir } = await setupBrowser()
     const first = b.state().tabs[0]
     const a = b.open({ url: 'https://a.dev/' })
@@ -289,10 +290,10 @@ describe('BrowserService · groups and splits across restarts', () => {
     expect(saved.splits).toEqual([{ id: s.id, tabs: [a.id, first.id], ratio: 0.5 }])
     expect(saved.tabs.find((t: { id: string }) => t.id === c.id).groupId).toBe(g.id)
 
+    // Quit cleanly: one new tab, no groups or splits; the pages wait in the closed tabs.
     const again = await setupBrowser({ dir })
-    expect(again.state().groups).toEqual([{ id: g.id, title: 'Work', color: 'purple', collapsed: false }])
-    expect(again.state().splits).toEqual([{ id: s.id, tabs: [a.id, first.id], ratio: 0.5 }])
-    expect(again.state().tabs.filter((t) => t.groupId === g.id).map((t) => t.id)).toEqual([a.id, c.id])
+    expect(again.state()).toMatchObject({ groups: [], splits: [], closed: 2 })
+    expect(again.state().tabs).toEqual([expect.objectContaining({ url: '' })])
   })
 
   it('after a crash: groups and splits wait with their tabs, are saved meanwhile, and come back with them', async () => {

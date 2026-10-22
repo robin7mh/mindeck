@@ -94,8 +94,12 @@ export interface TerminalSettings {
   copyOnSelect: boolean
   /** Draw with WebGL (falls back to the DOM renderer when the GPU can't). */
   gpu: boolean
-  /** Tabs, layout, folders and recent output come back after a restart. */
-  restore: boolean
+  /**
+   * Tabs, layout, folders and recent output come back after a restart. Off by
+   * default: every start has one fresh shell in Home. (Was `restore`, on by
+   * default — a value saved under that name no longer counts.)
+   */
+  restoreTabs: boolean
   /** Folder tracking and command marks for bash, zsh, fish and PowerShell. */
   shellIntegration: boolean
   /** Profile new terminals start with: a shell's or a custom profile's id; unset or '' = the login shell. */
@@ -113,7 +117,7 @@ export const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
   bufferKb: 256,
   copyOnSelect: false,
   gpu: true,
-  restore: true,
+  restoreTabs: false,
   shellIntegration: true,
   profiles: []
 }

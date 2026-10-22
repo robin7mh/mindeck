@@ -187,17 +187,17 @@ describe('BrowserService · the session across restarts', () => {
     saved = JSON.parse(await readFile(join(dir, 'session.json'), 'utf8'))
     expect(saved.exit).toBe('clean')
 
-    // the next start: tabs come back with their lists, a running download is interrupted now
+    // the next start: a new tab; the pages wait in the closed tabs with their lists, a running download is interrupted now
     const next = await setupBrowser({ dir })
     expect(next.state().restorable).toBeUndefined()
     expect(next.state().downloads).toEqual([{ ...d, state: 'interrupted', received: 5 }])
-    expect(next.state().closed).toBe(1)
+    expect(next.state().tabs).toEqual([expect.objectContaining({ url: '' })])
+    expect(next.state().closed).toBe(3) // u and a — then c, closed before the quit
     next.b.attach(next.host)
     next.b.setView({ x: 0, y: 0, width: 10, height: 10 })
-    next.b.activate(a.id)
-    expect(next.host.create).toHaveBeenCalledWith(a.id, 'https://a.dev/', { agent: false, zoom: 1, muted: false, history: nav(['https://a.dev/', 'https://a.dev/2']) })
-    // until its view exists, a restored tab saves the list it came with
-    expect(next.b.state().tabs.find((t) => t.id === a.id)).not.toHaveProperty('nav')
+    expect(next.b.reopen()).toMatchObject({ url: 'https://u.dev/' })
+    const back = next.b.reopen()!
+    expect(next.host.create).toHaveBeenLastCalledWith(back.id, 'https://a.dev/', { agent: false, zoom: 1, muted: false, history: nav(['https://a.dev/', 'https://a.dev/2']) })
     const reopened = next.b.reopen()!
     expect(next.host.create).toHaveBeenLastCalledWith(reopened.id, 'https://c.dev/', expect.objectContaining({ history: nav(['https://c.dev/', 'https://c.dev/2'], 0) }))
   })

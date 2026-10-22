@@ -152,9 +152,10 @@ export class TerminalService {
     this.limit = this.settings().bufferKb * 1024
   }
 
-  /** The Terminal's preferences, defaults filled in. */
+  /** The Terminal's preferences, defaults filled in (without the old `restore`, on by default: a clean start now). */
   settings(): TerminalSettings {
-    return { ...DEFAULT_TERMINAL_SETTINGS, ...this.opts.settings.get().terminal }
+    const { restore: _old, ...saved } = (this.opts.settings.get().terminal ?? {}) as Partial<TerminalSettings> & { restore?: unknown }
+    return { ...DEFAULT_TERMINAL_SETTINGS, ...saved }
   }
 
   async configure(patch: Partial<TerminalSettings>): Promise<TerminalSettings> {
@@ -235,7 +236,7 @@ export class TerminalService {
    */
   async persist(snapshot: TerminalSnapshot): Promise<void> {
     const file = join(this.opts.dir, 'terminals.json')
-    const write = this.settings().restore ? writeAtomic(file, JSON.stringify(snapshot), 0o600) : rm(file, { force: true })
+    const write = this.settings().restoreTabs ? writeAtomic(file, JSON.stringify(snapshot), 0o600) : rm(file, { force: true })
     this.writing.add(write)
     try {
       await write
@@ -251,7 +252,7 @@ export class TerminalService {
 
   /** The tabs saved last time, unless restoring is off or the file is missing or damaged. */
   async restore(): Promise<TerminalSnapshot | null> {
-    if (!this.settings().restore) return null
+    if (!this.settings().restoreTabs) return null
     // A damaged file is set aside (readJson) rather than overwritten by the next save.
     const parsed = REQUEST_SCHEMAS['terminal:persist'].safeParse(await readJson(join(this.opts.dir, 'terminals.json')))
     return parsed.success ? parsed.data : null

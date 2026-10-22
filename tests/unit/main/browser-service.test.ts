@@ -76,31 +76,45 @@ const menu = (host: ReturnType<typeof fakeHost>) => host.popup.mock.calls[host.p
 const entry = (entries: MenuEntry[], label: string) => entries.find((e) => 'label' in e && e.label === label) as Exclude<MenuEntry, { separator: true }>
 
 describe('BrowserService · tabs and the session', () => {
-  it('starts with a new-tab page and restores the last session lazily — pinned tabs first, junk skipped', async () => {
+  it('starts with a new-tab page: the last session waits in the closed tabs — after a crash, to be restored (pinned first, junk skipped)', async () => {
     const fresh = await setup()
     expect(fresh.b.state()).toMatchObject({ available: false, closed: 0, downloads: [], permissions: [], devServers: [] })
     expect(fresh.b.state().tabs).toEqual([expect.objectContaining({ url: '', title: '', shared: false, loading: false })])
 
-    const restored = await setup({
-      session: {
-        activeId: 'b',
-        tabs: [
-          { id: 'a', url: 'https://a.dev/', title: 'A', favicon: 'data:image/png;base64,x', share: { on: true, origin: 'https://a.dev' } },
-          { id: 'p', url: 'https://p.dev/', title: 5, pinned: true, muted: true, openedBy: 'Claude Code' },
-          { id: 3 },
-          { url: 'https://x.dev/' },
-          null,
-          { id: 'b', url: 'https://b.dev/', share: { on: 'yes' } }
-        ]
-      },
-      sites: { sites: { 'https://a.dev': { zoom: 1.25 } } }
-    })
-    const tabs = restored.b.state().tabs
+    const session = {
+      activeId: 'b',
+      tabs: [
+        { id: 'a', url: 'https://a.dev/', title: 'A', favicon: 'data:image/png;base64,x', share: { on: true, origin: 'https://a.dev' } },
+        { id: 'p', url: 'https://p.dev/', title: 5, pinned: true, muted: true, openedBy: 'Claude Code' },
+        { id: 3 },
+        { url: 'https://x.dev/' },
+        null,
+        { id: 'b', url: 'https://b.dev/', share: { on: 'yes' } }
+      ]
+    }
+    const sites = { sites: { 'https://a.dev': { zoom: 1.25 } } }
+
+    // Quit cleanly: a new tab, nothing of before open — ⌘⇧T brings the pages back, the last one first.
+    const clean = await setup({ session: { ...session, exit: 'clean' }, sites })
+    expect(clean.b.state().tabs).toEqual([expect.objectContaining({ url: '' })])
+    expect(clean.b.state()).toMatchObject({ closed: 3, activeId: clean.b.state().tabs[0].id })
+    expect(clean.b.state()).not.toHaveProperty('restorable')
+    expect(clean.b.reopen()).toMatchObject({ url: 'https://b.dev/', pinned: false })
+    expect(clean.b.reopen()).toMatchObject({ url: 'https://a.dev/', title: 'A', zoom: 1.25 })
+    expect(clean.b.reopen()).toMatchObject({ url: 'https://p.dev/', title: '', pinned: true })
+    expect(clean.b.reopen()).toBeNull()
+
+    // A crash: the same pages wait to be restored, and come back as they were.
+    const crashed = await setup({ session: { ...session, exit: 'running' }, sites })
+    expect(crashed.b.state().tabs).toHaveLength(1)
+    expect(crashed.b.state().restorable).toBe(3)
+    crashed.b.restoreSession(true)
+    const tabs = crashed.b.state().tabs
     expect(tabs.map((t) => t.id)).toEqual(['p', 'a', 'b'])
     expect(tabs[0]).toMatchObject({ title: '', pinned: true, muted: true, openedBy: 'Claude Code', shared: true })
     expect(tabs[1]).toMatchObject({ title: 'A', favicon: 'data:image/png;base64,x', zoom: 1.25, shared: true })
     expect(tabs[2]).toMatchObject({ shared: false })
-    expect(restored.b.state().activeId).toBe('b')
+    expect(crashed.b.state().activeId).toBe('b')
 
     const odd = await setup({ session: { tabs: 'nope', activeId: 'gone' }, sites: { sites: 5 } })
     expect(odd.b.state().tabs).toHaveLength(1)
@@ -108,7 +122,8 @@ describe('BrowserService · tabs and the session', () => {
   })
 
   it('creates views once the browser is on screen, and the window closing frees everything', async () => {
-    const { b, host, events, states } = await setup({ session: { activeId: 'b', tabs: [{ id: 'b', url: 'https://b.dev/' }] } })
+    const { b, host, events, states } = await setup({ session: { exit: 'running', activeId: 'b', tabs: [{ id: 'b', url: 'https://b.dev/' }] } })
+    b.restoreSession(true) // after a crash, brought back
     b.attach(host)
     expect(host.setTheme).toHaveBeenCalledWith('system')
     await tick()
