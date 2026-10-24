@@ -684,7 +684,7 @@ describe('SessionSide and diffs', () => {
         ]
       }
     })
-    const { rerender } = render(<SessionSide session={session({ worktree: '/wt', branch: 'mindeck/x' })} onOpenNote={vi.fn()} />)
+    const { rerender } = render(<SessionSide onHide={() => {}} session={session({ worktree: '/wt', branch: 'mindeck/x' })} onOpenNote={vi.fn()} />)
     expect(loadChanges).toHaveBeenCalledWith('s1')
     expect(loadBranch).toHaveBeenCalledWith('s1')
     expect(screen.getByText('In its own working folder')).toBeInTheDocument()
@@ -714,7 +714,7 @@ describe('SessionSide and diffs', () => {
     fireEvent.click(screen.getByText('Discard'))
     expect(discard).toHaveBeenCalled()
 
-    rerender(<SessionSide session={session({ status: 'working' })} onOpenNote={vi.fn()} />)
+    rerender(<SessionSide onHide={() => {}} session={session({ status: 'working' })} onOpenNote={vi.fn()} />)
     expect(loadChanges).toHaveBeenCalledTimes(3) // a new step finished
     expect(screen.getByText('Since the session started')).toBeInTheDocument()
     expect(screen.queryByText('Take over')).toBeNull()
@@ -735,7 +735,7 @@ describe('SessionSide and diffs', () => {
       branches: { s1: { pushed: true, pr: { number: 1, url: 'https://github.com/me/web/pull/1', state: 'merged' }, merged: true, uncommitted: 0 } }
     })
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
-    const { rerender, unmount } = render(<SessionSide session={session({ worktree: '/wt', branch: 'mindeck/x' })} onOpenNote={vi.fn()} />)
+    const { rerender, unmount } = render(<SessionSide onHide={() => {}} session={session({ worktree: '/wt', branch: 'mindeck/x' })} onOpenNote={vi.fn()} />)
     expect(screen.getByText('Merged on GitHub')).toBeInTheDocument()
     expect(screen.getByText('— PR #1 merged.').closest('a')).toHaveAttribute('href', 'https://github.com/me/web/pull/1')
     expect(screen.queryByText('Take over')).toBeNull() // the work is in main already
@@ -764,7 +764,7 @@ describe('SessionSide and diffs', () => {
     act(() => void window.dispatchEvent(new Event('focus')))
     act(() => void vi.advanceTimersByTime(60_000))
     expect(loadBranch.mock.calls.length).toBe(before + 2)
-    rerender(<SessionSide session={session({ id: 's2', worktree: '/wt2', branch: 'mindeck/y' })} onOpenNote={vi.fn()} />)
+    rerender(<SessionSide onHide={() => {}} session={session({ id: 's2', worktree: '/wt2', branch: 'mindeck/y' })} onOpenNote={vi.fn()} />)
     expect(screen.queryByText(/Not possible to fast-forward/)).toBeNull() // that was another session's
     unmount()
     const after = loadBranch.mock.calls.length
@@ -777,7 +777,7 @@ describe('SessionSide and diffs', () => {
     const onOpenNote = vi.fn()
     useAgents.setState({ loadChanges: vi.fn(async () => {}) })
     const s = session({ plan: [{ id: '1', text: 'find bug', done: true }, { id: '2', text: 'add test', done: false }], notes: ['Projekte/Demo.md'], journal: 'Agents/Demo/j.md' })
-    const { rerender } = render(<SessionSide session={s} onOpenNote={onOpenNote} />)
+    const { rerender } = render(<SessionSide onHide={() => {}} session={s} onOpenNote={onOpenNote} />)
     expect(screen.getByText('No changes yet')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('tab', { name: 'Plan 1' }))
     expect(screen.getByText('find bug')).toHaveClass('line-through')
@@ -787,7 +787,7 @@ describe('SessionSide and diffs', () => {
     fireEvent.click(screen.getByText('Projekte/Demo.md'))
     expect(onOpenNote.mock.calls).toEqual([['Agents/Demo/j.md'], ['Projekte/Demo.md']])
 
-    rerender(<SessionSide session={session()} onOpenNote={onOpenNote} />)
+    rerender(<SessionSide onHide={() => {}} session={session()} onOpenNote={onOpenNote} />)
     expect(screen.getByText(/Notes the agent reads or writes show up here/)).toBeInTheDocument()
     fireEvent.click(screen.getByRole('tab', { name: 'Plan' }))
     expect(screen.getByText(/No plan yet/)).toBeInTheDocument()
@@ -892,6 +892,30 @@ describe('AgentsView', () => {
     act(() => useAgents.setState({ view: 'session', activeId: 'gone' })) // a session that isn't loaded (yet)
     expect(screen.getByText('Your agents, in one place')).toBeInTheDocument()
     expect(screen.getByText('app.started')).toBeInTheDocument()
+  })
+
+  it('the column beside the chat folds away — in every view — and stays so', async () => {
+    installBridge({ 'agents:list': () => ag().sessions, 'agents:changes': () => [] })
+    localStorage.removeItem('mindeck.agents.side')
+    useAgents.setState({ sessions: [session()], activeId: 's1', view: 'session', messages: { s1: [] } })
+    const { unmount } = view()
+    await act(settle)
+    fireEvent.click(screen.getByRole('button', { name: 'Hide side panel' }))
+    expect(screen.queryByRole('tab', { name: 'Changes' })).toBeNull()
+    expect(localStorage.getItem('mindeck.agents.side')).toBe('0')
+    act(() => useAgents.setState({ view: 'empty' }))
+    expect(screen.queryByText('All activity')).toBeNull() // folded in the overview too
+    unmount()
+
+    view() // remembered
+    await act(settle)
+    expect(screen.queryByText('All activity')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Show side panel' }))
+    expect(screen.getByText('All activity')).toBeInTheDocument()
+    expect(localStorage.getItem('mindeck.agents.side')).toBe('1')
+    fireEvent.click(screen.getByRole('button', { name: 'Hide side panel' }))
+    expect(screen.getByRole('button', { name: 'Show side panel' })).toBeInTheDocument()
+    localStorage.removeItem('mindeck.agents.side')
   })
 })
 

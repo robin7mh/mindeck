@@ -38,11 +38,32 @@ export const en = {
     memory: 'Memory',
     agents: 'Agents',
     system: 'System',
+    logs: 'Logs',
     settings: 'Settings',
     account: 'Profile',
     notSignedIn: 'Not signed in',
     collapse: 'Collapse the modules',
     expand: 'Expand the modules'
+  },
+
+  /** The Logs module: everything Mindeck recorded. */
+  logs: {
+    filter: 'Show',
+    filters: { all: 'All', agents: 'Agents', tools: 'Tools', approvals: 'Approvals', app: 'App' },
+    search: 'Search the logs',
+    count: (n: number) => (n === 1 ? '1 entry' : `${n} entries`),
+    live: 'Live',
+    copy: 'Copy',
+    copied: 'Copied',
+    today: 'Today',
+    yesterday: 'Yesterday',
+    empty: 'Nothing recorded yet.',
+    noMatch: 'No entry matches.',
+    type: 'Event',
+    time: 'Time',
+    actor: 'By',
+    project: 'Project',
+    details: 'Details'
   },
 
   account: {
@@ -271,18 +292,6 @@ export const en = {
     noData: 'no data'
   },
 
-  deck: {
-    title: 'Command Deck',
-    running: (n: number) => `${n} running`,
-    needYou: (n: number) => `${n} need you`,
-    waiting: (n: number) => `${n} waiting for approval`,
-    agents: 'Agents',
-    noneRunning: 'No agent is running',
-    end: (title: string) => `End ${title}`,
-    stop: (title: string) => `Stop ${title}`,
-    actionsWait: (n: number) => `${n} action(s) wait for your approval`,
-    noActivity: 'No agent activity yet'
-  },
 
   pair: {
     web: 'Command Center · Web',
@@ -550,6 +559,8 @@ agents: {
     emptyText: 'Start Claude Code, Codex or Gemini on a project with your own account — approvals, changes and a journal in your memory come with it.',
     runActivity: 'Run activity',
     allActivity: 'All activity',
+    hideSide: 'Hide side panel',
+    showSide: 'Show side panel',
     nothingYet: 'Nothing happened here yet',
     noActivity: 'No activity yet',
     moreWaiting: (n: number) => `+${n} more waiting`,

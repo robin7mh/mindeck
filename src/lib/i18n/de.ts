@@ -33,11 +33,31 @@ export const de: Dict = {
     memory: 'Gedächtnis',
     agents: 'Agents',
     system: 'System',
+    logs: 'Logs',
     settings: 'Einstellungen',
     account: 'Profil',
     notSignedIn: 'Nicht angemeldet',
     collapse: 'Module einklappen',
     expand: 'Module ausklappen'
+  },
+
+  logs: {
+    filter: 'Anzeigen',
+    filters: { all: 'Alle', agents: 'Agents', tools: 'Werkzeuge', approvals: 'Freigaben', app: 'App' },
+    search: 'Logs durchsuchen',
+    count: (n) => (n === 1 ? '1 Eintrag' : `${n} Einträge`),
+    live: 'Live',
+    copy: 'Kopieren',
+    copied: 'Kopiert',
+    today: 'Heute',
+    yesterday: 'Gestern',
+    empty: 'Noch nichts aufgezeichnet.',
+    noMatch: 'Kein Eintrag passt.',
+    type: 'Ereignis',
+    time: 'Zeit',
+    actor: 'Von',
+    project: 'Projekt',
+    details: 'Details'
   },
 
   account: {
@@ -265,18 +285,6 @@ export const de: Dict = {
     noData: 'keine Daten'
   },
 
-  deck: {
-    title: 'Command Deck',
-    running: (n) => `${n} aktiv`,
-    needYou: (n) => `${n} brauchen dich`,
-    waiting: (n) => `${n} warten auf Freigabe`,
-    agents: 'Agents',
-    noneRunning: 'Kein Agent aktiv',
-    end: (title) => `${title} beenden`,
-    stop: (title) => `${title} stoppen`,
-    actionsWait: (n) => (n === 1 ? '1 Aktion wartet auf deine Freigabe' : `${n} Aktionen warten auf deine Freigabe`),
-    noActivity: 'Noch keine Agent-Aktivität'
-  },
 
   pair: {
     web: 'Command Center · Web',
@@ -544,6 +552,8 @@ agents: {
     emptyText: 'Starte Claude Code, Codex oder Gemini mit deinem eigenen Konto in einem Projekt — Freigaben, Änderungen und ein Journal in deinem Gedächtnis inklusive.',
     runActivity: 'Aktivität dieses Laufs',
     allActivity: 'Alle Aktivitäten',
+    hideSide: 'Seitenleiste ausblenden',
+    showSide: 'Seitenleiste einblenden',
     nothingYet: 'Hier ist noch nichts passiert',
     noActivity: 'Noch keine Aktivität',
     moreWaiting: (n) => `+${n} weitere warten`,

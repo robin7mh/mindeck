@@ -15,7 +15,7 @@ interface WorkspaceState {
   saved: SavedWorkspace[]
   /** The saved workspace last switched to or saved — the menu names it. */
   current?: string
-  /** Zen mode: only the panes, no top bar, side navigation or Command Deck. */
+  /** Zen mode: only the panes, no top bar or side navigation. */
   zen: boolean
   show(module: ModuleId): void
   place(paneId: string, module: ModuleId): void

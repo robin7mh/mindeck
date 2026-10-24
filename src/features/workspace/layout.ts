@@ -12,10 +12,10 @@ export const PRESETS: Preset[] = ['single', 'columns', 'rows', 'main', 'grid']
 export const SLOTS: Record<Preset, number> = { single: 1, columns: 2, rows: 2, main: 3, grid: 4 }
 
 /** Every module a pane can show. Each one appears at most once: they all hang off app-wide stores. */
-export const MODULES: ModuleId[] = ['core', 'editor', 'terminal', 'browser', 'files', 'projects', 'memory', 'agents', 'system', 'settings', 'account']
+export const MODULES: ModuleId[] = ['core', 'editor', 'terminal', 'browser', 'files', 'projects', 'memory', 'agents', 'system', 'logs', 'settings', 'account']
 
 /** What a new pane shows: the first of these not on screen yet. */
-const FILL: ModuleId[] = ['terminal', 'browser', 'editor', 'agents', 'files', 'memory', 'projects', 'core', 'system', 'settings']
+const FILL: ModuleId[] = ['terminal', 'browser', 'editor', 'agents', 'files', 'memory', 'projects', 'core', 'system', 'logs', 'settings']
 
 export interface Pane {
   id: string

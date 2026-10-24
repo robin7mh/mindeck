@@ -19,6 +19,7 @@ import { useAgents } from '@/features/agents/sessions'
 import { useMemory } from '@/features/memory/store'
 import { SettingsView } from '@/features/settings/components/SettingsView'
 import { SystemView } from '@/features/system/components/SystemView'
+import { LogsView } from '@/features/logs/components/LogsView'
 import { AccountView } from '@/features/account/components/AccountView'
 import { BrowserView } from '@/features/browser/components/BrowserView'
 import { useBrowser } from '@/features/browser/store'
@@ -26,7 +27,6 @@ import { FilesView } from '@/features/files/components/FilesView'
 import { getT, useT } from '@/lib/i18n'
 import { useSession } from '@/features/session/store'
 import { SystemMonitorPanel } from '@/components/monitor/SystemMonitorPanel'
-import { BottomDashboard } from '@/components/dashboard/BottomDashboard'
 import { BootSequence, BOOT_TOTAL_MS } from '@/components/boot/BootSequence'
 import { ModuleBoundary } from '@/components/shell/ErrorBoundary'
 import { useBoot } from '@/hooks/useBoot'
@@ -128,16 +128,6 @@ export function AppShell() {
   const info = useSession((s) => s.info)
   const shellsOff = !isDesktop() && info?.remoteTerminal === false
 
-  const openConversation = (id: string) => {
-    show('agents')
-    useAgents.getState().showAssistant()
-    void useAssistant.getState().open(id)
-  }
-  const openSession = (id: string) => {
-    show('agents')
-    void useAgents.getState().open(id)
-  }
-
   // One module, drawn in its pane. `visible`: its pane is on screen (kept modules stay mounted while hidden).
   const moduleView = (id: ModuleId, visible: boolean) => {
     const openNote = (path: string) => {
@@ -148,6 +138,7 @@ export function AppShell() {
     if (id === 'memory') return <MemoryView />
     if (id === 'agents') return <AgentsView onOpenNote={openNote} onOpenSettings={() => show('settings')} />
     if (id === 'system') return <SystemView />
+    if (id === 'logs') return <LogsView />
     if (id === 'settings') return <SettingsView />
     if (id === 'account') return <AccountView />
     if (id === 'files') return <FilesView onNavigate={show} />
@@ -211,15 +202,6 @@ export function AppShell() {
           </motion.div>
         </main>
       </div>
-
-      {/* Bottom command deck (collapsible) */}
-      {!zen && (
-        <motion.div {...panelIn(0.3)}>
-          <ModuleBoundary id="deck" name={t.deck.title}>
-            <BottomDashboard onOpenConversation={openConversation} onOpenSession={openSession} />
-          </ModuleBoundary>
-        </motion.div>
-      )}
 
       {/* The command palette (⌘K) and the shortcut overview (⌘/), over everything. */}
       <PaletteHost />

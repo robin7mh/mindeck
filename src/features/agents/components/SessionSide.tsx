@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useState } from 'react'
-import { ArrowDownToLine, BookOpen, Check, CircleDot, FileDiff, GitMerge, Loader2, RefreshCw, Trash2, X } from 'lucide-react'
+import { ArrowDownToLine, BookOpen, Check, CircleDot, FileDiff, GitMerge, Loader2, PanelRightClose, RefreshCw, Trash2, X } from 'lucide-react'
 import type { AgentSession } from '@shared/types/agents'
 import { TechLabel } from '@/components/ui/TechLabel'
 import { cn } from '@/lib/cn'
@@ -38,6 +38,16 @@ export function DiffModal() {
   )
 }
 
+/** Folds the column beside the chat away (the Agents module remembers it). */
+export function HideSideButton({ onHide }: { onHide: () => void }) {
+  const t = useT()
+  return (
+    <button type="button" aria-label={t.agents.hideSide} title={t.agents.hideSide} onClick={onHide} className="ml-auto shrink-0 rounded-sm p-1 text-text-muted hover:bg-elevated hover:text-text-primary">
+      <PanelRightClose size={14} />
+    </button>
+  )
+}
+
 /** A home-relative path for display: /Users/me/Mindeck/… → ~/Mindeck/… */
 const tilde = (path: string) => path.replace(/^(\/Users|\/home)\/[^/]+(?=\/)/, '~').replace(/^[A-Za-z]:\\Users\\[^\\]+(?=\\)/, '~')
 
@@ -64,7 +74,7 @@ function ConfirmDiscard({ onDiscard, onKeep }: { onDiscard: () => void; onKeep: 
  * away an own working folder — or, once its pull request is merged, update
  * the project and clean up), its plan, and the memory it used.
  */
-export function SessionSide({ session, onOpenNote }: { session: AgentSession; onOpenNote: (path: string) => void }) {
+export function SessionSide({ session, onOpenNote, onHide }: { session: AgentSession; onOpenNote: (path: string) => void; onHide: () => void }) {
   const t = useT()
   const changes = useAgents((s) => s.changes[session.id])
   const branch = useAgents((s) => s.branches[session.id])
@@ -127,6 +137,7 @@ export function SessionSide({ session, onOpenNote }: { session: AgentSession; on
             {count > 0 && <span className="ml-1 font-mono text-[10px]">{count}</span>}
           </button>
         ))}
+        <HideSideButton onHide={onHide} />
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto p-2">

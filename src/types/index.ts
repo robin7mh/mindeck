@@ -10,6 +10,7 @@ export type ModuleId =
   | 'memory'
   | 'agents'
   | 'system'
+  | 'logs'
   | 'settings'
   | 'account'
 

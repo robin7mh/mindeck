@@ -8,6 +8,7 @@ import {
   BrainCircuit,
   Bot,
   Cpu,
+  ScrollText,
   Settings2
 } from 'lucide-react'
 import type { NavItem } from '@/types'
@@ -22,5 +23,6 @@ export const NAV_ITEMS: NavItem[] = [
   { id: 'memory', icon: BrainCircuit },
   { id: 'agents', icon: Bot },
   { id: 'system', icon: Cpu },
+  { id: 'logs', icon: ScrollText },
   { id: 'settings', icon: Settings2 }
 ]
