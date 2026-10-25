@@ -79,24 +79,6 @@ describe('AuthService', () => {
     expect(JSON.parse(await readFile(file, 'utf8')).codes).toHaveLength(20)
   })
 
-  it('shares the browser with admin devices only; a demoted device loses it', async () => {
-    const { auth } = await setup()
-    const member = await auth.pair((await auth.createPairingCode()).code, 'phone')
-    const admin = await auth.pair((await auth.createPairingCode('admin')).code, 'tablet')
-    await expect(auth.setBrowser(member.device.id, true)).rejects.toMatchObject({ code: 'admin-only' })
-    expect((await auth.devices()).some((d) => d.browser)).toBe(false)
-    expect((await auth.setBrowser(admin.device.id, true)).find((d) => d.id === admin.device.id)?.browser).toBe(true)
-    expect((await auth.verify(admin.token))?.browser).toBe(true)
-    // Stopping always works; demoting stops it too, and an admin again starts without it.
-    expect((await auth.setBrowser(member.device.id, false)).find((d) => d.id === member.device.id)).not.toHaveProperty('browser')
-    await auth.setRole(admin.device.id, 'member')
-    await auth.setRole(admin.device.id, 'admin')
-    expect((await auth.devices()).find((d) => d.id === admin.device.id)).not.toHaveProperty('browser')
-    await auth.setBrowser(admin.device.id, true)
-    expect((await auth.setBrowser(admin.device.id, false)).find((d) => d.id === admin.device.id)).not.toHaveProperty('browser')
-    await expect(auth.setBrowser('nobody', false)).rejects.toMatchObject({ code: 'not-found' })
-  })
-
   it('a headless core makes its first device admin; devices from before roles get one', async () => {
     const dir = await tempDir()
     const headless = new AuthService(join(dir, 'devices.json'), Date.now, true)
@@ -338,50 +320,6 @@ function openSocket(url: string, protocols?: string[]): Promise<{ ws: WebSocket;
 }
 
 describe('HttpServer — API', () => {
-  it('sends the browser\'s tabs only to the admin devices it is shared with — asked anew for every push', async () => {
-    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
-    const scope = async (_channel: string, payload: unknown) => {
-      if ((payload as { boom?: boolean }).boom) throw new Error('boom')
-      return (payload as { drop?: boolean }).drop ? null : payload
-    }
-    const { base, token, hub, auth } = await startHttp({ scope })
-    const admin = await auth.pair((await auth.createPairingCode('admin')).code, 'tablet')
-    const url = `${base.replace('http', 'ws')}/api/events`
-    const member = await openSocket(url, eventsProtocols(token))
-    const tablet = await openSocket(url, eventsProtocols(admin.token))
-    const bar = [{ id: 'bar', title: 'Bar', children: [] }] as never
-    hub.publish('browser:bookmarks', []) // shared with nobody yet
-    await tick(30)
-    await auth.setBrowser(admin.device.id, true)
-    hub.publish('browser:bookmarks', bar)
-    hub.publish('browser:state', { drop: true } as never) // the scope keeps it home
-    hub.publish('browser:state', { boom: true } as never)
-    hub.publish('browser:find', { tabId: 't', active: 0, matches: 0 }) // the desktop's own search bar
-    await tick(30)
-    expect(tablet.messages.slice(1)).toEqual([{ channel: 'browser:bookmarks', payload: bar, seq: expect.any(Number) }])
-    expect(member.messages.slice(1)).toEqual([])
-    expect(error).toHaveBeenCalledWith('[server] not sending browser:state:', expect.any(Error))
-    // Stopped at the desktop: the next push already stays home.
-    await auth.setBrowser(admin.device.id, false)
-    hub.publish('browser:bookmarks', bar)
-    await tick(30)
-    expect(tablet.messages).toHaveLength(2)
-    member.ws.close()
-    tablet.ws.close()
-    error.mockRestore()
-  })
-
-  it('without a scope, sends the browser\'s tabs to the shared device as they are', async () => {
-    const { base, hub, auth } = await startHttp()
-    const admin = await auth.pair((await auth.createPairingCode('admin')).code, 'tablet')
-    await auth.setBrowser(admin.device.id, true)
-    const tablet = await openSocket(`${base.replace('http', 'ws')}/api/events`, eventsProtocols(admin.token))
-    hub.publish('browser:bookmarks', [])
-    await tick(30)
-    expect(tablet.messages.slice(1)).toEqual([{ channel: 'browser:bookmarks', payload: [], seq: expect.any(Number) }])
-    tablet.ws.close()
-  })
-
   it('serves health publicly and guards the RPC with device tokens', async () => {
     const { base, token } = await startHttp()
     const health = await fetch(`${base}/api/health`)
@@ -397,7 +335,7 @@ describe('HttpServer — API', () => {
 
     expect(await (await rpc(base, 'projects:list', undefined, token)).json()).toEqual({ ok: true, data: [{ id: 'p' }] })
     // The handler learns who calls, with the device's role.
-    expect(await (await rpc(base, 'app:info', undefined, token)).json()).toEqual({ ok: true, data: { transport: 'remote', deviceId: expect.any(String), role: 'member', browser: false } })
+    expect(await (await rpc(base, 'app:info', undefined, token)).json()).toEqual({ ok: true, data: { transport: 'remote', deviceId: expect.any(String), role: 'member' } })
     expect(await (await rpc(base, 'memory:read', { path: 'a.md' }, token)).json()).toEqual({ ok: true, data: { path: 'a.md' } })
     expect(await (await rpc(base, 'memory:read', { path: 1 }, token)).json()).toMatchObject({ ok: false, error: { code: 'bad-request' } })
     expect(await (await rpc(base, 'system:subscribe', undefined, token)).json()).toEqual({ ok: true })
@@ -1168,7 +1106,6 @@ describe('ServerController', () => {
     const paired = await deps.auth.pair(code.code, 'p')
     expect(await controller.devices()).toHaveLength(1)
     expect(await controller.setDeviceRole(paired.device.id, 'admin')).toEqual([expect.objectContaining({ id: paired.device.id, role: 'admin' })])
-    expect(await controller.setDeviceBrowser(paired.device.id, true)).toEqual([expect.objectContaining({ id: paired.device.id, browser: true })])
     expect((await controller.createPairingCode('admin')).role).toBe('admin')
     await controller.revoke(paired.device.id)
     expect(created[0].disconnectDevice).toHaveBeenCalledWith(paired.device.id)

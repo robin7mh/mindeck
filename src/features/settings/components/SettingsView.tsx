@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { AlertTriangle, Check, FolderPlus, Globe, Info, Languages, Laptop, QrCode, RefreshCw, ShieldCheck, Smartphone, TerminalSquare, Trash2, Wifi, X } from 'lucide-react'
+import { AlertTriangle, Check, FolderPlus, Info, Languages, Laptop, QrCode, RefreshCw, ShieldCheck, Smartphone, TerminalSquare, Trash2, Wifi, X } from 'lucide-react'
 import { ipc, isDesktop } from '@shared/ipc/client'
 import type { VaultStatus } from '@shared/types/memory'
 import { ALL_PROJECTS, type PermissionGrant } from '@shared/types/ai'
@@ -284,22 +284,6 @@ function RemoteCard() {
                 ) : (
                   <span className="font-mono text-[10px] uppercase tracking-wider text-text-muted">{t.settings.roles[d.role]}</span>
                 )}
-                {/* The browser (with the user's logins) is shared per admin device, at the desktop only. */}
-                {desktop && d.role === 'admin' ? (
-                  <button
-                    type="button"
-                    aria-label={t.settings.shareBrowser(d.name)}
-                    aria-pressed={d.browser === true}
-                    title={t.settings.shareBrowser(d.name)}
-                    disabled={s.busy}
-                    onClick={() => void s.setDeviceBrowser(d.id, !d.browser)}
-                    className={cn('rounded p-0.5', d.browser ? 'text-cyan' : 'text-text-muted/50 hover:text-text-primary')}
-                  >
-                    <Globe size={12} />
-                  </button>
-                ) : (
-                  d.browser && <Globe size={12} aria-label={t.settings.browserShared} className="text-cyan" />
-                )}
                 {(manage || d.id === myDevice) && (
                   <button type="button" aria-label={t.settings.revoke(d.name)} onClick={() => void s.revokeDevice(d.id)} className="text-text-muted hover:text-danger">
                     <Trash2 size={12} />
@@ -309,7 +293,6 @@ function RemoteCard() {
             )
           })}
         </ul>
-        {desktop && s.devices.some((d) => d.role === 'admin') && <p className="mt-2 font-sans text-[11px] text-text-muted">{t.settings.shareBrowserHint}</p>}
       </div>
     </Card>
   )

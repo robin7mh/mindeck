@@ -7,14 +7,10 @@ import {
   type AgentAction,
   type AgentActivity,
   type BrowserAuthRequest,
-  type BrowserCapture,
   type BrowserCommand,
   type BrowserDownload,
   type BrowserGo,
-  type BrowserInput,
-  type BrowserKey,
   type BrowserPermissionRequest,
-  type BrowserRemoteUse,
   type BrowserProfile,
   type BrowserPane,
   type BrowserSettings,
@@ -57,7 +53,6 @@ import { ENGINE_NAMES, labels, type Labels } from './labels'
 import { parseNetscape, toNetscape } from './netscape'
 import { SearchSuggestions, type Fetch } from './suggestions'
 import type { AutomationTarget, BrowserHost, BrowserHostEvents, ConsoleEntry, LoginAsk, MenuEntry, PermissionAsk, ShortcutAction, TabNavigation } from './types'
-import { SECRET_FOCUS } from './secretFocus'
 import { hostOf, isLoopback, isPageUrl, isWebUrl, originOf, resolveInput, searchUrl } from './url'
 
 type BrowserEvent = 'browser:state' | 'browser:find' | 'browser:command' | 'browser:reveal' | 'browser:bookmarks' | 'browser:import'
@@ -152,26 +147,6 @@ const MAX_CONSOLE = 300
 const MAX_FAVICON = 8 * 1024
 const SAVE_DELAY_MS = 400
 const LOAD_TIMEOUT_MS = 15_000
-/** A picture for another device: wide enough for a tablet, small enough to send often. */
-const CAPTURE_WIDTH = 900
-const CAPTURE_QUALITY = 70
-
-/** Keys a phone sends by name, as DevTools types them (`text`: what the key writes). */
-const KEY_CODES: Record<BrowserKey, { code: number; text?: string }> = {
-  Enter: { code: 13, text: '\r' },
-  Backspace: { code: 8 },
-  Tab: { code: 9 },
-  Escape: { code: 27 },
-  ArrowUp: { code: 38 },
-  ArrowDown: { code: 40 },
-  ArrowLeft: { code: 37 },
-  ArrowRight: { code: 39 },
-  PageUp: { code: 33 },
-  PageDown: { code: 34 },
-  Home: { code: 36 },
-  End: { code: 35 },
-  Delete: { code: 46 }
-}
 /** What the Web Store is told when the host did not say (a headless core installs nothing anyway). */
 const CHROME_VERSION = '140.0.0.0'
 const noop = () => {}
@@ -257,7 +232,6 @@ export class BrowserService {
   /** The session file says "running" — on a clean quit it must say so. */
   private marked = false
   private auth: BrowserAuthRequest[] = []
-  private remote: BrowserRemoteUse[] = []
   private readonly authResponders = new Map<string, (credentials: { username: string; password: string } | null) => void>()
   private downloads: BrowserDownload[] = []
   private readonly downloadControls = new Map<string, { cancel(): void }>()
@@ -468,25 +442,8 @@ export class BrowserService {
       auth: this.auth.map((a) => ({ ...a })),
       extensions: this.extensions.list(),
       groups: this.arrangement.groups.map((g) => ({ ...g })),
-      splits: this.arrangement.splits.map((x) => ({ ...x, tabs: [...x.tabs] })),
-      ...(this.remote.length ? { remote: this.remote.map((r) => ({ ...r })) } : {})
+      splits: this.arrangement.splits.map((x) => ({ ...x, tabs: [...x.tabs] }))
     }
-  }
-
-  /** The paired devices using the browser now (RemoteActivity): the desktop shows them. */
-  setRemote(devices: BrowserRemoteUse[]): void {
-    this.remote = devices
-    this.changed()
-  }
-
-  /**
-   * The web page typed text leads to, for a paired device — undefined unless
-   * it is one (http or https): files, Mindeck's own pages and links that start
-   * another app stay the desktop's.
-   */
-  webUrl(input: string): string | undefined {
-    const target = this.target(input)
-    return target?.kind === 'page' && isWebUrl(target.url) ? target.url : undefined
   }
 
   /**
@@ -1099,71 +1056,6 @@ export class BrowserService {
   async automation(id: string): Promise<AutomationTarget> {
     const host = this.requireHost()
     const tab = this.require(this.agentTab(id).id)
-    if (!tab.live) {
-      this.ensureLive(tab, true)
-      await this.waitForLoad(id)
-    }
-    return host.automation(id)
-  }
-
-  /**
-   * A tab's picture for a paired device (`browser:capture`), with the page's
-   * size so a tap lands where it was meant. Private tabs are never shown; the
-   * new-tab page and Mindeck's own pages have no picture.
-   */
-  async capture(id: string, width = CAPTURE_WIDTH): Promise<BrowserCapture | null> {
-    const target = await this.remoteTarget(id)
-    if (!target) return null
-    const [shot, metrics] = await Promise.all([
-      target.preview(width, CAPTURE_QUALITY),
-      target.cdp<{ cssLayoutViewport?: { clientWidth: number; clientHeight: number } }>('Page.getLayoutMetrics').catch(() => ({}) as { cssLayoutViewport?: undefined })
-    ])
-    const viewport = metrics.cssLayoutViewport
-    return {
-      image: `data:image/jpeg;base64,${shot.jpeg}`,
-      width: shot.width,
-      height: shot.height,
-      viewport: viewport ? { width: viewport.clientWidth, height: viewport.clientHeight } : { width: shot.width, height: shot.height }
-    }
-  }
-
-  /** A tap, scroll, text or key from a paired device, through the page's DevTools protocol. */
-  async input(id: string, input: BrowserInput): Promise<void> {
-    const target = await this.remoteTarget(id)
-    if (!target) throw coded('no-page', 'This tab shows no web page')
-    if (input.action === 'click') {
-      const at = { x: input.x, y: input.y }
-      await target.cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', ...at })
-      await target.cdp('Input.dispatchMouseEvent', { type: 'mousePressed', ...at, button: 'left', clickCount: 1 })
-      await target.cdp('Input.dispatchMouseEvent', { type: 'mouseReleased', ...at, button: 'left', clickCount: 1 })
-    } else if (input.action === 'scroll') {
-      await target.cdp('Input.dispatchMouseEvent', { type: 'mouseWheel', x: input.x, y: input.y, deltaX: input.dx, deltaY: input.dy })
-    } else if (input.action === 'type') {
-      await this.refuseSecret(target)
-      await target.cdp('Input.insertText', { text: input.text })
-    } else {
-      await this.refuseSecret(target)
-      const key = KEY_CODES[input.key]
-      const base = { key: input.key, code: input.key, windowsVirtualKeyCode: key.code, nativeVirtualKeyCode: key.code }
-      await target.cdp('Input.dispatchKeyEvent', { type: key.text ? 'keyDown' : 'rawKeyDown', ...base, ...(key.text ? { text: key.text, unmodifiedText: key.text } : {}) })
-      await target.cdp('Input.dispatchKeyEvent', { type: 'keyUp', ...base })
-    }
-  }
-
-  /** Passwords, one-time codes, card numbers and frames of other sites are typed at the desktop only (an unknown focus counts as one). */
-  private async refuseSecret(target: AutomationTarget): Promise<void> {
-    const secret = await target
-      .cdp<{ result?: { value?: unknown } }>('Runtime.evaluate', { expression: SECRET_FOCUS, returnByValue: true })
-      .then((r) => r.result?.value !== false, () => true)
-    if (secret) throw coded('secret-field', 'Passwords and codes are typed at the desktop only')
-  }
-
-  /** A tab another device may see and use: never a private one; loaded first when it was not yet. Null for pages without a view. */
-  private async remoteTarget(id: string): Promise<AutomationTarget | null> {
-    const host = this.requireHost()
-    const tab = this.require(id)
-    if (tab.profile === 'private') throw coded('remote-forbidden', 'Private tabs stay on the desktop')
-    if (!hasView(tab.url)) return null
     if (!tab.live) {
       this.ensureLive(tab, true)
       await this.waitForLoad(id)

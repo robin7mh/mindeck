@@ -16,11 +16,4 @@ describe('what paired devices reach', () => {
   it('matches the reviewed surface', () => {
     expect(remoteSurface()).toMatchSnapshot()
   })
-
-  it('keeps the browser to its own channels, and its sharing, logins and the desktop’s screen at the desktop', () => {
-    expect(remoteSurface().browser!.every((c) => c.startsWith('browser:'))).toBe(true)
-    for (const channel of ['server:setDeviceBrowser', 'server:configure', 'browser:activate', 'browser:extensions', 'browser:import', 'browser:historyDelete', 'finder:open', 'finder:reveal', 'finder:clipboardRead', 'finder:clipboardWrite', 'finder:privacySettings']) {
-      if (channel in CHANNEL_ACCESS) expect(CHANNEL_ACCESS[channel as keyof typeof CHANNEL_ACCESS], channel).toBe('desktop')
-    }
-  })
 })

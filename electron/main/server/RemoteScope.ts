@@ -1,7 +1,6 @@
 import type { IpcChannel, IpcEvent } from '@shared/ipc/contract'
 import { ALL_PROJECTS, type AgentRun, type ConversationSummary, type PermissionGrant, type PermissionRequest } from '@shared/types/ai'
 import type { AgentSession } from '@shared/types/agents'
-import type { BrowserState, BrowserSuggestion, BrowserTab } from '@shared/types/browser'
 import type { FinderEntry, FinderListing } from '@shared/types/finder'
 import type { MindeckEvent } from '@shared/types/events'
 import type { LiveServerStatus } from '@shared/types/live'
@@ -18,42 +17,13 @@ export interface RemoteScopeDeps {
   conversationProject: (id: string) => Promise<string | undefined>
   /** The approvals waiting now. */
   pending: () => PermissionRequest[]
-  /** A browser tab by id (undefined: none). */
-  browserTab: (id: string) => BrowserTab | undefined
-  /** The web page (http or https) typed text leads to — undefined for files, Mindeck's pages and other apps' links. */
-  webUrl: (input: string) => string | undefined
   now?: () => number
 }
 
 type Payload = Record<string, unknown>
 
-const isPrivate = (tab: BrowserTab | undefined) => tab?.profile === 'private'
-const isWeb = (url: string) => /^https?:\/\//i.test(url)
 /** The desktop's audit of what devices did — not for other devices to read. */
 const isDeviceEvent = (e: MindeckEvent) => e.type?.startsWith('device.') === true
-
-function refused(message: string): Error {
-  return Object.assign(new Error(message), { code: 'remote-forbidden' })
-}
-
-/**
- * The browser as a paired device sees it: its tabs, groups and splits —
- * never private ones — and nothing of the desktop's own business: no
- * downloads, permission or login questions, extensions, or which devices use it.
- */
-export function publicBrowserState(state: BrowserState): BrowserState {
-  const hidden = new Set(state.tabs.filter(isPrivate).map((t) => t.id))
-  const { auth: _auth, extensions: _extensions, remote: _remote, ...rest } = state
-  return {
-    ...rest,
-    tabs: state.tabs.filter((t) => !hidden.has(t.id)),
-    activeId: state.activeId && !hidden.has(state.activeId) ? state.activeId : undefined,
-    downloads: [],
-    permissions: [],
-    groups: state.groups.filter((g) => !g.private),
-    splits: state.splits.filter((sp) => sp.tabs.every((id) => !hidden.has(id)))
-  }
-}
 
 /**
  * What a paired device sees of the core's activity: agent sessions,
@@ -89,14 +59,6 @@ export class RemoteScope {
     if ((channel === 'ai:send' || channel === 'ai:cancel') && typeof p.conversationId === 'string') {
       return this.require(await this.conversation(p.conversationId))
     }
-    if (channel.startsWith('browser:')) {
-      if (channel === 'browser:open' && p.private) throw refused('Private tabs stay on the desktop')
-      if (id && isPrivate(this.deps.browserTab(id))) throw refused('Private tabs stay on the desktop')
-      // Web pages only: no files, no Mindeck pages (logins, extensions), no links that start another app.
-      const input = channel === 'browser:navigate' ? p.input : channel === 'browser:open' ? p.url : undefined
-      if (typeof input === 'string' && input.trim() && !this.deps.webUrl(input)) throw refused('Paired devices open web pages only (http or https)')
-      if (channel === 'browser:bookmarkAdd' && typeof p.url === 'string' && !isWeb(p.url)) throw refused('Paired devices save web pages only (http or https)')
-    }
     if (channel === 'permission:respond' && id) {
       const request = this.deps.pending().find((r) => r.id === id)
       if (request) return this.require(await this.requestProject(request))
@@ -120,10 +82,6 @@ export class RemoteScope {
         return this.keep((data as MindeckEvent[]).filter((e) => !isDeviceEvent(e)), (e) => this.eventProject(e))
       case 'liveServer:status':
         return this.keep(data as LiveServerStatus[], (s) => s.projectId)
-      case 'browser:state':
-        return publicBrowserState(data as BrowserState)
-      case 'browser:suggest':
-        return (data as BrowserSuggestion[]).filter((s) => !s.tabId || !isPrivate(this.deps.browserTab(s.tabId)))
       case 'finder:list': {
         const listing = data as FinderListing
         const entries = listing.entries.filter((e) => this.visibleFile(e))
@@ -161,8 +119,6 @@ export class RemoteScope {
       case 'events:event':
         if (isDeviceEvent(payload as MindeckEvent)) return null
         return this.only(p, await this.eventProject(payload as MindeckEvent))
-      case 'browser:state':
-        return publicBrowserState(payload as BrowserState)
       default:
         return payload
     }

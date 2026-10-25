@@ -215,15 +215,6 @@ export interface BrowserState {
   groups: BrowserTabGroup[]
   /** Pairs of tabs shown side by side; the active tab's pair is on screen, `activeId` is its focused side. */
   splits: BrowserSplit[]
-  /** Paired devices using the browser right now (the desktop shows it, with a way to stop them). */
-  remote?: BrowserRemoteUse[]
-}
-
-/** A paired device using the desktop's browser: since when (ISO). */
-export interface BrowserRemoteUse {
-  deviceId: string
-  device: string
-  since: string
 }
 
 /** A server asks for a user name and password (HTTP Basic/Digest, or a proxy). */
@@ -270,28 +261,6 @@ export interface ViewBounds {
 }
 
 export type BrowserGo = 'back' | 'forward' | 'reload' | 'hardReload' | 'stop'
-
-/** A tab's picture for another device (`browser:capture`): JPEG, and the page's size to map taps onto. */
-export interface BrowserCapture {
-  /** `data:image/jpeg;base64,…` */
-  image: string
-  /** The picture's size in pixels. */
-  width: number
-  height: number
-  /** The page's visible area in CSS pixels — where `browser:input` coordinates live. */
-  viewport: { width: number; height: number }
-}
-
-/** What another device does on a tab (`browser:input`): coordinates in the page's CSS pixels. */
-export type BrowserInput =
-  | { action: 'click'; x: number; y: number }
-  | { action: 'scroll'; x: number; y: number; dx: number; dy: number }
-  | { action: 'type'; text: string }
-  | { action: 'key'; key: BrowserKey }
-
-/** Keys a phone keyboard can't send as text. */
-export const BROWSER_KEYS = ['Enter', 'Backspace', 'Tab', 'Escape', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'PageUp', 'PageDown', 'Home', 'End', 'Delete'] as const
-export type BrowserKey = (typeof BROWSER_KEYS)[number]
 
 /** Native menus and tools of a tab. */
 export type BrowserTool = 'tabMenu' | 'pageMenu' | 'devtools' | 'print' | 'handoff' | 'shield'

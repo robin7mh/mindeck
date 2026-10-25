@@ -3,6 +3,12 @@
 **Stand:** 2026-10-16 · **Branch:** `feature/mobile-remote` (Basis `develop`, `e5cadb9`)
 **Gegenstück:** `mindeck-mobile`, Branch `feature/mobile-parity` (Files- und Browser-Modul der App)
 
+> **Update 2026-10-25:** Der Browser-Teil ist wieder entfernt (Robins Entscheidung). Die Mobile-App
+> hat jetzt einen eigenen Browser auf dem Handy; kein gekoppeltes Gerät sieht oder bedient mehr den
+> Browser des Desktops, alle `browser:*`-Kanäle sind wieder *desktop only*, `browser:capture`,
+> `browser:input` und `server:setDeviceBrowser` gibt es nicht mehr. Was unten zum Browser steht, ist
+> Geschichte; **Files für Geräte mit Remote-Shells bleiben** wie beschrieben.
+
 Bis hierher waren Files (`finder:*`) und Browser (`browser:*`) reine Desktop-Kanäle. Die Mobile-App
 soll aber alles können, was der Desktop kann. Diese Änderung öffnet beides für gekoppelte Geräte —
 **Files nur mit Remote-Shells, den Browser nur pro Admin-Gerät und nur, wenn der Desktop ihn diesem

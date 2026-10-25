@@ -98,11 +98,9 @@ import type {
 import type { MindeckEvent } from '@shared/types/events'
 import type { CloudAccount, CloudStatus, PushSettings } from '@shared/types/cloud'
 import type {
-  BrowserCapture,
   BrowserCommand,
   BrowserFind,
   BrowserGo,
-  BrowserInput,
   BrowserPane,
   BrowserSettings,
   BrowserSplit,
@@ -391,8 +389,6 @@ export interface IpcChannels {
   /** Admins remove any device; every device may remove itself (unpair). */
   'server:revokeDevice': { request: { id: string }; response: void }
   'server:setDeviceRole': { request: { id: string; role: DeviceRole }; response: Device[] }
-  /** Share the desktop's browser with an admin device, or stop — at once, for its next call and push. */
-  'server:setDeviceBrowser': { request: { id: string; browser: boolean }; response: Device[] }
 
   'ai:status': { request: void; response: AiStatus }
   'ai:setKey': { request: { key: string }; response: AiStatus }
@@ -557,10 +553,6 @@ export interface IpcChannels {
   'browser:groupUpdate': { request: { id: string; title?: string; color?: TabGroupColor; collapsed?: boolean }; response: void }
   'browser:ungroup': { request: { id: string }; response: void }
   'browser:groupClose': { request: { id: string }; response: void }
-  /** A tab's picture for a paired device (null: nothing to show, e.g. the new-tab page). */
-  'browser:capture': { request: { id: string; width?: number }; response: BrowserCapture | null }
-  /** A tap, scroll, text or key from a paired device, at page coordinates. */
-  'browser:input': { request: BrowserInput & { id: string }; response: void }
   /** Split view: `id` on the left (top), `with` beside it — a new tab when absent. */
   'browser:split': { request: { id: string; with?: string; vertical?: boolean }; response: BrowserSplit }
   'browser:splitUpdate': { request: { id: string; ratio?: number; vertical?: boolean; swap?: boolean }; response: void }
@@ -629,14 +621,11 @@ export type IpcChannel = keyof IpcChannels
  *                devices, the AI key, the Mindeck account, global settings
  * - `trusted`  — desktop, admin devices, or any device while remote shells
  *                are enabled: data beyond the shared folders (databases)
- * - `browser`  — desktop, or admin devices the desktop shared its browser
- *                with (per device, off by default — its tabs carry the user's
- *                logins; private tabs never)
  *
  * Paired devices also only reach shared folders, and approve changes and
  * commands only with remote shells (see RemoteAccess and PermissionService).
  */
-export type ChannelAccess = 'any' | 'desktop' | 'terminal' | 'admin' | 'trusted' | 'browser'
+export type ChannelAccess = 'any' | 'desktop' | 'terminal' | 'admin' | 'trusted'
 
 /** Every channel classified exactly once — a new channel without one is a type error. */
 export const CHANNEL_ACCESS: Record<IpcChannel, ChannelAccess> = {
@@ -831,8 +820,6 @@ export const CHANNEL_ACCESS: Record<IpcChannel, ChannelAccess> = {
   'server:devices': 'any',
   'server:revokeDevice': 'any',
   'server:setDeviceRole': 'admin',
-  // Which device may use the browser (with the user's logins): decided at the desktop only.
-  'server:setDeviceBrowser': 'desktop',
   'ai:status': 'any',
   'ai:setKey': 'admin',
   'ai:clearKey': 'admin',
@@ -914,39 +901,37 @@ export const CHANNEL_ACCESS: Record<IpcChannel, ChannelAccess> = {
   'browser:proceed': 'desktop',
   'browser:dismissDrm': 'desktop',
   'browser:pickDownloadDir': 'desktop',
-  // The browser lives in the desktop window — and its tabs carry the user's logins. An admin device sees
-  // and uses them only when the desktop shared the browser with it, private tabs never; switching tabs on
-  // the desktop's screen stays the desktop's.
-  'browser:state': 'browser',
-  'browser:open': 'browser',
-  'browser:close': 'browser',
+  // The browser lives in the desktop window — and its tabs are the user's private pages.
+  'browser:state': 'desktop',
+  'browser:open': 'desktop',
+  'browser:close': 'desktop',
   'browser:activate': 'desktop',
-  'browser:navigate': 'browser',
-  'browser:go': 'browser',
+  'browser:navigate': 'desktop',
+  'browser:go': 'desktop',
   'browser:update': 'desktop',
   'browser:move': 'desktop',
-  'browser:duplicate': 'browser',
-  'browser:reopen': 'browser',
-  'browser:zoom': 'browser',
+  'browser:duplicate': 'desktop',
+  'browser:reopen': 'desktop',
+  'browser:zoom': 'desktop',
   'browser:find': 'desktop',
   'browser:findStop': 'desktop',
   'browser:tool': 'desktop',
   'browser:view': 'desktop',
   'browser:freeze': 'desktop',
   'browser:unfreeze': 'desktop',
-  'browser:suggest': 'browser',
-  'browser:history': 'browser',
+  'browser:suggest': 'desktop',
+  'browser:history': 'desktop',
   'browser:clearHistory': 'desktop',
   'browser:download': 'desktop',
   'browser:permission': 'desktop',
   'browser:settings': 'desktop',
   'browser:configure': 'desktop',
   'browser:ui': 'desktop',
-  'browser:searchSuggest': 'browser',
-  'browser:historyList': 'browser',
+  'browser:searchSuggest': 'desktop',
+  'browser:historyList': 'desktop',
   'browser:historyDelete': 'desktop',
-  'browser:bookmarks': 'browser',
-  'browser:bookmarkAdd': 'browser',
+  'browser:bookmarks': 'desktop',
+  'browser:bookmarkAdd': 'desktop',
   'browser:bookmarkUpdate': 'desktop',
   'browser:bookmarkMove': 'desktop',
   'browser:bookmarkRemove': 'desktop',
@@ -962,8 +947,6 @@ export const CHANNEL_ACCESS: Record<IpcChannel, ChannelAccess> = {
   'browser:split': 'desktop',
   'browser:splitUpdate': 'desktop',
   'browser:unsplit': 'desktop',
-  'browser:capture': 'browser',
-  'browser:input': 'browser',
   // The whole disk, beyond projects and the vault: the desktop, or a device with remote shells (which
   // could read it with a shell anyway) — inside Home and on drives, never hidden folders, keys or
   // Mindeck's own data (RemoteAccess). The host's own apps, Finder and clipboard: the desktop only.
@@ -1089,8 +1072,5 @@ export const IPC_EVENTS: readonly IpcEvent[] = [
 /** Push events remote clients only receive when remote shells are enabled. */
 export const TERMINAL_EVENTS: readonly IpcEvent[] = ['terminal:data', 'terminal:exit', 'terminal:info', 'terminal:reveal', 'debug:session', 'debug:output', 'notebook:event', 'finder:progress']
 
-/** Push events remote clients only receive when the desktop lets paired devices use the browser (private tabs left out). */
-export const BROWSER_EVENTS: readonly IpcEvent[] = ['browser:state', 'browser:bookmarks']
-
-/** Push events that never leave the desktop window (its own browser UI; Remote-SSH windows are the desktop's own). */
-export const DESKTOP_EVENTS: readonly IpcEvent[] = ['browser:find', 'browser:command', 'browser:reveal', 'browser:import', 'remote:changed']
+/** Push events that never leave the desktop window (the browser's tabs are private pages; Remote-SSH windows are the desktop's own). */
+export const DESKTOP_EVENTS: readonly IpcEvent[] = ['browser:state', 'browser:find', 'browser:command', 'browser:reveal', 'browser:bookmarks', 'browser:import', 'remote:changed']

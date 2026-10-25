@@ -15,7 +15,6 @@ import { BookmarksBar } from './BookmarksBar'
 import { BookmarkEditor } from './BookmarkEditor'
 import { ImportDialog } from './ImportDialog'
 import { RestoreBar } from './RestoreBar'
-import { RemoteUseBar } from './RemoteUseBar'
 import { TabSearch } from './TabSearch'
 import { ExtensionButtons, ExtensionsPanel } from './Extensions'
 import { DrmBar } from './Protection'
@@ -162,7 +161,6 @@ export function BrowserView({ active }: { active: boolean }) {
             </button>
           </div>
         )}
-        <RemoteUseBar />
         <RestoreBar />
         {findOpen && tab && page && <FindBar tab={tab} />}
         <PermissionBar tabId={tab?.id} />

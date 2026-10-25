@@ -102,12 +102,6 @@ export interface Device {
   id: string
   name: string
   role: DeviceRole
-  /**
-   * May see and use the desktop's browser (its tabs carry the user's logins;
-   * private tabs never). Granted per device at the desktop, admin devices
-   * only — losing the admin role takes it away.
-   */
-  browser?: boolean
   createdAt: string
   lastSeenAt?: string
 }

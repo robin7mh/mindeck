@@ -12,7 +12,7 @@ import { BOOT_LINES } from '@/data/bootLines'
 import { errorMessage, ipc, IpcError, onEvent, setTransport } from '@shared/ipc/client'
 import { useLocale } from '@/lib/i18n'
 import { blameHover } from '@/features/editor/blame'
-import { BROWSER_EVENTS, CHANNEL_ACCESS, DESKTOP_EVENTS, IPC_CHANNELS, IPC_EVENTS, TERMINAL_EVENTS } from '@shared/ipc/contract'
+import { CHANNEL_ACCESS, DESKTOP_EVENTS, IPC_CHANNELS, IPC_EVENTS, TERMINAL_EVENTS } from '@shared/ipc/contract'
 import { DEFAULT_GRAPH_STYLE, GRAPH_COLORS } from '@shared/types/memory'
 import { EVENT_CATALOG } from '@shared/types/events'
 import { renderMarkdown } from '@/features/memory/markdown'
@@ -235,15 +235,12 @@ describe('data & shared constants', () => {
       'browser:import',
       'finder:progress'
     ])
-    // The browser's tabs reach paired devices only while the desktop shares them, Files only with remote shells;
-    // the desktop's own browser UI, the host's apps and its clipboard never.
-    expect(DESKTOP_EVENTS).toEqual(['browser:find', 'browser:command', 'browser:reveal', 'browser:import', 'remote:changed'])
-    expect(BROWSER_EVENTS).toEqual(['browser:state', 'browser:bookmarks'])
+    // The browser's pages are private: none of its events reach remote clients, all its channels are desktop-only.
+    // Files reach paired devices only with remote shells; the host's own apps and its clipboard never.
+    expect(DESKTOP_EVENTS).toEqual(['browser:state', 'browser:find', 'browser:command', 'browser:reveal', 'browser:bookmarks', 'browser:import', 'remote:changed'])
     expect(TERMINAL_EVENTS).toContain('finder:progress')
+    for (const channel of IPC_CHANNELS.filter((c) => c.startsWith('browser:'))) expect(CHANNEL_ACCESS[channel], channel).toBe('desktop')
     const shared = (prefix: string) => IPC_CHANNELS.filter((c) => c.startsWith(prefix) && CHANNEL_ACCESS[c] !== 'desktop')
-    expect(shared('browser:').every((c) => CHANNEL_ACCESS[c] === 'browser')).toBe(true)
-    expect(shared('browser:')).toEqual(expect.arrayContaining(['browser:state', 'browser:capture', 'browser:input']))
-    expect(shared('browser:')).not.toEqual(expect.arrayContaining(['browser:extensions']))
     expect(shared('finder:').every((c) => CHANNEL_ACCESS[c] === 'terminal')).toBe(true)
     for (const channel of ['finder:open', 'finder:reveal', 'finder:clipboardRead', 'finder:clipboardWrite', 'finder:privacySettings', 'browser:freeze', 'browser:extensions'] as const) expect(CHANNEL_ACCESS[channel]).toBe('desktop')
     expect(GRAPH_COLORS).toHaveLength(8)

@@ -82,8 +82,6 @@ export interface AutomationTarget {
   cdp<T = unknown>(method: string, params?: Record<string, unknown>): Promise<T>
   /** The visible page as PNG (base64). */
   capture(): Promise<{ png: string; width: number; height: number }>
-  /** The visible page as JPEG (base64), at most `width` pixels wide — a picture for another device. */
-  preview(width: number, quality: number): Promise<{ jpeg: string; width: number; height: number }>
 }
 
 /** A server's question for a login (HTTP authentication). */

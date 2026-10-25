@@ -189,11 +189,6 @@ export class ServerController {
     return this.opts.auth.setRole(id, role)
   }
 
-  /** Share the browser with a device or stop: its next call and push already go by it. */
-  setDeviceBrowser(id: string, browser: boolean): Promise<Device[]> {
-    return this.opts.auth.setBrowser(id, browser)
-  }
-
   async revoke(id: string): Promise<void> {
     await this.opts.auth.revoke(id)
     this.http?.disconnectDevice(id)

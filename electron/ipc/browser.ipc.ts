@@ -19,8 +19,6 @@ export function registerBrowserIpc(router: Router, browser: BrowserService): voi
   router.register('browser:close', ({ id }) => browser.close(id))
   router.register('browser:activate', ({ id }) => browser.activate(id))
   router.register('browser:navigate', ({ id, input }) => browser.navigate(id, input))
-  router.register('browser:capture', ({ id, width }) => browser.capture(id, width))
-  router.register('browser:input', ({ id, ...input }) => browser.input(id, input))
   router.register('browser:go', ({ id, action }) => browser.go(id, action))
   router.register('browser:update', ({ id, ...patch }) => browser.update(id, patch))
   router.register('browser:move', ({ id, index, groupId }) => browser.move(id, index, groupId))

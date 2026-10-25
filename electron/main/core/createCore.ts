@@ -255,23 +255,16 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
   })
   // …and what they see of the core's activity: sessions, conversations, approvals and events of those projects only.
   const conversations = new ConversationStore(paths.dataDir)
-  const browserTab = (id: string) => browser.state().tabs.find((t) => t.id === id)
-  const webUrl = (input: string) => browser.webUrl(input)
   const remoteScope = new RemoteScope({
     access: remoteAccess,
     sessionProject: (id) => agents.projectOf(id),
     conversationProject: (id) => conversations.projectOf(id),
-    pending: () => permissions.list(),
-    browserTab,
-    webUrl
+    pending: () => permissions.list()
   })
-  // What devices do with the browser and the files: the audit log, and the desktop's sign that one uses the browser.
+  // What devices do with the computer's files: into the audit log.
   const remoteActivity = new RemoteActivity({
     devices: () => auth.devices(),
-    log: (type, deviceId, payload) => events.emit(type, { actor: { kind: 'device', id: deviceId }, payload }),
-    inUse: (devices) => browser.setRemote(devices),
-    browserTab,
-    webUrl
+    log: (type, deviceId, payload) => events.emit(type, { actor: { kind: 'device', id: deviceId }, payload })
   })
 
   const router = new Router({
@@ -460,17 +453,9 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
     if (ctx.transport === 'remote' && ctx.role !== 'admin' && id !== ctx.deviceId) {
       throw Object.assign(new Error('Removing other devices needs the admin role'), { code: 'admin-only' })
     }
-    remoteActivity.release(id)
     return controller.revoke(id)
   })
-  router.register('server:setDeviceRole', ({ id, role }) => {
-    if (role !== 'admin') remoteActivity.release(id)
-    return controller.setDeviceRole(id, role)
-  })
-  router.register('server:setDeviceBrowser', ({ id, browser }) => {
-    if (!browser) remoteActivity.release(id)
-    return controller.setDeviceBrowser(id, browser)
-  })
+  router.register('server:setDeviceRole', ({ id, role }) => controller.setDeviceRole(id, role))
   router.register('ai:status', () => ai.status())
   router.register('ai:setKey', ({ key }) => ai.setKey(key))
   router.register('ai:clearKey', () => ai.clearKey())
@@ -565,7 +550,6 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
       debug.dispose()
       await mongo.dispose()
       remote.dispose()
-      remoteActivity.dispose()
       lint.dispose()
       search.dispose()
       notebooks.dispose()

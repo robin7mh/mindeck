@@ -14,7 +14,7 @@ const recorder = () =>
 describe('browser and files channels', () => {
   const ipc = { transport: 'ipc' as const }
 
-  it('reach the browser service with validated payloads — from paired devices only when the desktop shares the browser', async () => {
+  it('reach the browser service with validated payloads — and only from the desktop window', async () => {
     const router = new Router()
     const browser = recorder()
     registerBrowserIpc(router, browser as unknown as BrowserService)
@@ -82,13 +82,7 @@ describe('browser and files channels', () => {
       ['browser:split', { id: 't', with: 'u', vertical: true }, 'split', ['t', 'u', true]],
       ['browser:split', { id: 't' }, 'split', ['t', undefined, undefined]],
       ['browser:splitUpdate', { id: 's', ratio: 0.3, swap: true }, 'updateSplit', ['s', { ratio: 0.3, swap: true }]],
-      ['browser:unsplit', { id: 's' }, 'unsplit', ['s']],
-      ['browser:capture', { id: 't' }, 'capture', ['t', undefined]],
-      ['browser:capture', { id: 't', width: 600 }, 'capture', ['t', 600]],
-      ['browser:input', { id: 't', action: 'click', x: 10, y: 20 }, 'input', ['t', { action: 'click', x: 10, y: 20 }]],
-      ['browser:input', { id: 't', action: 'scroll', x: 1, y: 2, dx: 0, dy: 300 }, 'input', ['t', { action: 'scroll', x: 1, y: 2, dx: 0, dy: 300 }]],
-      ['browser:input', { id: 't', action: 'type', text: 'hello' }, 'input', ['t', { action: 'type', text: 'hello' }]],
-      ['browser:input', { id: 't', action: 'key', key: 'Enter' }, 'input', ['t', { action: 'key', key: 'Enter' }]]
+      ['browser:unsplit', { id: 's' }, 'unsplit', ['s']]
     ]
     for (const [channel, payload, method, args] of calls) {
       const res = await router.dispatch(channel, payload, ipc)
@@ -106,20 +100,9 @@ describe('browser and files channels', () => {
     expect(await router.dispatch('browser:group', { ids: [] }, ipc)).toMatchObject({ ok: false, error: { code: 'bad-request' } })
     expect(await router.dispatch('browser:configure', { verticalTabsWidth: 20 }, ipc)).toMatchObject({ ok: false, error: { code: 'bad-request' } })
     expect(await router.dispatch('browser:splitUpdate', { id: 's', ratio: 2 }, ipc)).toMatchObject({ ok: false, error: { code: 'bad-request' } })
-    expect(await router.dispatch('browser:capture', { id: 't', width: 50 }, ipc)).toMatchObject({ ok: false, error: { code: 'bad-request' } })
-    expect(await router.dispatch('browser:input', { id: 't', action: 'key', key: 'F13' }, ipc)).toMatchObject({ ok: false, error: { code: 'bad-request' } })
-    expect(await router.dispatch('browser:input', { id: 't', action: 'type', text: '' }, ipc)).toMatchObject({ ok: false, error: { code: 'bad-request' } })
-    expect(await router.dispatch('browser:input', { id: 't', action: 'click', x: -1, y: 0 }, ipc)).toMatchObject({ ok: false, error: { code: 'bad-request' } })
-    // A paired device reaches the tabs only when it is an admin the desktop shared the browser with — and never the desktop's own UI.
-    const remote = { transport: 'remote' as const, deviceId: 'd1' }
-    for (const ctx of [remote, { ...remote, role: 'member' as const, browser: true }, { ...remote, role: 'admin' as const }, { ...remote, role: 'admin' as const, browser: false }]) {
-      expect(await router.dispatch('browser:capture', { id: 't' }, ctx), JSON.stringify(ctx)).toMatchObject({ ok: false, error: { code: 'remote-browser-disabled' } })
-    }
-    const shared = { ...remote, role: 'admin' as const, browser: true }
-    expect(await router.dispatch('browser:capture', { id: 't' }, shared)).toEqual({ ok: true, data: { called: 'capture', args: ['t', undefined] } })
-    for (const channel of ['browser:freeze', 'browser:activate', 'browser:permission', 'browser:downloads']) {
-      if (router.has(channel)) expect(await router.dispatch(channel, { id: 't' }, shared), channel).toMatchObject({ ok: false, error: { code: 'desktop-only' } })
-    }
+    // a paired phone or browser never reaches the user's tabs — admins neither
+    expect(await router.dispatch('browser:state', undefined, { transport: 'remote' })).toMatchObject({ ok: false, error: { code: 'desktop-only' } })
+    expect(await router.dispatch('browser:open', { url: 'https://example.com/' }, { transport: 'remote', deviceId: 'd1', role: 'admin' })).toMatchObject({ ok: false, error: { code: 'desktop-only' } })
   })
 
   it('reach the files service — and refuse names and paths that are no names or paths', async () => {

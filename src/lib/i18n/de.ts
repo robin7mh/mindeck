@@ -716,12 +716,6 @@ agents: {
       ended: (code) => `Sitzung beendet${code ? ` (Exit-Code ${code})` : ''}`,
       items: (n) => `${n} Objekte`,
       device: {
-        view: (device, what) => `${device} hat ${what || 'eine Seite'} im Browser angesehen`,
-        input: (device, what) => `${device} hat auf ${what || 'einer Seite'} getippt oder geschrieben`,
-        open: (device, what) => `${device} hat ${what || 'einen neuen Tab'} geöffnet`,
-        navigate: (device, what) => `${device} ist zu ${what || 'einer Seite'} gegangen`,
-        close: (device) => `${device} hat einen Tab geschlossen`,
-        bookmark: (device, what) => `${device} hat ${what || 'eine Seite'} als Lesezeichen gesichert`,
         download: (device, what) => `${device} hat ${what} geladen`,
         upload: (device, what) => `${device} hat ${what} hochgeladen`,
         mkdir: (device, what) => `${device} hat den Ordner ${what} angelegt`,
@@ -1781,9 +1775,7 @@ agents: {
     importEngine: (name) => `Ab jetzt wird mit ${name} gesucht.`,
     importFailed: (what) => `${what}: konnte nicht gelesen werden. Schließe den anderen Browser und versuch es noch einmal.`,
     crashed: (n) => `Mindeck wurde unerwartet beendet. ${n === 1 ? 'Den Tab' : `${n} Tabs`} von vorher wiederherstellen?`,
-    restore: 'Wiederherstellen',
-    remoteUse: (device) => `${device} nutzt diesen Browser — sieht deine Tabs und handelt mit deinen Logins`,
-    remoteStop: 'Beenden'
+    restore: 'Wiederherstellen'
   },
 
   projects: {
@@ -1926,9 +1918,6 @@ agents: {
     certificateOwn: (until) => `Eigenes Zertifikat · gültig bis ${until}`,
     shells: 'Remote-Shells erlauben',
     shellsHint: 'Gekoppelte Geräte dürfen Terminals öffnen, Agents Befehle ausführen und Dateien ändern lassen und Änderungen freigeben. Standardmäßig aus.',
-    shareBrowser: (name) => `Browser mit ${name} teilen`,
-    shareBrowserHint: 'Globus: Ein Admin-Gerät, mit dem du den Browser teilst, sieht deine Tabs als Bild und kann sie bedienen — Seiten öffnen, tippen, schreiben. Es handelt mit deinen Logins, also teile ihn nur, solange du ihn brauchst. Private Tabs verlassen diesen Computer nie.',
-    browserShared: 'Nutzt den Browser',
     port: 'Port',
     desktopOnly: 'Server-Einstellungen lassen sich nur in der Desktop-App ändern.',
     envOnly: 'Dieser Core wird über seine Umgebung konfiguriert (MINDECK_PORT, MINDECK_LAN, MINDECK_TLS, MINDECK_REMOTE_TERMINAL, MINDECK_REMOTE_ROOTS).',

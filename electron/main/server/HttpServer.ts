@@ -8,7 +8,7 @@ import { readFile, realpath, stat } from 'node:fs/promises'
 import { extname, join, resolve, sep } from 'node:path'
 import type { Duplex } from 'node:stream'
 import { WebSocketServer, type WebSocket } from 'ws'
-import { BROWSER_EVENTS, DESKTOP_EVENTS, TERMINAL_EVENTS, type IpcEvent } from '@shared/ipc/contract'
+import { DESKTOP_EVENTS, TERMINAL_EVENTS, type IpcEvent } from '@shared/ipc/contract'
 import { EVENTS_PROTOCOL, TOKEN_PROTOCOL_PREFIX } from '@shared/ipc/transport'
 import type { PermissionRequest } from '@shared/types/ai'
 import type { CoreMode, Device } from '@shared/types/server'
@@ -632,8 +632,7 @@ export class HttpServer {
     const result = await this.opts.router.dispatch(decoded(channel), payload, {
       transport: 'remote',
       deviceId: device.id,
-      role: device.role,
-      browser: device.browser === true
+      role: device.role
     })
     send(res, 200, result)
   }
@@ -711,7 +710,6 @@ export class HttpServer {
     // Devices connected now or a moment ago (their events wait for their reconnect).
     if (!this.streams.size || DESKTOP_EVENTS.includes(channel)) return
     if (TERMINAL_EVENTS.includes(channel) && !this.opts.remoteTerminal()) return
-    if (BROWSER_EVENTS.includes(channel)) return this.pushBrowser(channel, payload)
     const scope = this.opts.scope
     if (!scope) return this.deliver(channel, payload)
     this.enqueue(channel, async () => {
@@ -760,18 +758,7 @@ export class HttpServer {
     return JSON.stringify({ channel: 'resync-required', payload: { stream: stream.id, seq: stream.seq } })
   }
 
-  /** The browser's tabs: only to the admin devices the desktop shared them with — asked anew for every push. */
-  private pushBrowser(channel: IpcEvent, payload: unknown): void {
-    this.enqueue(channel, async () => {
-      const shared = new Set((await this.opts.auth.devices()).filter((d) => d.role === 'admin' && d.browser).map((d) => d.id))
-      if (!shared.size) return
-      const scope = this.opts.scope
-      const shown = scope ? await withTimeout(scope(channel, payload), this.opts.outbox?.timeoutMs ?? SCOPE_TIMEOUT_MS) : payload
-      if (shown !== null) this.deliver(channel, shown, shared)
-    })
-  }
-
-  private deliver(channel: IpcEvent, payload: unknown, to?: Set<string>): void {
+  private deliver(channel: IpcEvent, payload: unknown): void {
     // "Always allow" is only ever given at the desktop: devices are not offered it.
     const shown = channel === 'permission:request' ? { ...(payload as PermissionRequest), allowAlways: false } : payload
     // Search results (file contents) and inline edits go only to the device that asked (the desktop's to none).
@@ -781,7 +768,6 @@ export class HttpServer {
     // Each device numbers (and keeps) its own events — also while it is away, for its reconnect.
     for (const [deviceId, stream] of this.streams.entries()) {
       if (only !== undefined && deviceId !== only) continue
-      if (to && !to.has(deviceId)) continue
       const message = VOLATILE.includes(channel) ? body : stream.record(body, now)
       for (const client of this.clients) {
         if (client.deviceId === deviceId && client.ws.readyState === client.ws.OPEN) client.ws.send(message)
