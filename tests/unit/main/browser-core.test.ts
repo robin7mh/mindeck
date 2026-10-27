@@ -4,7 +4,8 @@ import { describe, expect, it, vi } from 'vitest'
 import { tempDir, tick } from './helpers'
 import { isLoopback, isLoopbackHost, isPageUrl, isWebUrl, originOf, resolveInput, searchUrl } from '../../../electron/main/services/browser/url'
 import { bareUrl, BrowserHistory, frecency } from '../../../electron/main/services/browser/history'
-import { DevServerDetector } from '../../../electron/main/services/browser/devServers'
+import { createServer } from 'node:net'
+import { DevServerDetector, listening, probeTarget } from '../../../electron/main/services/browser/devServers'
 import { ENGINE_NAMES, labels } from '../../../electron/main/services/browser/labels'
 import { keyEvents, KEY_NAMES, quadCenter, renderSnapshot, type AxNode } from '../../../electron/main/services/browser/snapshot'
 
@@ -189,7 +190,7 @@ describe('dev server detection', () => {
   it('reads complete lines only, strips terminal codes, and offers each local address once', () => {
     const changes: string[][] = []
     let clock = 0
-    const d = new DevServerDetector((list) => changes.push(list.map((s) => `${s.label}@${s.terminalId}`)), () => new Date(1000 + clock++))
+    const d = new DevServerDetector((list) => changes.push(list.map((s) => `${s.label}@${s.terminalId}`)), { now: () => new Date(1000 + clock++), probe: async () => true })
     d.feed({ id: 't1', projectId: 'shop' }, '\x1b[32m  ➜  Local:   http://localhost:51')
     expect(changes).toEqual([]) // the line has not ended yet
     d.feed({ id: 't1', projectId: 'shop' }, '73/\x1b[39m\n  ➜  Network: use --host to expose\n')
@@ -224,6 +225,87 @@ describe('dev server detection', () => {
     const d = new DevServerDetector(() => {})
     d.feed({ id: 't' }, 'http://localhost:4321\n')
     expect(Date.parse(d.list()[0].detectedAt)).toBeGreaterThan(0)
+    d.dispose()
+  })
+
+  it('a server that stops (Ctrl+C) leaves the list: right after its command ends, else at the next check', async () => {
+    vi.useFakeTimers()
+    try {
+      const up = new Set(['http://localhost:3000/', 'http://localhost:5173/'])
+      const probe = vi.fn(async (url: string) => up.has(url))
+      let now = 0
+      const changes: string[][] = []
+      const d = new DevServerDetector((list) => changes.push(list.map((s) => s.label)), { now: () => new Date(now), probe, intervalMs: 5000, settleMs: 300, graceMs: 20_000 })
+      // Nothing listed: an ended command checks nothing, no timer runs.
+      d.feed({ id: 't1' }, '\x1b]133;D;0\x07')
+      await vi.advanceTimersByTimeAsync(10_000)
+      expect(probe).not.toHaveBeenCalled()
+
+      d.feed({ id: 't1' }, '  - Local:   http://localhost:3000\n')
+      d.feed({ id: 't2' }, '  ➜  Local:   http://localhost:5173/\n')
+      await vi.advanceTimersByTimeAsync(5000)
+      expect(probe).toHaveBeenCalledTimes(2)
+      expect(d.list()).toHaveLength(2)
+
+      // ^C: the shell's prompt says the command ended — a moment later the server is checked and gone.
+      up.delete('http://localhost:3000/')
+      d.feed({ id: 't1' }, '^C\r\n\x1b]133;D;130\x07')
+      d.feed({ id: 't1' }, '\x1b]133;D;0\x07') // a second mark waits for the same check
+      await vi.advanceTimersByTimeAsync(300)
+      expect(changes.at(-1)).toEqual(['localhost:5173'])
+
+      // Killed elsewhere: the periodic check notices; the last one gone stops the timer.
+      up.delete('http://localhost:5173/')
+      await vi.advanceTimersByTimeAsync(5000)
+      expect(d.list()).toEqual([])
+      probe.mockClear()
+      await vi.advanceTimersByTimeAsync(20_000)
+      expect(probe).not.toHaveBeenCalled()
+
+      // Announced before it listens (Next.js prints its address first): it gets time to start …
+      d.feed({ id: 't1' }, 'http://localhost:3000\n')
+      await d.check()
+      expect(d.list()).toHaveLength(1)
+      // … and once that is over without an answer, it was no server.
+      now = 20_000
+      await d.check()
+      expect(d.list()).toEqual([])
+      // Restarted: an address that answered before gets its time to start again.
+      up.add('http://localhost:3000/')
+      d.feed({ id: 't1' }, 'http://localhost:3000\n')
+      await d.check()
+      up.delete('http://localhost:3000/')
+      d.exit('t1')
+      d.feed({ id: 't2' }, 'http://localhost:3000\n')
+      await d.check()
+      expect(d.list()).toHaveLength(1)
+
+      // Two servers in one terminal: the one still running stays; one check at a time.
+      d.feed({ id: 't2' }, 'http://localhost:5173\n')
+      up.add('http://localhost:5173/')
+      now = 50_000
+      const [first, second] = [d.check(), d.check()]
+      expect(first).toBe(second)
+      await first
+      expect(d.list().map((s) => s.label)).toEqual(['localhost:5173'])
+      d.dispose()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('knocks at the address itself: a listening port answers, a closed one does not', async () => {
+    expect(probeTarget('http://localhost:5173/')).toEqual({ host: 'localhost', port: 5173 })
+    expect(probeTarget('http://shop.localhost:3000/')).toEqual({ host: 'localhost', port: 3000 })
+    expect(probeTarget('http://[::1]:8002/')).toEqual({ host: '::1', port: 8002 })
+    expect(probeTarget('http://127.0.0.1/')).toEqual({ host: '127.0.0.1', port: 80 })
+    expect(probeTarget('https://localhost/')).toEqual({ host: 'localhost', port: 443 })
+    const server = createServer().listen(0, '127.0.0.1')
+    await new Promise((r) => server.once('listening', r))
+    const { port } = server.address() as { port: number }
+    expect(await listening(`http://127.0.0.1:${port}/`)).toBe(true)
+    await new Promise((r) => server.close(r))
+    expect(await listening(`http://127.0.0.1:${port}/`)).toBe(false)
   })
 })
 

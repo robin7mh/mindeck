@@ -1097,6 +1097,7 @@ export class BrowserService {
   /** A clean quit: everything unsaved goes to disk, and the session says it ended well. */
   async dispose(): Promise<void> {
     clearTimeout(this.publishTimer)
+    this.devServers.dispose()
     this.adblock.dispose()
     this.extensions.dispose()
     await Promise.all([
