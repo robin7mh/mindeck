@@ -1,13 +1,45 @@
 # Mindeck: Files und Browser für gekoppelte Geräte (2026-10)
 
-**Stand:** 2026-10-16 · **Branch:** `feature/mobile-remote` (Basis `develop`, `e5cadb9`)
-**Gegenstück:** `mindeck-mobile`, Branch `feature/mobile-parity` (Files- und Browser-Modul der App)
+**Stand:** 2026-10-16 (Entscheidungsvorlage) · **Nachträge:** 2026-10-25, 2026-10-27
+**Gegenstück:** `mindeck-mobile`. Beide Repos arbeiten auf `develop`; `feature/mobile-remote` und
+`feature/mobile-parity` sind aufgelöst (Core: `f5aa278`, `357912a`, `d3afd52`, `1c0be7a`).
 
 > **Update 2026-10-25:** Der Browser-Teil ist wieder entfernt (Robins Entscheidung). Die Mobile-App
 > hat jetzt einen eigenen Browser auf dem Handy; kein gekoppeltes Gerät sieht oder bedient mehr den
 > Browser des Desktops, alle `browser:*`-Kanäle sind wieder *desktop only*, `browser:capture`,
 > `browser:input` und `server:setDeviceBrowser` gibt es nicht mehr. Was unten zum Browser steht, ist
 > Geschichte; **Files für Geräte mit Remote-Shells bleiben** wie beschrieben.
+
+## Stand der Mobile-App (2026-10-27)
+
+Ein sauberer Zwischenstand: Alles Folgende ist auf `mindeck-mobile` `develop` committet (zuletzt
+`efba9d2`), geprüft mit `npx tsc --noEmit` und `npx expo lint`.
+
+**Fertig**
+
+- **Vertrag wie der Core** (`npm run sync:shared`): Zugriffsklasse `trusted`, Transport mit Replay,
+  `onResync` in Stores, Terminal, Sitzungen und Assistent. Ein `401` vergisst die Kopplung. Texte für
+  `rate-limited`, `license_suspended` und `device_limit`.
+- **Module wie am Desktop:** Core-Übersicht, Agents, Projekte, Gedächtnis; dazu Terminal (xterm.js mit
+  Tastenleiste), Files (nur mit Remote-Shells), ein eigener Browser auf dem Handy, Datenbanken, System,
+  Logs, Einstellungen und die Befehlspalette.
+- **Darstellung wie am Desktop** (Mehr → Darstellung): Modus Dunkel/Hell/System, sieben Akzentfarben,
+  Hintergrund Cyber/Schwarz/Graphit, mit den Werten aus `src/lib/theme.ts` und `src/index.css`.
+  Gilt pro Gerät; Settings Sync übernimmt die Darstellung des Desktops.
+- **Terminal und Editor** ohne weißes Aufblitzen und ohne den Fehler „Unable to find the
+  'DomWebView' view“ (`react-native-webview` statt Expos eigener WebView), in den Farben der App.
+- **Expo SDK 58** (React Native 0.88). `npm run ios` / `npm run android` bauen die App nativ; das
+  eigene iPhone geht auch ohne Developer-Programm (README → *On your own iPhone*).
+
+**Offen**
+
+| # | Punkt | Wo | Hinweis |
+|---|---|---|---|
+| M1 | **SPKI-Pin unter iOS (BE-SEC-10):** `mindeck-net` hasht unter iOS den rohen RSA-Schlüssel (`SecKeyCopyExternalRepresentation`, PKCS#1), der Core den SPKI-DER. In einem echten iOS-Build scheitert deshalb das Koppeln per QR-Code (`&pk=`) mit `fingerprint-mismatch`. Expo Go ist nicht betroffen, dort fehlt das native Modul. | `modules/mindeck-net/ios` | Dem Schlüssel den SPKI-Kopf für RSA 2048 voranstellen (der Core erzeugt nur RSA 2048). Android und der Link-Parser sind richtig. Braucht einen neuen nativen Build. |
+| M2 | Kein eigener Text für `push_token_taken`; die App zeigt den allgemeinen Fehler. | `src/lib/i18n` | klein |
+| M3 | **Server** für `api.mindeck.de` und `mindeck.de`. Die Build-Profile in `eas.json` sprechen genau diese Adressen an. | mindeck-cloud, mindeck-web | Voraussetzung für Testbuilds mit laufendem Backend. |
+| M4 | **Erste echte Builds:** Apple Developer Program (99 €/Jahr; als Person sofort, als Firma mit D-U-N-S-Nummer), EAS-Projekt (`eas init`), APNs-Schlüssel für Push, dann TestFlight intern (bis 100 Tester, ohne Prüfung). | Konten, EAS | TestFlight ist nicht der Store: Veröffentlicht wird erst nach eigener Einreichung. Android-APKs gehen ohne Konto. |
+| M5 | **Zugang für Apples Prüfung** (externes TestFlight, Store): ein Demo-Konto und ein erreichbarer Demo-Core (Server-Modus). | Cloud, Core | Ohne Core lässt sich die App nicht prüfen. |
 
 Bis hierher waren Files (`finder:*`) und Browser (`browser:*`) reine Desktop-Kanäle. Die Mobile-App
 soll aber alles können, was der Desktop kann. Diese Änderung öffnet beides für gekoppelte Geräte —

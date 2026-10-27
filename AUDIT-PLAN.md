@@ -69,11 +69,11 @@ Alle Findings dieses Plans sind auf `feature/claude-remote` umgesetzt, in zwei R
 - **macOS:** Den Sign-Hook mit den Plugin-Entitlements (`build/sign.cjs`) einmal real signieren und notarisieren. Hier war das nicht prüfbar.
 
 **Folgearbeit in anderen Repos:**
-- **mindeck-mobile:**
-  - Auf SPKI-Pinning umstellen (`&pk=`).
-  - `npm run sync:shared` ausführen (neue Zugriffsklasse `trusted`, Transport mit Replay) und `onResync` in den Stores nutzen.
-  - `401` bei abgelaufenem Token sauber behandeln.
-  - Eigene Texte für `rate-limited` (Gerätelimit), `license_suspended`, `device_limit` und `push_token_taken`.
+- **mindeck-mobile** (Stand 2026-10-27, Details in `docs/MOBILE-REMOTE-2026-10.md`):
+  - ⚠️ SPKI-Pinning (`&pk=`): Der Link-Parser übernimmt `pk`, Android pinnt richtig. **iOS hasht den Schlüssel noch ohne SPKI-Kopf** und trifft den Core-Wert nicht (BE-SEC-10, M1).
+  - ✅ `npm run sync:shared` (Zugriffsklasse `trusted`, Transport mit Replay) und `onResync` in den Stores.
+  - ✅ `401` bei abgelaufenem Token: Die App vergisst die Kopplung.
+  - ✅ Texte für `rate-limited`, `license_suspended` und `device_limit`; offen ist nur `push_token_taken` (M2).
 - **mindeck-cloud:** erledigt (Follower-Leases, `kid`, Sperrliste).
 
 In der Checkliste (Abschnitt 5) heißt `[x]` erledigt, `[~]` heißt teilweise erledigt, der Rest liegt in einem anderen Repo.
@@ -861,7 +861,7 @@ Für den Frontend-Teil gibt es kein Problem: Renderer 935/935 grün. Kein `.only
 - [x] **BE-SEC-07** (🟡) – Projekt-Kanäle mit `id` statt `projectId` umgehen das Projekt-Scoping; `liveServer:status` verrät fremde Projekt-IDs
 - [x] **BE-SEC-08** (🟡) – MongoDB-Verbindungen sind für jedes Gerät lesbar – unabhängig von freigegebenen Ordnern
 - [~] **BE-SEC-10** (🟡) – TLS-Pinning auf das **Zertifikat** bricht bei jeder Erneuerung (Adresswechsel) – Druck zum „Warnung wegklicken“
-  - ⚠️ mindeck fertig: `spkiFingerprint` in Pairing-Antwort, `server:status` und QR (`&pk=`); bei Neuausstellung bleibt der Schlüssel gleich. **Offen in mindeck-mobile:** auf SPKI-Pinning umstellen.
+  - ⚠️ mindeck fertig: `spkiFingerprint` in Pairing-Antwort, `server:status` und QR (`&pk=`); bei Neuausstellung bleibt der Schlüssel gleich. **Offen in mindeck-mobile:** auf SPKI-Pinning umstellen. Stand 2026-10-27: Link-Parser und Android sind fertig, offen ist nur noch der Schlüssel-Hash unter iOS (`docs/MOBILE-REMOTE-2026-10.md`, M1).
 - [x] **BE-SEC-11** (🟡) – Live Server: dotfiles ausgeliefert, kein Host-Check → DNS-Rebinding liest `.env`
 - [x] **BE-SEC-12** (🟡) – SFTP aus `.vscode/sftp.json` des Repos: Upload folgt Symlinks; Repo-Konfiguration wird ungefragt benutzt
 - [x] **BE-SEC-14** (🟡) – Fuse `RunAsNode` an + `disable-library-validation` + Kamera/Mikrofon-Entitlements (N5, weiterhin offen)
@@ -1026,6 +1026,10 @@ Für den Frontend-Teil gibt es kein Problem: Renderer 935/935 grün. Kein `.only
 9. **`monaco-editor` liefert eigenes DOMPurify 3.4.15 mit** (SECURITY-REVIEW N7): unverändert. Nur relevant, falls Monaco-Markdown jemals `supportHtml` bekommt.
 
 ### 7.3 Aus Runde 3 (2026-10-18)
+
+> **Stand 2026-10-27:** Die Folgearbeit aus Runde 2 ist in mindeck-mobile erledigt. Die Zusammenführung
+> mit `feature/mobile-remote` auch (`f5aa278`, `357912a`, `d3afd52`; der Browser-Teil ist mit `1c0be7a`
+> wieder entfernt). Von den TLS-Punkten unten bleibt nur der Schlüssel-Hash unter iOS offen.
 
 - **mindeck-mobile (TLS, BE-SEC-10 weiterhin offen):**
   - Android pinnt den SHA-256 des SPKI-DER (`publicKey.encoded`) und passt damit zum `spkiFingerprint` des Cores.
