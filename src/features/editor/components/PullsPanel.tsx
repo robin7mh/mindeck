@@ -13,7 +13,7 @@ const FILTERS: PullFilter[] = ['all', 'mine', 'review']
 const STATES: PullListState[] = ['open', 'merged', 'closed', 'all']
 
 /** What to run when gh is missing or signed out. */
-function Hint({ title, hint, commands }: { title: string; hint: string; commands: string[] }) {
+export function Hint({ title, hint, commands }: { title: string; hint: string; commands: string[] }) {
   return (
     <div className="space-y-1.5 px-2 font-sans text-[12px] text-text-secondary">
       <p className="text-text-primary">{title}</p>

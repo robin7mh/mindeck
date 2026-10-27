@@ -9,6 +9,7 @@ import { EFFORTS } from '@shared/types/ai'
 import { SEARCH_ENGINES, TAB_GROUP_COLORS, VERTICAL_TABS_WIDTH } from '@shared/types/browser'
 import { FINDER_CHUNK } from '@shared/types/finder'
 import { DEVICE_ROLES } from '@shared/types/server'
+import { REPO_NAME } from '@shared/types/github'
 import { CLOSE_BEHAVIORS } from '@shared/types/desktop'
 import { IMAGE_TYPES, MAX_IMAGE_BYTES, MAX_IMAGES, MAX_REFS } from '@shared/types/composer'
 import { TERMINAL_CURSORS, TERMINAL_LIMITS } from '@shared/types/terminal'
@@ -308,6 +309,15 @@ export const REQUEST_SCHEMAS: Schemas = {
   'github:merge': z.object({ projectId: id, number: prNumber, method: z.enum(['merge', 'squash', 'rebase']), deleteBranch: z.boolean().optional() }),
   'github:comment': z.object({ projectId: id, number: prNumber, body: z.string().trim().min(1).max(65_536) }),
   'github:review': z.object({ projectId: id, number: prNumber, action: z.enum(['approve', 'request-changes', 'comment']), body: text(65_536).optional() }),
+  'github:owners': z.object({ projectId: id }),
+  'github:publish': z.object({
+    projectId: id,
+    name: z.string().regex(REPO_NAME).refine((n) => n !== '.' && n !== '..'),
+    // GitHub logins: letters, digits and hyphens — never a leading `-` (it would read as an option).
+    owner: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/).optional(),
+    private: z.boolean(),
+    description: z.string().trim().max(350).regex(/^[^\r\n]*$/).optional()
+  }),
   'mongo:connections': none,
   'mongo:add': z.object({ name: z.string().trim().max(200), uri: z.string().trim().min(10).max(4096) }),
   'mongo:remove': z.object({ id }),

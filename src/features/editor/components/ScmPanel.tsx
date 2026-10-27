@@ -1,13 +1,14 @@
 import { useState, type KeyboardEvent, type ReactNode } from 'react'
-import { ArrowDownToLine, ArrowUpFromLine, Check, CheckCheck, CircleStop, FileCode2, GitBranch, GitBranchPlus, GitPullRequestCreate, Loader2, Minus, Play, Plus, RefreshCcw, Undo2, X } from 'lucide-react'
+import { ArrowDownToLine, ArrowUpFromLine, Check, CheckCheck, CircleStop, CloudUpload, FileCode2, GitBranch, GitBranchPlus, GitPullRequestCreate, Loader2, Minus, Play, Plus, RefreshCcw, Undo2, X } from 'lucide-react'
 import type { ScmChange, ScmFile, ScmStatus } from '@shared/types/scm'
 import { Select } from '@/components/ui/Select'
 import { TechLabel } from '@/components/ui/TechLabel'
 import { cn } from '@/lib/cn'
 import { useT } from '@/lib/i18n'
 import { useEditor } from '../store'
-import { useScm } from '../scm'
+import { needsPublish, useScm } from '../scm'
 import { useGitHub } from '../github'
+import { PublishForm } from './PublishForm'
 import { StashSection } from './StashSection'
 
 const LETTER: Record<ScmChange, string> = { modified: 'M', added: 'A', deleted: 'D', renamed: 'R', copied: 'C', untracked: 'U', conflicted: '!' }
@@ -155,6 +156,7 @@ function OperationBanner({ status, readOnly }: { status: ScmStatus; readOnly: bo
 export function ScmPanel({ readOnly = false }: { readOnly?: boolean }) {
   const t = useT()
   const { status, branches, busy, message, amend } = useScm()
+  const publishing = useGitHub((s) => s.publishing)
   const [naming, setNaming] = useState(false)
   const [branchName, setBranchName] = useState('')
   const [confirm, setConfirm] = useState<{ paths: string[]; name: string }>()
@@ -178,6 +180,8 @@ export function ScmPanel({ readOnly = false }: { readOnly?: boolean }) {
   const local = branches.filter((b) => !b.remote)
   const remoteOnly = branches.filter((b) => b.remote && !local.some((l) => b.name.endsWith(`/${l.name}`)))
   const options = [
+    // Before the first commit the branch is no ref yet: git lists nothing, but HEAD is on it.
+    ...(status.branch && !status.head ? [{ value: status.branch, label: status.branch, hint: t.scm.unborn }] : []),
     ...local.map((b) => ({ value: b.name, label: b.name, hint: b.upstream })),
     ...remoteOnly.map((b) => ({ value: b.name, label: b.name, hint: t.scm.remote }))
   ]
@@ -239,10 +243,16 @@ export function ScmPanel({ readOnly = false }: { readOnly?: boolean }) {
             {busy === 'pull' ? <Loader2 size={12} className="animate-spin" /> : <ArrowDownToLine size={12} />} {t.scm.pull}
             {status.behind > 0 && <span className="font-mono">{status.behind}</span>}
           </button>
-          <button type="button" className={syncButton} disabled={!!busy} onClick={() => void scm.push()} title={status.upstream ? t.scm.push : t.scm.publish}>
-            {busy === 'push' ? <Loader2 size={12} className="animate-spin" /> : <ArrowUpFromLine size={12} />} {status.upstream ? t.scm.push : t.scm.publish}
-            {status.ahead > 0 && <span className="font-mono">{status.ahead}</span>}
-          </button>
+          {needsPublish(status) ? (
+            <button type="button" className={syncButton} disabled={!!busy} aria-expanded={publishing} onClick={() => useGitHub.getState().setPublishing(!publishing)}>
+              <CloudUpload size={12} /> {t.scm.publishGitHub}
+            </button>
+          ) : (
+            <button type="button" className={syncButton} disabled={!!busy} onClick={() => void scm.push()} title={status.upstream ? t.scm.push : t.scm.publish}>
+              {busy === 'push' ? <Loader2 size={12} className="animate-spin" /> : <ArrowUpFromLine size={12} />} {status.upstream ? t.scm.push : t.scm.publish}
+              {status.ahead > 0 && <span className="font-mono">{status.ahead}</span>}
+            </button>
+          )}
           <button type="button" aria-label={t.scm.fetch} title={t.scm.fetch} className={cn(syncButton, 'flex-none px-2')} disabled={!!busy} onClick={() => void scm.fetch()}>
             <RefreshCcw size={12} className={cn(busy === 'fetch' && 'animate-spin')} />
           </button>
@@ -261,6 +271,7 @@ export function ScmPanel({ readOnly = false }: { readOnly?: boolean }) {
             </button>
           )}
         </div>
+        {publishing && <PublishForm status={status} />}
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto p-2">

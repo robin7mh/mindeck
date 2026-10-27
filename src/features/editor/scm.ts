@@ -4,6 +4,9 @@ import type { FileDiff } from '@shared/types/agents'
 import type { ScmBranch, ScmCommit, ScmCommitDetail, ScmCommitFile, ScmDiffTarget, ScmFile, ScmStash, ScmStatus } from '@shared/types/scm'
 import { useEditor } from './store'
 
+/** A repository with no `origin` to push to: it goes to GitHub first ("Publish to GitHub"). */
+export const needsPublish = (status?: ScmStatus): boolean => !!status?.repo && !status.upstream && !!status.remotes && !status.remotes.includes('origin')
+
 /** The editor's sidebar views — VS Code's activity bar. */
 export type EditorPane = 'files' | 'outline' | 'search' | 'scm' | 'graph' | 'debug' | 'remote' | 'prs' | 'mongo' | 'tests'
 

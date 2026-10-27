@@ -420,7 +420,7 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
     publish: hub.publish.bind(hub, 'liveServer:changed')
   })
   registerSftpIpc(router, new SftpService({ resolveRoot: (id) => projects.getProjectPath(id), trusted: (id) => trust.project(id), publish: hub.publish.bind(hub, 'sftp:progress') }))
-  registerGitHubIpc(router, new GitHubService({ resolveRoot: (id) => projects.getProjectPath(id), trusted: (dir) => trust.folder(dir), gh: loginShellGh }))
+  registerGitHubIpc(router, new GitHubService({ resolveRoot: (id) => projects.getProjectPath(id), trusted: (dir) => trust.folder(dir), gh: loginShellGh, scm: (id) => scm.status(id) }))
   const mongo = new MongoService({ secrets })
   registerMongoIpc(router, mongo)
   registerLiveIpc(router, liveServer, new SassService((id) => projects.getProjectPath(id), () => editorSettings()?.sass))

@@ -105,7 +105,10 @@ describe('ScmService', () => {
     await expect(service(undefined).status('p')).rejects.toMatchObject({ code: 'not-found' })
     await expect(service(join(plain, 'missing')).status('p')).rejects.toMatchObject({ code: 'git' })
     const s = service(plain)
-    expect(await s.init('p')).toMatchObject({ repo: true, files: [] })
+    // Before the first commit: the branch to be born, no hash, no remote to push to.
+    const fresh = await s.init('p')
+    expect(fresh).toMatchObject({ repo: true, files: [], remotes: [] })
+    expect(fresh.head).toBeUndefined()
     // A machine without git (a slim container): said plainly.
     const path = process.env.PATH
     process.env.PATH = ''
@@ -195,7 +198,7 @@ describe('ScmService', () => {
   it('pushes (publishing a new branch), fetches, pulls; knows ahead/behind and branches', { timeout: 30_000 }, async () => {
     const { seed, project } = await withRemote()
     const s = service(project)
-    expect(await s.status('p')).toMatchObject({ repo: true, branch: 'main', upstream: 'origin/main', ahead: 0, behind: 0, merging: false })
+    expect(await s.status('p')).toMatchObject({ repo: true, branch: 'main', upstream: 'origin/main', remotes: ['origin'], ahead: 0, behind: 0, merging: false })
 
     await writeFile(join(project, 'a.txt'), 'one\ntwo\nthree\n')
     await s.commit('p', 'three', { all: true })

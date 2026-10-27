@@ -1,13 +1,14 @@
 import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { fail, installBridge, settle } from './bridge'
+import { choose, fail, installBridge, settle } from './bridge'
 import type { GitHubStatus, PullDetail as Detail, PullSummary } from '@shared/types/github'
+import type { ScmStatus } from '@shared/types/scm'
 
 vi.mock('@/features/editor/components/CodeEditor', () => ({ default: () => <div data-testid="monaco" /> }))
 vi.mock('@/features/editor/components/DiffView', () => ({ default: ({ path }: { path: string }) => <div data-testid="diff">{path}</div> }))
 
 import { useEditor } from '@/features/editor/store'
-import { useScm } from '@/features/editor/scm'
+import { needsPublish, useScm } from '@/features/editor/scm'
 import { useGitHub } from '@/features/editor/github'
 import { PullsPanel } from '@/features/editor/components/PullsPanel'
 import { PullDetail } from '@/features/editor/components/PullDetail'
@@ -474,5 +475,203 @@ describe('pull requests in the editor', () => {
     useScm.setState({ status: { repo: true, head: 'abc1234', ahead: 0, behind: 0, merging: false, files: [] } })
     render(<ScmPanel />)
     expect(screen.queryByRole('button', { name: 'Create pull request' })).toBeNull()
+  })
+})
+
+describe('publish to GitHub', () => {
+  const OWNERS = { user: 'robin', orgs: ['acme'] }
+  const made = { nameWithOwner: 'acme/My-App', url: 'https://github.com/acme/My-App' }
+  /** A repository that GitHub doesn't know yet: no upstream, no remote. */
+  const fresh = (over: Partial<ScmStatus> = {}): ScmStatus => ({ repo: true, branch: 'master', remotes: [], ahead: 0, behind: 0, merging: false, files: [], ...over })
+  const panel = (st: ScmStatus, over: Record<string, (p: never) => unknown> = {}) => {
+    const bridge = github({ 'github:owners': () => OWNERS, 'github:publish': () => made, 'scm:commit': () => undefined, 'files:write': () => ({}), 'scm:status': () => st, 'scm:stashes': () => [], ...over })
+    useProjects.setState({ projects: [{ id: 'p', name: 'My App', path: '/x/My App', addedAt: '', lastSeenAt: '' }] })
+    useScm.setState({ status: st })
+    return { bridge, ...render(<ScmPanel />) }
+  }
+  const publishForm = () => screen.getByRole('form', { name: 'Publish to GitHub' })
+
+  it('is needed for a repository without upstream and without origin (an older core that lists no remotes: no)', () => {
+    expect(needsPublish(undefined)).toBe(false)
+    expect(needsPublish(fresh({ repo: false }))).toBe(false)
+    expect(needsPublish(fresh({ upstream: 'origin/master' }))).toBe(false)
+    expect(needsPublish(fresh({ remotes: undefined }))).toBe(false)
+    expect(needsPublish(fresh({ remotes: ['origin'] }))).toBe(false)
+    expect(needsPublish(fresh({ remotes: ['upstream'] }))).toBe(true)
+    expect(needsPublish(fresh())).toBe(true)
+  })
+
+  it('store: the first commit (an empty folder gets a README first), then publish; reloads; failures show', async () => {
+    const bridge = github({ 'github:publish': () => made, 'files:write': () => ({}), 'scm:commit': () => undefined })
+    const refresh = vi.spyOn(useScm.getState(), 'refresh').mockResolvedValue()
+    const tree = vi.spyOn(useEditor.getState(), 'refreshTree').mockResolvedValue()
+    const load = vi.spyOn(g(), 'load').mockResolvedValue()
+    useGitHub.setState({ status: READY })
+    const channels = () => bridge.invoke.mock.calls.map((c) => c[0])
+
+    expect(await g().publish({ name: 'My-App', owner: 'acme', private: true }, { message: 'Initial commit', readme: '# My-App\n' })).toEqual(made)
+    expect(channels()).toEqual(['files:write', 'scm:commit', 'github:publish'])
+    expect(bridge.invoke).toHaveBeenCalledWith('files:write', { projectId: 'p', path: 'README.md', content: '# My-App\n' })
+    expect(bridge.invoke).toHaveBeenCalledWith('scm:commit', { projectId: 'p', message: 'Initial commit', all: true })
+    expect(bridge.invoke).toHaveBeenCalledWith('github:publish', { projectId: 'p', name: 'My-App', owner: 'acme', private: true })
+    expect(refresh).toHaveBeenCalled()
+    expect(tree).toHaveBeenCalled()
+    expect(load).toHaveBeenCalledTimes(1)
+
+    // Files but no commit: no README. The pull requests were never loaded: nothing to reload.
+    bridge.invoke.mockClear()
+    useGitHub.setState({ status: undefined })
+    await g().publish({ name: 'x', private: false }, { message: 'm' })
+    expect(channels()).toEqual(['scm:commit', 'github:publish'])
+    // Committed already: only publish.
+    bridge.invoke.mockClear()
+    await g().publish({ name: 'x', private: false })
+    expect(channels()).toEqual(['github:publish'])
+    expect(load).toHaveBeenCalledTimes(1)
+
+    // A failure shows — and the status reloads anyway: a first commit may have landed.
+    github({ 'github:publish': () => fail('GraphQL: Name already exists on this account (createRepository)', 'gh') })
+    refresh.mockClear()
+    expect(await g().publish({ name: 'x', private: true })).toBeUndefined()
+    expect(g().error).toBe('GraphQL: Name already exists on this account (createRepository)')
+    expect(refresh).toHaveBeenCalled()
+
+    // Another project closes the form.
+    useGitHub.setState({ publishing: true })
+    act(() => useEditor.setState({ projectId: 'q' }))
+    expect(g().publishing).toBe(false)
+  })
+
+  it('source control: the button opens the form — account or organization, name, description, private or public', async () => {
+    const { bridge } = panel(fresh({ head: 'abc1234' }))
+    expect(screen.queryByRole('button', { name: /Publish branch/ })).toBeNull()
+    const open = screen.getByRole('button', { name: 'Publish to GitHub' })
+    expect(open).toHaveAttribute('aria-expanded', 'false')
+    fireEvent.click(open)
+    expect(open).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByLabelText('Loading…')).toBeInTheDocument()
+    await act(settle)
+    const f = publishForm()
+    expect(within(f).getByLabelText('Repository name')).toHaveValue('My-App')
+    expect(screen.getByRole('combobox', { name: 'Account' })).toHaveTextContent('robin')
+    choose('Account', /^acme/)
+    fireEvent.change(within(f).getByLabelText('Description (optional)'), { target: { value: '  A demo  ' } })
+    expect(within(f).getByRole('radio', { name: /Private/ })).toHaveAttribute('aria-checked', 'true')
+    fireEvent.click(within(f).getByRole('radio', { name: /Public/ }))
+    expect(within(f).getByRole('radio', { name: /Public/ })).toHaveAttribute('aria-checked', 'true')
+    fireEvent.click(within(f).getByRole('radio', { name: /Private/ }))
+    fireEvent.click(within(f).getByRole('radio', { name: /Public/ }))
+    // Committed already: nothing about a first commit.
+    expect(within(f).queryByLabelText('First commit message')).toBeNull()
+    fireEvent.click(within(f).getByRole('button', { name: 'Publish' }))
+    await act(settle)
+    expect(bridge.invoke).toHaveBeenCalledWith('github:publish', { projectId: 'p', name: 'My-App', owner: 'acme', private: false, description: 'A demo' })
+    expect(screen.getByRole('status')).toHaveTextContent('Published: acme/My-App')
+    expect(screen.getByRole('link', { name: /Open on GitHub/ })).toHaveAttribute('href', made.url)
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+    expect(g().publishing).toBe(false)
+    expect(screen.queryByRole('status')).toBeNull()
+    // The button closes it as well.
+    fireEvent.click(open)
+    await act(settle)
+    fireEvent.click(open)
+    expect(screen.queryByRole('form', { name: 'Publish to GitHub' })).toBeNull()
+  })
+
+  it('before the first commit: the branch shows by its name; files go into the first commit, an empty folder gets a README', async () => {
+    const { bridge, unmount } = panel(fresh({ files: [{ path: 'a.ts', unstaged: 'untracked' }] }))
+    // No commit yet: git lists no branch, but HEAD is on master — not "detached".
+    expect(screen.getByRole('combobox', { name: 'Branch' })).toHaveTextContent('master')
+    expect(screen.getByRole('combobox', { name: 'Branch' })).not.toHaveTextContent('detached')
+    fireEvent.click(screen.getByRole('button', { name: 'Publish to GitHub' }))
+    await act(settle)
+    expect(within(publishForm()).getByText(/No commit yet/)).toBeInTheDocument()
+    const message = screen.getByLabelText('First commit message')
+    expect(message).toHaveValue('Initial commit')
+    fireEvent.change(message, { target: { value: '   ' } }) // empty: the default message
+    fireEvent.click(screen.getByRole('button', { name: 'Publish' }))
+    await act(settle)
+    expect(bridge.invoke).toHaveBeenCalledWith('scm:commit', { projectId: 'p', message: 'Initial commit', all: true })
+    expect(bridge.invoke).not.toHaveBeenCalledWith('files:write', expect.anything())
+    unmount()
+
+    useGitHub.setState({ publishing: false })
+    const empty = panel(fresh(), { 'github:publish': () => fail('HTTP 502', 'gh') })
+    fireEvent.click(screen.getByRole('button', { name: 'Publish to GitHub' }))
+    await act(settle)
+    const f = publishForm()
+    expect(within(f).getByText(/The folder is empty/)).toBeInTheDocument()
+    expect(within(f).queryByLabelText('First commit message')).toBeNull()
+    const name = within(f).getByLabelText('Repository name')
+    // Names GitHub refuses: said, and nothing to send.
+    for (const bad of ['bad name!', '.', '..']) {
+      fireEvent.change(name, { target: { value: bad } })
+      expect(within(f).getByText(/Letters, digits/)).toBeInTheDocument()
+      expect(within(f).getByRole('button', { name: 'Publish' })).toBeDisabled()
+    }
+    fireEvent.change(name, { target: { value: '' } })
+    expect(within(f).queryByText(/Letters, digits/)).toBeNull()
+    expect(within(f).getByRole('button', { name: 'Publish' })).toBeDisabled()
+    fireEvent.change(name, { target: { value: 'site' } })
+    // It fails: the form stays for another try (the error shows above the editor).
+    fireEvent.click(within(f).getByRole('button', { name: 'Publish' }))
+    await act(settle)
+    expect(empty.bridge.invoke).toHaveBeenCalledWith('files:write', { projectId: 'p', path: 'README.md', content: '# site\n' })
+    expect(g().error).toBe('HTTP 502')
+    expect(publishForm()).toBeInTheDocument()
+    // With a description, the README carries it too.
+    empty.bridge.routes['github:publish'] = () => made
+    fireEvent.change(within(f).getByLabelText('Description (optional)'), { target: { value: 'About it' } })
+    fireEvent.click(within(f).getByRole('button', { name: 'Publish' }))
+    await act(settle)
+    expect(empty.bridge.invoke).toHaveBeenCalledWith('files:write', { projectId: 'p', path: 'README.md', content: '# site\n\nAbout it\n' })
+    expect(empty.bridge.invoke).toHaveBeenCalledWith('github:publish', { projectId: 'p', name: 'site', owner: 'robin', private: true, description: 'About it' })
+  })
+
+  it('busy, cancel, a project the list doesn’t know (no name to suggest)', async () => {
+    panel(fresh({ head: 'abc1234' }))
+    act(() => useProjects.setState({ projects: [] }))
+    act(() => useGitHub.getState().setPublishing(true))
+    await act(settle)
+    expect(within(publishForm()).getByLabelText('Repository name')).toHaveValue('')
+    fireEvent.change(within(publishForm()).getByLabelText('Repository name'), { target: { value: 'ok' } })
+    act(() => useGitHub.setState({ busy: 'publish' }))
+    expect(within(publishForm()).getByRole('button', { name: 'Publish' })).toBeDisabled()
+    act(() => useGitHub.setState({ busy: undefined }))
+    fireEvent.click(within(publishForm()).getByRole('button', { name: 'Cancel' }))
+    expect(g().publishing).toBe(false)
+  })
+
+  it('without gh, signed out, or another failure: says what to do', async () => {
+    const cases: [string, RegExp][] = [
+      ['gh-missing', /not installed/],
+      ['gh-auth', /Not signed in/],
+      ['gh', /HTTP 401/]
+    ]
+    for (const [code, text] of cases) {
+      const { unmount } = panel(fresh({ head: 'abc1234' }), { 'github:owners': () => fail(code === 'gh' ? 'HTTP 401' : code, code) })
+      act(() => useGitHub.getState().setPublishing(true))
+      await act(settle)
+      expect(screen.getByText(text)).toBeInTheDocument()
+      expect(screen.queryByRole('form', { name: 'Publish to GitHub' })).toBeNull()
+      unmount()
+    }
+  })
+
+  it('the status bar offers it too: source control opens with the form', async () => {
+    github({ 'scm:status': () => fresh(), 'scm:stashes': () => [], 'github:owners': () => OWNERS, 'files:stat': () => [], 'debug:session': () => null, 'liveServer:status': () => [] })
+    useProjects.setState({ projects: [{ id: 'p', name: 'Demo', path: '/x/p', addedAt: '', lastSeenAt: '' }] })
+    render(<EditorView active onNavigate={vi.fn()} />)
+    await act(settle)
+    expect(screen.queryByLabelText('Publish branch')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Publish to GitHub' }))
+    await act(settle)
+    expect(useScm.getState().pane).toBe('scm')
+    expect(g().publishing).toBe(true)
+    expect(publishForm()).toBeInTheDocument()
+  })
+
+  it('speaks German', () => {
+    expect([de.github.published('o/r'), de.scm.publishGitHub, de.scm.unborn]).toEqual(['Veröffentlicht: o/r', 'Auf GitHub veröffentlichen', 'noch kein Commit'])
   })
 })

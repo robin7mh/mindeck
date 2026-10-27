@@ -486,7 +486,9 @@ describe('ipc handler modules bind every channel to its service', () => {
         ['github:create', { projectId: 'p', title: 'T', body: 'B', base: 'main', draft: true }, 'create', ['p', { title: 'T', body: 'B', base: 'main', draft: true }]],
         ['github:merge', { projectId: 'p', number: 8, method: 'squash', deleteBranch: true }, 'merge', ['p', 8, 'squash', true]],
         ['github:comment', { projectId: 'p', number: 8, body: 'hi' }, 'comment', ['p', 8, 'hi']],
-        ['github:review', { projectId: 'p', number: 8, action: 'approve', body: '' }, 'review', ['p', 8, 'approve', '']]
+        ['github:review', { projectId: 'p', number: 8, action: 'approve', body: '' }, 'review', ['p', 8, 'approve', '']],
+        ['github:owners', { projectId: 'p' }, 'owners', ['p']],
+        ['github:publish', { projectId: 'p', name: 'site', owner: 'acme', private: true, description: 'Demo' }, 'publish', ['p', { name: 'site', owner: 'acme', private: true, description: 'Demo' }]]
       ]
     ],
     [

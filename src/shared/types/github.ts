@@ -94,3 +94,33 @@ export interface PullCreate {
 
 export type MergeMethod = 'merge' | 'squash' | 'rebase'
 export type ReviewAction = 'approve' | 'request-changes' | 'comment'
+
+/** Where a new repository can go: the signed-in account, then its organizations. */
+export interface GitHubOwners {
+  user: string
+  orgs: string[]
+}
+
+/** A local repository → a new repository on GitHub (VS Code's "Publish to GitHub"). */
+export interface PublishRepo {
+  name: string
+  /** An organization; absent: the signed-in account. */
+  owner?: string
+  private: boolean
+  description?: string
+}
+
+/** GitHub's rules for a repository name, without a leading `-` (it would read as an option). */
+export const REPO_NAME = /^[A-Za-z0-9._][A-Za-z0-9._-]{0,99}$/
+
+/** A folder's name as a repository name: accents dropped (Ü → U, ß → ss), spaces and other characters → `-`. */
+export function repoName(folder: string): string {
+  const name = folder
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/ß/g, 'ss')
+    .replace(/[^A-Za-z0-9._-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 100)
+  return REPO_NAME.test(name) && name !== '.' && name !== '..' ? name : ''
+}

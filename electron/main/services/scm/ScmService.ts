@@ -222,8 +222,12 @@ export class ScmService {
       if (/not a git repository/i.test((err as Error).message)) return { repo: false, ahead: 0, behind: 0, merging: false, files: [] }
       throw err
     }
-    const operation = await this.operation(root)
-    return { repo: true, merging: operation?.kind === 'merge', ...(operation ? { operation } : {}), ...parseStatus(raw) }
+    const [operation, remotes] = await Promise.all([this.operation(root), this.remotes(root)])
+    return { repo: true, merging: operation?.kind === 'merge', ...(operation ? { operation } : {}), ...parseStatus(raw), remotes }
+  }
+
+  private async remotes(root: string): Promise<string[]> {
+    return (await this.git(root, ['remote'])).split('\n').filter(Boolean)
   }
 
   /** A merge, rebase, cherry-pick or revert in progress — git keeps their state in files under .git. */
@@ -303,7 +307,7 @@ export class ScmService {
     const root = this.root(projectId)
     const { upstream } = await this.status(projectId)
     if (upstream) return void (await this.git(root, ['push', '--quiet'], { timeout: NETWORK_MS }))
-    if (!(await this.git(root, ['remote'])).split('\n').includes('origin')) throw coded('no-remote', 'This repository has no remote "origin" to push to')
+    if (!(await this.remotes(root)).includes('origin')) throw coded('no-remote', 'This repository has no remote "origin" to push to')
     await this.git(root, ['push', '--quiet', '-u', 'origin', 'HEAD'], { timeout: NETWORK_MS })
   }
 

@@ -164,6 +164,8 @@ describe('createCore', () => {
     expect(await c.router.dispatch('sftp:list', { projectId, target: 'T' }, { transport: 'ipc' })).toMatchObject({ error: {} })
     // Pull requests go through gh, for known projects only.
     expect(await c.router.dispatch('github:view', { projectId: 'none', number: 1 }, { transport: 'ipc' })).toMatchObject({ error: { code: 'not-found' } })
+    // Publishing asks the project's git first: nothing committed, nothing to publish — gh never runs.
+    expect(await c.router.dispatch('github:publish', { projectId, name: 'x', private: true }, { transport: 'ipc' })).toMatchObject({ error: { code: 'no-commits' } })
     // MongoDB keeps its connections in the secret store.
     expect(await c.router.dispatch('mongo:connections', undefined, { transport: 'ipc' })).toEqual({ ok: true, data: [] })
     // Settings Sync works through the account (signed out here).

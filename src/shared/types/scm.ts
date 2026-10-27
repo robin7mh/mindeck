@@ -24,6 +24,8 @@ export interface ScmStatus {
   /** Short hash of HEAD; undefined before the first commit. */
   head?: string
   upstream?: string
+  /** The remotes' names (`origin`, …); without `origin` a push has nowhere to go — publish first. Absent from older cores. */
+  remotes?: string[]
   ahead: number
   behind: number
   /** A merge waits for its conflicts to be resolved and committed. */

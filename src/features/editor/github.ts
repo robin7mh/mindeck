@@ -1,11 +1,11 @@
 import { create } from 'zustand'
 import { errorMessage, ipc } from '@shared/ipc/client'
-import type { GitHubStatus, MergeMethod, PullCreate, PullDetail, PullFilter, PullListState, PullSummary, ReviewAction } from '@shared/types/github'
+import type { GitHubStatus, MergeMethod, PublishRepo, PullCreate, PullDetail, PullFilter, PullListState, PullSummary, ReviewAction } from '@shared/types/github'
 import { useEditor } from './store'
 import { useScm } from './scm'
 
 /** Something done to a pull request (one at a time). */
-export type PullOp = 'checkout' | 'create' | 'merge' | 'comment' | 'review'
+export type PullOp = 'checkout' | 'create' | 'merge' | 'comment' | 'review' | 'publish'
 
 interface GitHubState {
   status?: GitHubStatus
@@ -20,6 +20,8 @@ interface GitHubState {
   error?: string
   /** The "create pull request" form is open. */
   creating: boolean
+  /** The "publish to GitHub" form is open (Source Control). */
+  publishing: boolean
 
   /** gh's state and the project's pull requests. */
   load: () => Promise<void>
@@ -35,8 +37,15 @@ interface GitHubState {
   comment: (body: string) => Promise<boolean>
   review: (action: ReviewAction, body: string) => Promise<boolean>
   setCreating: (on: boolean) => void
+  setPublishing: (on: boolean) => void
   /** Pushes the branch when GitHub doesn't have it yet, then opens the pull request. */
   create: (pr: PullCreate) => Promise<void>
+  /**
+   * A local repository → a new GitHub repository; the new one when it worked.
+   * Before the first commit, `first` commits every file — after writing
+   * `readme` as README.md, for an empty folder.
+   */
+  publish: (repo: PublishRepo, first?: { message: string; readme?: string }) => Promise<{ nameWithOwner: string; url: string } | undefined>
   clearError: () => void
 }
 
@@ -67,6 +76,7 @@ export const useGitHub = create<GitHubState>((set, get) => {
     pulls: [],
     loading: false,
     creating: false,
+    publishing: false,
 
     load: async () => {
       const projectId = project()
@@ -167,6 +177,7 @@ export const useGitHub = create<GitHubState>((set, get) => {
     },
 
     setCreating: (creating) => set({ creating }),
+    setPublishing: (publishing) => set({ publishing }),
 
     create: async (pr) => {
       let created: { number: number } | undefined
@@ -182,6 +193,20 @@ export const useGitHub = create<GitHubState>((set, get) => {
       await get().open(created!.number)
     },
 
+    publish: async (repo, first) => {
+      let made: { nameWithOwner: string; url: string } | undefined
+      const ok = await act('publish', async (projectId) => {
+        if (first?.readme !== undefined) await ipc('files:write', { projectId, path: 'README.md', content: first.readme })
+        if (first) await ipc('scm:commit', { projectId, message: first.message, all: true })
+        made = await ipc('github:publish', { projectId, ...repo })
+      })
+      // A first commit may have landed even when publishing failed.
+      await Promise.all([useScm.getState().refresh(), useEditor.getState().refreshTree()])
+      if (!ok) return undefined
+      if (get().status) void get().load()
+      return made
+    },
+
     clearError: () => set({ error: undefined })
   }
 })
@@ -189,6 +214,6 @@ export const useGitHub = create<GitHubState>((set, get) => {
 /** A new project: its pull requests (once the pane has loaded them). */
 useEditor.subscribe((s, prev) => {
   if (s.projectId === prev.projectId) return
-  useGitHub.setState({ creating: false, detail: undefined })
+  useGitHub.setState({ creating: false, publishing: false, detail: undefined })
   if (useGitHub.getState().status) void useGitHub.getState().load()
 })

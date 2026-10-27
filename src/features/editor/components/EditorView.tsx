@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
-import { AlertTriangle, ArrowUpFromLine, Bug, CircleX, Code2, Database, FlaskConical, Radio, Paintbrush, Server, Files, FolderGit2, GitBranch, GitGraph as GraphIcon, GitPullRequest, ListTree, Lock, RefreshCcw, RefreshCw, Search, X, type LucideIcon } from 'lucide-react'
+import { AlertTriangle, ArrowUpFromLine, Bug, CircleX, CloudUpload, Code2, Database, FlaskConical, Radio, Paintbrush, Server, Files, FolderGit2, GitBranch, GitGraph as GraphIcon, GitPullRequest, ListTree, Lock, RefreshCcw, RefreshCw, Search, X, type LucideIcon } from 'lucide-react'
 import { isDesktop } from '@shared/ipc/client'
 import { Panel } from '@/components/ui/Panel'
 import { cn } from '@/lib/cn'
@@ -9,7 +9,7 @@ import { useProjects } from '@/features/projects/store'
 import { useSession } from '@/features/session/store'
 import type { ModuleId } from '@/types'
 import { useEditor } from '../store'
-import { useScm, type EditorPane } from '../scm'
+import { needsPublish, useScm, type EditorPane } from '../scm'
 import { useOutline } from '../outline'
 import { FileTree } from './FileTree'
 import { DiffHeader, ScmPanel } from './ScmPanel'
@@ -609,6 +609,17 @@ export function EditorView({ active, onNavigate }: { active: boolean; onNavigate
                   className="flex items-center gap-1 hover:text-text-primary disabled:opacity-50"
                 >
                   <RefreshCcw size={11} className={cn(busy && 'animate-spin')} /> {status.behind}↓ {status.ahead}↑
+                </button>
+              ) : needsPublish(status) ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    useScm.getState().setPane('scm')
+                    useGitHub.getState().setPublishing(true)
+                  }}
+                  className="flex items-center gap-1 hover:text-text-primary"
+                >
+                  <CloudUpload size={11} /> {t.scm.publishGitHub}
                 </button>
               ) : (
                 <button type="button" aria-label={t.scm.publish} title={t.scm.publish} disabled={!!busy} onClick={() => void useScm.getState().push()} className="flex items-center gap-1 hover:text-text-primary disabled:opacity-50">

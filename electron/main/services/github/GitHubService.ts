@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process'
 import type {
   CheckState,
+  GitHubOwners,
   GitHubStatus,
   MergeMethod,
   PullCreate,
@@ -10,10 +11,12 @@ import type {
   PullFileDiff,
   PullFilter,
   PullListState,
+  PublishRepo,
   PullSummary,
   ReviewAction,
   ReviewDecision
 } from '@shared/types/github'
+import type { ScmStatus } from '@shared/types/scm'
 import { shellCommand, shellEnv, shellQuote } from '../terminal/TerminalService'
 import { shellArgs } from '../../lib/shellArgs'
 import { spawnProgram } from '../../lib/executables'
@@ -80,6 +83,8 @@ export interface GitHubOptions {
   trusted?: (dir: string) => boolean
   /** How gh runs (loginShellGh). */
   gh: GhRunner
+  /** The project's git state (ScmService.status): publishing needs a commit and no `origin` yet. */
+  scm: (projectId: string) => Promise<ScmStatus>
 }
 
 /** gh's JSON for one pull request (the fields Mindeck asks for). */
@@ -328,6 +333,28 @@ export class GitHubService {
     if (pr.draft) args.push('--draft')
     const url = (await this.run(this.root(projectId), args, pr.body)).trim().split('\n').pop()!
     return { number: Number(/\/pull\/(\d+)/.exec(url)?.[1] ?? 0), url }
+  }
+
+  /** Where a new repository can go. Organizations need gh's `read:org` scope — without it, only the account. */
+  async owners(projectId: string): Promise<GitHubOwners> {
+    const root = this.root(projectId)
+    const [user, orgs] = await Promise.all([this.run(root, ['api', 'user', '--jq', '.login']), this.run(root, ['api', 'user/orgs', '--jq', '.[].login']).catch(() => '')])
+    return { user: user.trim(), orgs: orgs.split('\n').filter(Boolean) }
+  }
+
+  /**
+   * VS Code's "Publish to GitHub": a new repository under the account or an
+   * organization, added as `origin`, the current branch pushed to it.
+   */
+  async publish(projectId: string, repo: PublishRepo): Promise<{ nameWithOwner: string; url: string }> {
+    const root = this.root(projectId)
+    const status = await this.opts.scm(projectId)
+    if (!status.head) throw coded('no-commits', 'Commit something first — there is nothing to push yet')
+    if (status.remotes?.includes('origin')) throw coded('has-remote', 'This repository already has a remote "origin"')
+    const args = ['repo', 'create', repo.owner ? `${repo.owner}/${repo.name}` : repo.name, repo.private ? '--private' : '--public', '--source=.', '--remote=origin', '--push']
+    if (repo.description) args.push(`--description=${repo.description}`)
+    await this.run(root, args)
+    return JSON.parse(await this.run(root, ['repo', 'view', '--json', 'nameWithOwner,url'])) as { nameWithOwner: string; url: string }
   }
 
   async merge(projectId: string, number: number, method: MergeMethod, deleteBranch = false): Promise<void> {

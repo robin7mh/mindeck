@@ -50,7 +50,7 @@ import type { RemoteConnection, SshHost } from '@shared/types/remote'
 import type { LintResult } from '@shared/types/lint'
 import type { TestItem, TestRunState } from '@shared/types/tests'
 import type { MongoCollection, MongoConnection, MongoDatabase, MongoDocuments, MongoIndex, MongoQuery } from '@shared/types/mongo'
-import type { GitHubStatus, MergeMethod, PullCreate, PullDetail, PullFileDiff, PullFilter, PullListState, PullSummary, ReviewAction } from '@shared/types/github'
+import type { GitHubOwners, GitHubStatus, MergeMethod, PublishRepo, PullCreate, PullDetail, PullFileDiff, PullFilter, PullListState, PullSummary, ReviewAction } from '@shared/types/github'
 import type { EditorSettings, MigrationResult, MigrationSource, Snippet } from '@shared/types/migrate'
 import type { ScmBlame, ScmBranch, ScmCommit, ScmCommitDetail, ScmCommitFile, ScmDiffTarget, ScmStash, ScmStatus } from '@shared/types/scm'
 import type { SearchEngine, SearchProgress, TextSearchQuery } from '@shared/types/search'
@@ -354,6 +354,9 @@ export interface IpcChannels {
   'github:merge': { request: { projectId: string; number: number; method: MergeMethod; deleteBranch?: boolean }; response: void }
   'github:comment': { request: { projectId: string; number: number; body: string }; response: void }
   'github:review': { request: { projectId: string; number: number; action: ReviewAction; body?: string }; response: void }
+  'github:owners': { request: { projectId: string }; response: GitHubOwners }
+  /** A local repository with a commit and no `origin` → a new GitHub repository, its branch pushed. */
+  'github:publish': { request: { projectId: string } & PublishRepo; response: { nameWithOwner: string; url: string } }
   /** MongoDB: saved connections (strings stay in the core), databases, collections, documents as Extended JSON. */
   'mongo:connections': { request: void; response: MongoConnection[] }
   'mongo:add': { request: { name: string; uri: string }; response: MongoConnection }
@@ -790,6 +793,8 @@ export const CHANNEL_ACCESS: Record<IpcChannel, ChannelAccess> = {
   'github:merge': 'terminal',
   'github:comment': 'terminal',
   'github:review': 'terminal',
+  'github:owners': 'any',
+  'github:publish': 'terminal',
   // Databases are not in the shared folders: reading them is for admins (or with remote shells); changing them needs remote shells.
   'mongo:connections': 'trusted',
   'mongo:databases': 'trusted',
