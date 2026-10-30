@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { ExternalLink, Globe, Loader2, Lock } from 'lucide-react'
 import { ipc } from '@shared/ipc/client'
 import { REPO_NAME, repoName, type GitHubOwners } from '@shared/types/github'
+import { isDeniedName } from '@shared/types/secrets'
 import type { ScmStatus } from '@shared/types/scm'
 import { Select } from '@/components/ui/Select'
 import { cn } from '@/lib/cn'
@@ -33,6 +34,10 @@ export function PublishForm({ status }: { status: ScmStatus }) {
   const [isPrivate, setPrivate] = useState(true)
   const [message, setMessage] = useState(g.firstCommitMessage)
   const [done, setDone] = useState<{ nameWithOwner: string; url: string }>()
+  /** Keys and credentials in the first commit: committed only when the user says so. */
+  const [withSecrets, setWithSecrets] = useState(false)
+  /** Public: asked once more before anything is pushed. */
+  const [surePublic, setSurePublic] = useState(false)
   const close = () => useGitHub.getState().setPublishing(false)
 
   useEffect(() => {
@@ -70,7 +75,10 @@ export function PublishForm({ status }: { status: ScmStatus }) {
   const about = description.trim()
   // Nothing committed yet: everything goes into the first commit — an empty folder gets a README first.
   const first = status.head ? undefined : { message: message.trim() || g.firstCommitMessage, ...(status.files.length ? {} : { readme: `# ${name}\n${about ? `\n${about}\n` : ''}` }) }
+  // What the first commit would hold that looks like a key or credential (ignored files are not listed: .gitignore holds).
+  const secrets = first ? status.files.map((f) => f.path).filter((path) => path.split('/').some(isDeniedName)) : []
   const submit = async () => {
+    if (!isPrivate && !surePublic) return setSurePublic(true)
     const made = await useGitHub.getState().publish({ name, owner, private: isPrivate, ...(about ? { description: about } : {}) }, first)
     if (made) setDone(made)
   }
@@ -102,7 +110,10 @@ export function PublishForm({ status }: { status: ScmStatus }) {
             type="button"
             role="radio"
             aria-checked={isPrivate === on}
-            onClick={() => setPrivate(on)}
+            onClick={() => {
+              setPrivate(on)
+              setSurePublic(false)
+            }}
             className={cn('rounded-md border px-2 py-1 text-left transition-colors', isPrivate === on ? 'border-cyan/60 bg-cyan/[0.08]' : 'border-hud/60 hover:border-cyan/40')}
           >
             <span className="flex items-center gap-1 font-sans text-[12px] text-text-primary">
@@ -121,10 +132,24 @@ export function PublishForm({ status }: { status: ScmStatus }) {
         ) : (
           <p className="font-sans text-[11px] text-text-secondary">{g.emptyFolder}</p>
         ))}
+      {secrets.length > 0 && (
+        <div role="alert" className="space-y-1 rounded-md border border-amber/40 bg-amber/[0.07] px-2 py-1.5">
+          <p className="font-sans text-[11px] text-amber">{g.secretsFound}</p>
+          <ul className="font-mono text-[11px] text-text-secondary">
+            {secrets.map((path) => (
+              <li key={path}>{path}</li>
+            ))}
+          </ul>
+          <label className="flex items-center gap-1.5 font-sans text-[11px] text-text-secondary">
+            <input type="checkbox" checked={withSecrets} onChange={(e) => setWithSecrets(e.target.checked)} /> {g.secretsAnyway}
+          </label>
+        </div>
+      )}
+      {surePublic && !isPrivate && <p className="font-sans text-[11px] text-amber">{g.confirmPublic}</p>}
       <div className="flex gap-1.5">
-        <button type="submit" disabled={!valid || !!busy} className={cn(button, 'border-cyan/50 text-cyan hover:bg-cyan/10')}>
+        <button type="submit" disabled={!valid || !!busy || (secrets.length > 0 && !withSecrets)} className={cn(button, 'border-cyan/50 text-cyan hover:bg-cyan/10')}>
           {busy === 'publish' && <Loader2 size={11} className="animate-spin" />}
-          {g.publishSubmit}
+          {surePublic && !isPrivate ? g.publishPublic : g.publishSubmit}
         </button>
         <button type="button" onClick={close} className={cn(button, 'border-hud/60 text-text-secondary')}>
           {g.cancel}

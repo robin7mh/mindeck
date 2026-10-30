@@ -1176,6 +1176,10 @@ agents: {
     firstCommitLabel: 'First commit message',
     emptyFolder: 'The folder is empty — Mindeck adds a README.md and commits it as the first commit.',
     publishSubmit: 'Publish',
+    secretsFound: 'These look like keys or credentials — the first commit would publish them:',
+    secretsAnyway: 'Commit them anyway (better: add them to .gitignore first)',
+    confirmPublic: 'Public: anyone on the internet sees every file and its history. Publish it publicly?',
+    publishPublic: 'Yes, publish publicly',
     published: (repo: string) => `Published: ${repo}`
   },
 

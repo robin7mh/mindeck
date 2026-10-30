@@ -564,6 +564,14 @@ describe('publish to GitHub', () => {
     // Committed already: nothing about a first commit.
     expect(within(f).queryByLabelText('First commit message')).toBeNull()
     fireEvent.click(within(f).getByRole('button', { name: 'Publish' }))
+    // Public: asked once more, nothing sent yet — and asked again after the visibility changed.
+    expect(within(f).getByText(/anyone on the internet sees every file/)).toBeInTheDocument()
+    expect(bridge.invoke).not.toHaveBeenCalledWith('github:publish', expect.anything())
+    fireEvent.click(within(f).getByRole('radio', { name: /Private/ }))
+    fireEvent.click(within(f).getByRole('radio', { name: /Public/ }))
+    expect(within(f).queryByText(/anyone on the internet sees every file/)).toBeNull()
+    fireEvent.click(within(f).getByRole('button', { name: 'Publish' }))
+    fireEvent.click(within(f).getByRole('button', { name: 'Yes, publish publicly' }))
     await act(settle)
     expect(bridge.invoke).toHaveBeenCalledWith('github:publish', { projectId: 'p', name: 'My-App', owner: 'acme', private: false, description: 'A demo' })
     expect(screen.getByRole('status')).toHaveTextContent('Published: acme/My-App')
@@ -626,6 +634,22 @@ describe('publish to GitHub', () => {
     await act(settle)
     expect(empty.bridge.invoke).toHaveBeenCalledWith('files:write', { projectId: 'p', path: 'README.md', content: '# site\n\nAbout it\n' })
     expect(empty.bridge.invoke).toHaveBeenCalledWith('github:publish', { projectId: 'p', name: 'site', owner: 'robin', private: true, description: 'About it' })
+  })
+
+  it('before the first commit, keys and credentials are named — and committed only when the user says so', async () => {
+    const files = ['src/a.ts', '.env', 'config/credentials.json', 'deploy/server.pem'].map((path) => ({ path, unstaged: 'untracked' as const }))
+    const { bridge } = panel(fresh({ files }))
+    fireEvent.click(screen.getByRole('button', { name: 'Publish to GitHub' }))
+    await act(settle)
+    const alert = within(publishForm()).getByRole('alert')
+    expect(within(alert).getAllByRole('listitem').map((li) => li.textContent)).toEqual(['.env', 'config/credentials.json', 'deploy/server.pem'])
+    const publish = within(publishForm()).getByRole('button', { name: 'Publish' })
+    expect(publish).toBeDisabled()
+    fireEvent.click(within(alert).getByRole('checkbox', { name: /Commit them anyway/ }))
+    expect(publish).toBeEnabled()
+    fireEvent.click(publish)
+    await act(settle)
+    expect(bridge.invoke).toHaveBeenCalledWith('scm:commit', { projectId: 'p', message: 'Initial commit', all: true })
   })
 
   it('busy, cancel, a project the list doesn’t know (no name to suggest)', async () => {
