@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from 'node:util'
 import type { ApprovalDecision, PermissionRequest } from '@shared/types/ai'
 import type { ToolRegistry } from '../ai/tools/registry'
 
@@ -84,12 +85,12 @@ export function createMcpHandler(registry: ToolRegistry, version: string, names:
         const input = (msg.params?.arguments ?? {}) as Record<string, unknown>
         const parsed = registry.parse(tool, input)
         if (!parsed.ok) return ok({ content: [{ type: 'text', text: parsed.message }], isError: true })
-        if (gate && tool.risk !== 'read' && !(await allowed(gate, ctx, tool, name, parsed.data))) {
+        if (gate && tool.risk !== 'read' && !(await allowed(gate, ctx, tool, name, parsed.data, input))) {
           return ok({ content: [{ type: 'text', text: 'The user denied this in Mindeck.' }], isError: true })
         }
         try {
           // An agent works in its session's project: the tools never reach another one (BE-SEC-28).
-          const toolCtx = { projectId: ctx.projectId, onlyProject: true, signal: new AbortController().signal, agent: ctx.agent, cwd: ctx.cwd }
+          const toolCtx = { projectId: ctx.projectId, onlyProject: true, signal: new AbortController().signal, agent: ctx.agent, cwd: ctx.cwd, conversationId: ctx.sessionId }
           const content = tool.runContent ? await tool.runContent(parsed.data, toolCtx) : [{ type: 'text', text: await tool.run(parsed.data, toolCtx) }]
           ctx.onCall?.(name, input)
           return ok({ content })
@@ -103,11 +104,22 @@ export function createMcpHandler(registry: ToolRegistry, version: string, names:
   }
 }
 
-async function allowed(gate: McpGate, ctx: McpSessionContext, tool: NonNullable<ReturnType<ToolRegistry['get']>>, name: string, input: never): Promise<boolean> {
+async function allowed(
+  gate: McpGate,
+  ctx: McpSessionContext,
+  tool: NonNullable<ReturnType<ToolRegistry['get']>>,
+  name: string,
+  input: never,
+  args: Record<string, unknown>
+): Promise<boolean> {
   const key = mcpToolKey(name)
   if (tool.risk === 'write' && (await gate.isGranted(ctx.agentId, key, ctx.projectId))) return true
   // The agent asked through its own gate: Claude Code names the tool by its key, ACP agents put both names in the title.
-  const sameTool = (r: PermissionRequest) => r.toolName === key || (/mindeck/i.test(`${r.toolName} ${r.toolTitle}`) && `${r.toolName} ${r.toolTitle}`.includes(name))
+  // A command counts only as asked: by its key, with these very arguments — an agent titles its own asks (`echo mindeck terminal_run`).
+  const sameTool =
+    tool.risk === 'execute'
+      ? (r: PermissionRequest) => r.toolName === key && isDeepStrictEqual(r.input, args)
+      : (r: PermissionRequest) => r.toolName === key || (/mindeck/i.test(`${r.toolName} ${r.toolTitle}`) && `${r.toolName} ${r.toolTitle}`.includes(name))
   if (gate.takeApproval(ctx.sessionId, sameTool)) return true
   const asked = gate.ask(
     {
