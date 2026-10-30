@@ -19,12 +19,14 @@ import {
 } from '@shared/types/terminal'
 import { readJson } from '../../lib/jsonFile'
 import { writeAtomic } from '../../lib/writeAtomic'
-import { integrate, scanCwd, shellKind, writeScripts, type ShellLaunch } from './integration'
+import { COMMAND_END, integrate, scanCwd, shellKind, writeScripts, type ShellLaunch } from './integration'
 import { detectShells } from './shells'
 
 const MAX_SESSIONS = 12
 const FLUSH_MS = 8 // batch PTY output into ~frame-sized IPC messages
 const MAX_WRITE = 1024 * 1024
+/** Command ends kept per session (an agent's command is read up to its end). */
+const MAX_ENDS = 200
 
 interface Session {
   info: TerminalInfo
@@ -35,6 +37,12 @@ interface Session {
   end: number
   /** The start of a folder report (OSC 7) the next chunk completes. */
   osc: string
+  /** Where commands ended (OSC 133;D), oldest first — still inside the buffer. */
+  ends: number[]
+  /** The latest end no longer kept: everything before it has left the buffer. */
+  lostEnd?: number
+  /** The last chunk's tail, for a mark split across two chunks. */
+  markTail: string
 }
 
 type Emit = {
@@ -317,7 +325,7 @@ export class TerminalService {
       ...(req.profileId ? { profileId: req.profileId } : {}),
       ...(req.integration ? { integration: true } : {})
     }
-    const session: Session = { info, pty, pending: '', buffer: '', end: 0, osc: '' }
+    const session: Session = { info, pty, pending: '', buffer: '', end: 0, osc: '', ends: [], markTail: '' }
     pty.onData((data) => this.push(session, data))
     // node-pty can call this from its native exit callback: an exception thrown here would
     // not reach Node's handlers but end the whole app (std::terminate) — log it instead.
@@ -359,11 +367,25 @@ export class TerminalService {
     return { info: session.info, opened: !free, start }
   }
 
-  /** What a session printed since `from` (its output length then), as far as the kept output reaches back. */
-  output(id: string, from = 0): string {
+  /** What a session printed from `from` to `to` (its output lengths then), as far as the kept output reaches back. */
+  output(id: string, from = 0, to = Infinity): string {
     const s = this.require(id)
     this.flush(s)
-    return s.buffer.slice(Math.max(0, from - (s.end - s.buffer.length)))
+    const first = s.end - s.buffer.length
+    return s.buffer.slice(Math.max(0, from - first), Math.max(0, to - first))
+  }
+
+  /**
+   * Where the command typed at `from` ended — the first OSC 133;D since, if
+   * its shell printed one (only after a command it ran) — and how far the
+   * output reaches now.
+   */
+  ended(id: string, from: number): { at?: number; now: number } {
+    const s = this.require(id)
+    this.flush(s)
+    // An end that left the buffer took the command's output with it: nothing after it may stand in.
+    const at = s.lostEnd !== undefined && s.lostEnd >= from ? s.lostEnd : s.ends.find((e) => e >= from)
+    return { ...(at !== undefined ? { at } : {}), now: s.end }
   }
 
   /** The Terminal module's tabs — agent PTYs live in the Agents module — with what runs in them now. */
@@ -446,6 +468,17 @@ export class TerminalService {
     s.buffer = (s.buffer + data).slice(-this.limit)
     this.opts.emit('terminal:data', { id: s.info.id, data, end: s.end })
     this.follow(s, data)
+    this.markEnds(s, data)
+  }
+
+  /** Notes where commands ended in this chunk (OSC 133;D) — a mark split across chunks counts once. */
+  private markEnds(s: Session, data: string): void {
+    const text = s.markTail + data
+    const base = s.end - text.length
+    for (let i = text.indexOf(COMMAND_END); i >= 0; i = text.indexOf(COMMAND_END, i + 1)) s.ends.push(base + i)
+    s.markTail = text.slice(-(COMMAND_END.length - 1))
+    const first = s.end - s.buffer.length
+    while (s.ends.length > MAX_ENDS || s.ends[0] < first) s.lostEnd = s.ends.shift()
   }
 
   /** The shell reported a new folder (OSC 7): a folder tab is named after it. */

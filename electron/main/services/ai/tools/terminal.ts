@@ -5,7 +5,7 @@ import { stripAnsi } from '../../browser/devServers'
 import type { ToolContext, ToolDefinition } from './types'
 import { truncate } from './builtin'
 
-/** Reading what a command printed runs without asking: only terminals an agent started something in. */
+/** Reading what a command printed runs without asking: only the caller's own commands, from their start to their end. */
 export const TERMINAL_READ_TOOLS = ['terminal_read']
 /** Every terminal tool; starting a command asks the user, stopping one is a write. */
 export const TERMINAL_TOOLS = ['terminal_run', ...TERMINAL_READ_TOOLS, 'terminal_stop']
@@ -17,7 +17,9 @@ const MAX_OUTPUT = 8000
 /** What the tools need from the terminals (TerminalService). */
 export interface TerminalAgentApi {
   runVisible(req: { command: string; cwd: string; projectId?: string; by: string }): Promise<{ info: TerminalInfo; opened: boolean; start: number }>
-  output(id: string, from?: number): string
+  output(id: string, from?: number, to?: number): string
+  /** Where the command typed at `from` ended (OSC 133;D), if it has, and how far the output reaches now. */
+  ended(id: string, from: number): { at?: number; now: number }
   write(id: string, data: string): void
   /** The Terminal's tabs, with what runs in them now. */
   list(): TerminalInfo[]
@@ -27,9 +29,14 @@ export interface TerminalAgentApi {
 interface Run {
   id: string
   command: string
-  by: string
+  /** Whose it is: the conversation (an agent session) and its project. */
+  owner: string
   /** The terminal's output length before the command. */
   start: number
+  /** …and when the command ended: what follows is the user's again (a reused terminal is theirs). */
+  end?: number
+  /** It was seen running (a shell without command marks has ended once it is back in front). */
+  seen?: boolean
 }
 
 function coded(code: string, message: string): Error {
@@ -66,6 +73,7 @@ const terminal = z.string().max(100).optional().describe('Terminal id from termi
 export function terminalTools(deps: { terminal: TerminalAgentApi; projects: { list(): Project[] }; firstOutputMs?: number }): ToolDefinition<never>[] {
   const runs = new Map<string, Run>()
   const who = (ctx: ToolContext) => ctx.agent ?? 'Agent'
+  const owner = (ctx: ToolContext) => `${ctx.conversationId ?? ''}\n${ctx.projectId ?? ''}`
 
   /** Where a command starts: the agent's own folder (a worktree when isolated), else its project's. */
   const folder = (id: string | undefined, ctx: ToolContext): { cwd: string; projectId?: string } => {
@@ -78,28 +86,41 @@ export function terminalTools(deps: { terminal: TerminalAgentApi; projects: { li
     return { cwd: p.path, projectId: p.id }
   }
 
-  /** A terminal an agent started something in: the one asked for, else the caller's latest. */
+  /** A terminal the caller started something in: the one asked for, else its latest — never another conversation's or project's. */
   const started = (id: string | undefined, ctx: ToolContext): Run => {
+    const mine = (r: Run | undefined): r is Run => r?.owner === owner(ctx)
     if (id) {
       const run = runs.get(id)
-      if (!run) throw coded('not-found', `No command of an agent runs in terminal ${id} — terminal_run starts one.`)
+      if (!mine(run)) throw coded('not-found', `No command of yours runs in terminal ${id} — terminal_run starts one.`)
       return run
     }
-    const all = [...runs.values()]
-    const run = all.filter((r) => r.by === who(ctx)).pop() ?? all.pop()
+    const run = [...runs.values()].filter(mine).pop()
     if (!run) throw coded('not-found', 'No command started yet — terminal_run starts one.')
     return run
   }
 
-  /** The terminal's state and what it printed since the command. */
+  /** Whether the run's command has ended — its end noted once, at its shell's mark, else when its shell is back in front. */
+  const settle = (run: Run, live: TerminalInfo): boolean => {
+    if (run.end === undefined) {
+      const { at, now } = deps.terminal.ended(run.id, run.start)
+      // A shell with Mindeck's integration says where; one starting up is in front before the command ever ran.
+      if (at !== undefined) run.end = at
+      else if (!live.running && (run.seen || !live.integration)) run.end = now
+      else if (live.running) run.seen = true
+    }
+    return run.end !== undefined
+  }
+
+  /** The terminal's state and what the command printed — nothing from before it, nothing after it ended. */
   const report = (run: Run, maxChars = MAX_OUTPUT): string => {
     const live = deps.terminal.list().find((t) => t.id === run.id)
     if (!live) return `Terminal [${run.id}] was closed.`
+    const done = settle(run, live)
     // Leading blank lines and trailing space go; a line's indentation stays (a dev server's banner).
-    const output = plainOutput(deps.terminal.output(run.id, run.start))
+    const output = plainOutput(deps.terminal.output(run.id, run.start, run.end))
       .replace(/^\s*\n/, '')
       .trimEnd()
-    const state = live.running ? `running: ${live.running}` : 'waiting at its prompt (the command has ended)'
+    const state = done ? 'the command has ended' : live.running ? `running: ${live.running}` : 'starting'
     const tail = output.length > maxChars ? `… [${output.length - maxChars} earlier characters left out]\n${output.slice(-maxChars)}` : output
     return `Terminal [${run.id}] ${live.title} (${live.cwdLabel}) · ${state}\n--- output since \`${run.command}\` ---\n${tail || '(nothing yet)'}`
   }
@@ -124,7 +145,7 @@ export function terminalTools(deps: { terminal: TerminalAgentApi; projects: { li
       async run({ command, projectId }, ctx) {
         const { cwd, projectId: project } = folder(projectId, ctx)
         const { info, opened, start } = await deps.terminal.runVisible({ command, cwd, projectId: project, by: who(ctx) })
-        const run: Run = { id: info.id, command, by: who(ctx), start }
+        const run: Run = { id: info.id, command, owner: owner(ctx), start }
         runs.delete(info.id) // the latest run last
         runs.set(info.id, run)
         await wait(deps.firstOutputMs ?? FIRST_OUTPUT_MS, ctx.signal)
@@ -136,6 +157,7 @@ export function terminalTools(deps: { terminal: TerminalAgentApi; projects: { li
       title: 'Read a terminal',
       description: 'What a command started with terminal_run printed since it started (the latest output), and whether it still runs.',
       risk: 'read',
+      shell: true,
       schema: z.object({ terminal, maxChars: z.number().int().min(500).max(30_000).optional() }),
       summarize: () => 'Read the output of a Mindeck terminal',
       async run({ terminal: id, maxChars }, ctx) {
@@ -151,7 +173,10 @@ export function terminalTools(deps: { terminal: TerminalAgentApi; projects: { li
       summarize: () => 'Stop a command in a Mindeck terminal (Ctrl+C)',
       async run({ terminal: id }, ctx) {
         const run = started(id, ctx)
-        if (!deps.terminal.list().some((t) => t.id === run.id)) return `Terminal [${run.id}] was closed.`
+        const live = deps.terminal.list().find((t) => t.id === run.id)
+        if (!live) return `Terminal [${run.id}] was closed.`
+        // Ended: whatever runs there now is the user's.
+        if (settle(run, live)) return report(run, 2000)
         deps.terminal.write(run.id, '\x03')
         await wait(500, ctx.signal)
         return report(run, 2000)

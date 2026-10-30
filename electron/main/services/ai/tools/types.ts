@@ -12,6 +12,8 @@ export interface ToolContext {
   agent?: string
   /** The folder the agent works in (its session's: a worktree when isolated) — where its commands start. */
   cwd?: string
+  /** The conversation calling (an agent session's id): whose terminal commands it may read and stop. */
+  conversationId?: string
 }
 
 /** A result block for clients that take more than text (MCP: screenshots as images). */
@@ -27,6 +29,8 @@ export interface ToolDefinition<I = unknown> {
   title: string
   description: string
   risk: ToolRisk
+  /** Shows what a terminal printed: a paired device needs remote shells for it, as for `terminal:data`. */
+  shell?: boolean
   schema: z.ZodType<I>
   /** JSON Schema sent to the model (generated from `schema`). */
   inputSchema?: Record<string, unknown>

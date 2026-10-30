@@ -389,11 +389,12 @@ export class AssistantService {
       event('tool.denied', { reason: 'not-allowed' })
       return finish('denied', `The tool ${call.name} is not available to the ${agent.name} agent.`, true)
     }
-    // A run a paired device started changes nothing and runs nothing without remote shells.
+    // A run a paired device started changes nothing, runs nothing and reads no terminal without remote shells.
     const remote = r.ctx.transport === 'remote'
-    if (tool.risk !== 'read' && remote && !this.deps.remoteShell()) {
+    if ((tool.risk !== 'read' || tool.shell) && remote && !this.deps.remoteShell()) {
       event('tool.denied', { reason: 'remote-shell-disabled' })
-      return finish('denied', 'Changing files and running commands is disabled for remote devices on this Mindeck core.', true)
+      const what = tool.risk === 'read' ? 'Reading terminals' : 'Changing files and running commands'
+      return finish('denied', `${what} is disabled for remote devices on this Mindeck core.`, true)
     }
     // 2. schema
     const parsed = this.deps.tools.parse(tool, call.input)
@@ -450,7 +451,7 @@ export class AssistantService {
     publish()
     event('tool.started', { summary })
     try {
-      const output = await tool.run(parsed.data, { projectId: conv.projectId, signal: r.controller.signal, agent: agent.name })
+      const output = await tool.run(parsed.data, { projectId: conv.projectId, signal: r.controller.signal, agent: agent.name, conversationId: conv.id })
       event('tool.completed', { summary, bytes: output.length })
       return finish('done', output, false)
     } catch (err) {

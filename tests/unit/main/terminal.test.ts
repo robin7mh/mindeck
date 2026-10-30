@@ -389,6 +389,35 @@ describe('TerminalService.runVisible (an agent starts something the user sees)',
     expect(pty().write).toHaveBeenCalledWith('npm run dev\r')
   })
 
+  it('notes where a command ended (OSC 133;D, also split across chunks): its output reads up to there', async () => {
+    const { info, start } = await run()
+    pty().data('building\r\n\x1b]13')
+    expect(svc.ended(info.id, start)).toEqual({ now: 14 }) // half a mark is none
+    pty().data('3;D;0\x07$ cat secrets')
+    const { at, now } = svc.ended(info.id, start)
+    expect(at).toBe(10)
+    expect(now).toBe(33)
+    expect(svc.output(info.id, start, at)).toBe('building\r\n')
+    expect(svc.ended(info.id, 11)).toEqual({ now: 33 }) // the next command has not ended
+  })
+
+  it('an end that left the buffer still bounds the command (nothing after it stands in); a few hundred are kept', async () => {
+    svc = service({ terminal: { bufferKb: 64 } })
+    const { info } = await run()
+    pty().data('x\x1b]133;D;0\x07')
+    expect(svc.ended(info.id, 0).at).toBe(1)
+    pty().data(`${'y'.repeat(70 * 1024)}\x1b]133;D;0\x07`)
+    expect(svc.ended(info.id, 0).at).toBe(1) // gone from the buffer, still the end
+    expect(svc.output(info.id, 0, 1)).toBe('')
+    expect(svc.ended(info.id, 2).at).toBe(11 + 70 * 1024)
+
+    pty().fg = 'node' // busy: the next command gets a terminal of its own
+    const many = (await run()).info.id
+    pty().data('\x1b]133;D'.repeat(201))
+    expect(svc.ended(many, 0).at).toBe(0) // the first, though no longer kept
+    expect(svc.ended(many, 1).at).toBe(7)
+  })
+
   it('takes one command line', async () => {
     for (const command of ['', '  ', 'a\nb', 'a\rb']) await expect(run(command)).rejects.toMatchObject({ code: 'bad-input' })
     expect(h.ptys).toHaveLength(0)

@@ -65,6 +65,16 @@ const tools: ToolDefinition<never>[] = [
     run: async () => 'tagged'
   },
   {
+    name: 'term_x',
+    title: 'Term X',
+    description: 'reads a terminal',
+    risk: 'read',
+    shell: true,
+    schema: z.object({}),
+    summarize: () => 'term',
+    run: async (_i: unknown, ctx: { conversationId?: string }) => `printed for ${ctx.conversationId}`
+  },
+  {
     name: 'other_agent_tool',
     title: 'Other',
     description: 'not allowlisted',
@@ -336,6 +346,22 @@ describe('AssistantService — tools and the permission gate', () => {
     const c = await allowed.svc.send({ text: 'x' }, remote)
     await allowed.waitFor(() => allowed.permissions.list().length === 1)
     await allowed.permissions.respond(allowed.permissions.list()[0].id, 'once')
+    await allowed.svc.idle()
+    expect(toolParts(await allowed.reply(c.conversationId))[0].status).toBe('done')
+  })
+
+  it('reading a terminal needs remote shells for a remote device; a tool learns its conversation', async () => {
+    const agents = [agentDef({ tools: ['term_x'] })]
+    const h = await harness({ agents, script: [call('term_x', {}), say('ok'), call('term_x', {}), say('no')] })
+    const { conversationId } = await h.svc.send({ text: 'look' }, ipc)
+    await h.svc.idle()
+    expect(toolParts(await h.reply(conversationId))[0]).toMatchObject({ status: 'done', output: `printed for ${conversationId}` })
+    await h.svc.send({ conversationId, text: 'again' }, remote)
+    await h.svc.idle()
+    expect(toolParts(await h.reply(conversationId))[0]).toMatchObject({ status: 'denied', output: 'Reading terminals is disabled for remote devices on this Mindeck core.' })
+
+    const allowed = await harness({ agents, remoteShell: true, script: [call('term_x', {}), say('ok')] })
+    const c = await allowed.svc.send({ text: 'x' }, remote)
     await allowed.svc.idle()
     expect(toolParts(await allowed.reply(c.conversationId))[0].status).toBe('done')
   })

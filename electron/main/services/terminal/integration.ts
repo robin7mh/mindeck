@@ -6,6 +6,9 @@ import { dirname, join } from 'node:path'
 // Nothing in the user's dotfiles changes — the script rides in on a start
 // argument or an environment variable, and runs the user's own files first.
 
+/** The shell's "a command finished" mark (OSC 133;D). */
+export const COMMAND_END = '\x1b]133;D'
+
 /** How a program is started in a PTY. */
 export interface ShellLaunch {
   file: string

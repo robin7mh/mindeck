@@ -1,5 +1,6 @@
 import { connect } from 'node:net'
 import type { DevServer } from '@shared/types/browser'
+import { COMMAND_END } from '../terminal/integration'
 
 /** Colors, cursor moves and OSC sequences (titles, hyperlinks) — what a terminal draws, not what it says. */
 const ANSI = /\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-Z\\-_]/g
@@ -14,8 +15,6 @@ const LOCAL_URL = /\bhttps?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\]|[a-
 const PER_TERMINAL = 4
 /** Unfinished output kept until its line ends. */
 const MAX_TAIL = 400
-/** Shell integration's "a command finished" mark (OSC 133;D). */
-const COMMAND_END = '\x1b]133;D'
 
 /** Where to knock for an address: `*.localhost` is this machine (Node's resolver may not know it), no port is the scheme's. */
 export function probeTarget(url: string): { host: string; port: number } {
