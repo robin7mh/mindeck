@@ -216,7 +216,7 @@ describe('createCore', () => {
     const realPlatform = process.platform
     Object.defineProperty(process, 'platform', { value: 'linux' }) // no Spotlight here: Files walks
     const openExternal = vi.fn(async () => {})
-    const c = await core({ mode: 'desktop', serverConfig: { enabled: false, lan: false, tls: true, port: 0, remoteTerminal: false, remoteRoots: [] }, platform: { ...headlessPlatform, kind: 'desktop', openExternal } })
+    const c = await core({ mode: 'desktop', serverConfig: { enabled: false, lan: false, tls: true, port: 0, remoteTerminal: true, remoteRoots: [] }, platform: { ...headlessPlatform, kind: 'desktop', openExternal } })
     Object.defineProperty(process, 'platform', { value: realPlatform })
     const pushed: string[] = []
     c.hub.subscribe((channel) => pushed.push(channel))
@@ -250,6 +250,13 @@ describe('createCore', () => {
     expect(await c.router.dispatch('finder:trash', { paths: [join(home, 'old.txt')] }, { transport: 'ipc' })).toEqual({ ok: true, data: [{ path: join(home, 'old.txt') }] })
     expect(await c.router.dispatch('finder:list', { path: home }, { transport: 'ipc' })).toMatchObject({ ok: true, data: { entries: [] } })
     expect(await c.router.dispatch('finder:list', { path: home, hidden: true }, { transport: 'ipc' })).toMatchObject({ ok: true, data: { entries: [expect.objectContaining({ name: '.trash' })] } })
+    // A paired device's Files (remote shells on): what it did goes into the audit log, under its name (here: its id — not paired).
+    const phone = { transport: 'remote' as const, deviceId: 'phone-1', role: 'member' as const }
+    expect(await c.router.dispatch('finder:mkdir', { parent: home, name: 'From the phone' }, phone)).toEqual({ ok: true, data: join(home, 'From the phone') })
+    expect(await c.router.dispatch('finder:mkdir', { parent: home, name: '.ssh' }, phone)).toMatchObject({ ok: false, error: { code: 'remote-forbidden' } })
+    await new Promise((r) => setTimeout(r, 20))
+    const audit = (await c.router.dispatch('events:recent', {}, { transport: 'ipc' })) as { data: { type: string; actor: unknown; payload: unknown }[] }
+    expect(audit.data.find((e) => e.type === 'device.files')).toMatchObject({ actor: { kind: 'device', id: 'phone-1' }, payload: { device: 'phone-1', action: 'mkdir', path: join(home, 'From the phone') } })
     if (savedHomeEnv === undefined) delete process.env.HOME
     else process.env.HOME = savedHomeEnv
   })

@@ -24,6 +24,8 @@ export interface CloudConfig {
    * it doesn't sign in itself but takes the desktop's signed entitlement over.
    */
   follower?: boolean
+  /** A release follower takes follower leases for itself only — never the desktop's own entitlement. */
+  leasesOnly?: boolean
 }
 
 export function bakedCloud(): { url?: string; key?: string; follower?: boolean } {
@@ -86,6 +88,7 @@ export function cloudConfig(release: boolean, env: NodeJS.ProcessEnv = process.e
     url: url.replace(/\/+$/, ''),
     ...(publicKey ? { publicKey } : {}),
     enforced: release || env.MINDECK_LICENSE === 'required' || follower,
-    ...(follower ? { follower: true } : {})
+    ...(follower ? { follower: true } : {}),
+    ...(follower && release ? { leasesOnly: true } : {})
   }
 }

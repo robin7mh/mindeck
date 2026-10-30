@@ -430,7 +430,8 @@ describe('cloud config', () => {
 
   it('a core the desktop runs elsewhere follows its license — in a release only the server package built for that', () => {
     expect(cloudConfig(false, { MINDECK_LICENSE: 'follower' }, {})).toEqual({ url: DEV_CLOUD_URL, enforced: true, follower: true })
-    expect(cloudConfig(true, { MINDECK_LICENSE: 'follower' }, { key: 'K', follower: true })).toEqual({ url: DEV_CLOUD_URL, publicKey: 'K', enforced: true, follower: true })
+    // A release follower: leases only.
+    expect(cloudConfig(true, { MINDECK_LICENSE: 'follower' }, { key: 'K', follower: true })).toEqual({ url: DEV_CLOUD_URL, publicKey: 'K', enforced: true, follower: true, leasesOnly: true })
     // The desktop app, the Docker image, any other release server: the variable changes nothing — it signs in itself.
     expect(cloudConfig(true, { MINDECK_LICENSE: 'follower' }, { url: 'https://api.mindeck.test', key: 'K' })).toEqual({ url: 'https://api.mindeck.test', publicKey: 'K', enforced: true })
   })
@@ -1064,6 +1065,27 @@ describe('CloudService', () => {
     const odd = await setup({ follower: true, publicKey: leader.cloud.k.pem, dir: mixed })
     odd.clock.now = follower.clock.now
     expect(odd.svc.status()).toMatchObject({ allowed: false })
+  })
+
+  it('a release follower takes only follower leases for itself — the desktop’s own entitlement is no stand-in there', async () => {
+    const leader = await setup()
+    await leader.signIn()
+    const own = leader.svc.entitlement()!
+    const follower = await setup({ follower: true, leasesOnly: true, publicKey: leader.cloud.k.pem })
+    follower.clock.now = leader.clock.now
+    await expect(follower.svc.adopt(own.token, own.account)).rejects.toMatchObject({ code: 'lease-required' })
+    expect(follower.svc.status()).toMatchObject({ allowed: false })
+    const other = (await leader.svc.followerLease('another-core'))!
+    await expect(follower.svc.adopt(other.token, other.account)).rejects.toMatchObject({ code: 'bad-entitlement' })
+    const mine = (await leader.svc.followerLease(follower.svc.installId()))!
+    expect(await follower.svc.adopt(mine.token, mine.account)).toMatchObject({ state: 'active' })
+    // A desktop entitlement saved by an older version holds nothing in a release.
+    const saved = JSON.parse(await readFile(join(follower.dir, 'cloud.json'), 'utf8'))
+    const legacy = await tempDir()
+    await writeFile(join(legacy, 'cloud.json'), JSON.stringify({ ...saved, leased: undefined, adoptedAt: follower.clock.now, entitlement: own.token }))
+    const old = await setup({ follower: true, leasesOnly: true, publicKey: leader.cloud.k.pem, dir: legacy })
+    old.clock.now = follower.clock.now
+    expect(old.svc.status()).toMatchObject({ allowed: false })
   })
 
   it('remembers the account across restarts — a lifetime license even without the cloud', async () => {

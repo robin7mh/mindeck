@@ -69,6 +69,8 @@ export interface CloudServiceOptions {
   now?: () => number
   /** A core run by the desktop app elsewhere: no sign-in of its own, it adopts the desktop's entitlement. */
   follower?: boolean
+  /** A release follower: only follower leases for this core — Mindeck Cloud issues them, the desktop's own entitlement is no stand-in. */
+  leasesOnly?: boolean
 }
 
 interface Persisted {
@@ -413,8 +415,9 @@ export class CloudService {
    * good. A follower lease must be this core's (`dev` = its install id); the
    * desktop's own entitlement — while the cloud issues no leases — holds for
    * FOLLOWER_HANDOVER_MS after the desktop last handed it over, and not at all
-   * once this core ran on a lease. The key ids the desktop knows to be
-   * revoked are kept first: whatever they signed holds here no more.
+   * once this core ran on a lease — nor ever in a release (`leasesOnly`).
+   * The key ids the desktop knows to be revoked are kept first: whatever they
+   * signed holds here no more.
    */
   async adopt(token: string, account: CloudAccount, revokedKids: readonly string[] = []): Promise<CloudStatus> {
     if (!this.opts.follower) throw coded('not-follower', 'This core signs in itself')
@@ -426,7 +429,7 @@ export class CloudService {
     if (!claims.active || claims.exp * 1000 <= this.now()) throw coded('bad-entitlement', 'This entitlement is not valid (any more)')
     const lease = claims.lease === 'follower'
     if (lease && claims.dev !== this.data.installId) throw coded('bad-entitlement', 'This follower lease is for another core')
-    if (!lease && this.data.leased) throw coded('lease-required', 'This core runs on follower leases from Mindeck Cloud only')
+    if (!lease && (this.data.leased || this.opts.leasesOnly)) throw coded('lease-required', 'This core runs on follower leases from Mindeck Cloud only')
     this.data = { ...this.data, account, entitlement: token, license: null, ...(lease ? { leased: true } : { adoptedAt: this.now() }) }
     this.claims = this.followerClaims(claims)
     this.error = null
@@ -444,7 +447,7 @@ export class CloudService {
   private followerClaims(claims: EntitlementClaims | null): EntitlementClaims | null {
     if (!claims) return null
     if (claims.lease === 'follower') return claims.dev === this.data.installId ? claims : null
-    if (this.data.leased) return null
+    if (this.data.leased || this.opts.leasesOnly) return null
     return { ...claims, exp: Math.min(claims.exp, Math.floor(((this.data.adoptedAt ?? 0) + FOLLOWER_HANDOVER_MS) / 1000)) }
   }
 

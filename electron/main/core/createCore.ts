@@ -318,6 +318,7 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
     publicKey: cloudCfg.publicKey,
     enforced: cloudCfg.enforced,
     follower: cloudCfg.follower,
+    leasesOnly: cloudCfg.leasesOnly,
     client: opts.mode,
     version: opts.version,
     deviceName: hostname(),
