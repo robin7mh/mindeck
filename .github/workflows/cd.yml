@@ -43,6 +43,16 @@ jobs:
       contents: read
       packages: write
     steps:
+      # Without a baked-in cloud the server is no release build and needs no license (server/main.ts):
+      # a public image like that would be the full product for free. No image, then.
+      - name: Mindeck Cloud is configured
+        env:
+          MINDECK_CLOUD_URL: ${{ vars.MINDECK_CLOUD_URL }}
+          MINDECK_CLOUD_KEY: ${{ secrets.MINDECK_CLOUD_KEY }}
+        run: |
+          case "$MINDECK_CLOUD_URL" in https://*) [ -n "$MINDECK_CLOUD_KEY" ] && exit 0 ;; esac
+          echo "::error::Set the variable MINDECK_CLOUD_URL (https://…) and the secret MINDECK_CLOUD_KEY (docs/RELEASE.md) — without them the image would need no license"
+          exit 1
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0

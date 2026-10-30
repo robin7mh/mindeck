@@ -29,6 +29,17 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
+      # Without both the build falls back quietly: a packaged app would ask a cloud on localhost and
+      # lock every buyer out. A tag fails here; a manual run only warns (its builds can't be licensed).
+      - name: Mindeck Cloud is configured
+        env:
+          MINDECK_CLOUD_URL: ${{ vars.MINDECK_CLOUD_URL }}
+          MINDECK_CLOUD_KEY: ${{ secrets.MINDECK_CLOUD_KEY }}
+        run: |
+          case "$MINDECK_CLOUD_URL" in https://*) [ -n "$MINDECK_CLOUD_KEY" ] && exit 0 ;; esac
+          msg="Set the variable MINDECK_CLOUD_URL (https://…) and the secret MINDECK_CLOUD_KEY (docs/RELEASE.md)"
+          if [ "$GITHUB_REF_TYPE" = tag ]; then echo "::error::$msg"; exit 1; fi
+          echo "::warning::$msg — these builds can't use a license"
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
