@@ -107,6 +107,24 @@ describe('RemoteAccess · Files for a device with remote shells', () => {
     await expect(m.access.check('finder:read', { path: join(m.home, '.ssh', 'id_rsa') })).rejects.toMatchObject({ code: 'remote-forbidden' })
   })
 
+  it('a new name is judged where it will be: no hidden files, keys or credentials by renaming or a new folder', async () => {
+    const m = await machine()
+    const doc = join(m.home, 'Documents')
+    await m.access.check('finder:rename', { path: join(doc, 'report.pdf'), name: 'final.pdf' })
+    await expect(m.access.check('finder:rename', { path: join(m.home, 'upload.txt'), name: '.zshenv' })).rejects.toMatchObject({ code: 'remote-forbidden', message: expect.stringContaining('a hidden folder') })
+    await expect(m.access.check('finder:rename', { path: join(doc, 'report.pdf'), name: 'id_rsa' })).rejects.toMatchObject({ code: 'remote-forbidden', message: expect.stringContaining('keys or credentials') })
+    await expect(m.access.check('finder:mkdir', { parent: doc, name: '.git' })).rejects.toMatchObject({ code: 'remote-forbidden' })
+    await expect(m.access.check('finder:mkdir', { parent: m.home, name: '.ssh' })).rejects.toMatchObject({ code: 'remote-forbidden' })
+  })
+
+  it('shows a search hit only where a device may go', async () => {
+    const m = await machine()
+    expect(await m.access.shows(join(m.home, 'Documents', 'report.pdf'))).toBe(true)
+    for (const path of [join(m.home, 'Library', 'Mail', 'x.emlx'), join(m.data, 'devices.json'), join(m.home, '.config', 'gh', 'hosts.yml'), join(m.root, 'sys', 'etc', 'passwd'), join(m.home, 'server.pem'), 'relative']) {
+      expect(await m.access.shows(path)).toBe(false)
+    }
+  })
+
   it('an undo of the trash takes things back from the trash only — never keys', async () => {
     const m = await machine()
     const back = join(m.home, 'Documents', 'old.txt')

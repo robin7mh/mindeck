@@ -1,7 +1,7 @@
 import type { IpcChannel, IpcEvent } from '@shared/ipc/contract'
 import { ALL_PROJECTS, type AgentRun, type ConversationSummary, type PermissionGrant, type PermissionRequest } from '@shared/types/ai'
 import type { AgentSession } from '@shared/types/agents'
-import type { FinderEntry, FinderListing } from '@shared/types/finder'
+import type { FinderEntry, FinderListing, FinderProgress } from '@shared/types/finder'
 import type { MindeckEvent } from '@shared/types/events'
 import type { LiveServerStatus } from '@shared/types/live'
 import type { RemoteAccess } from './RemoteAccess'
@@ -10,7 +10,7 @@ import type { RemoteAccess } from './RemoteAccess'
 const VERDICT_MS = 2000
 
 export interface RemoteScopeDeps {
-  access: Pick<RemoteAccess, 'check' | 'project' | 'denied'>
+  access: Pick<RemoteAccess, 'check' | 'project' | 'denied' | 'shows'>
   /** The project an agent session works in (undefined: no such session). */
   sessionProject: (id: string) => string | undefined
   /** The project an assistant conversation belongs to (undefined: none, or no such conversation). */
@@ -87,8 +87,12 @@ export class RemoteScope {
         const entries = listing.entries.filter((e) => this.visibleFile(e))
         return { ...listing, entries, total: listing.total - (listing.entries.length - entries.length) }
       }
-      case 'finder:search':
-        return (data as FinderEntry[]).filter((e) => this.visibleFile(e))
+      case 'finder:search': {
+        // Spotlight finds names anywhere below: each hit is judged like a path the device names.
+        const hits = (data as FinderEntry[]).filter((e) => this.visibleFile(e))
+        const ok = await Promise.all(hits.map((e) => this.deps.access.shows(e.path)))
+        return hits.filter((_, i) => ok[i])
+      }
       default:
         return data
     }
@@ -119,6 +123,11 @@ export class RemoteScope {
       case 'events:event':
         if (isDeviceEvent(payload as MindeckEvent)) return null
         return this.only(p, await this.eventProject(payload as MindeckEvent))
+      case 'finder:progress': {
+        // How far a copy is, not which file: the desktop's own copies pass through hidden folders too.
+        const { file: _file, ...progress } = payload as FinderProgress
+        return progress
+      }
       default:
         return payload
     }

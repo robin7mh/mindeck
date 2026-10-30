@@ -6,35 +6,9 @@ import { promisify } from 'node:util'
 import type { IpcChannel } from '@shared/ipc/contract'
 import type { Project } from '@shared/types/project'
 import type { DirListing } from '@shared/types/server'
+import { isDeniedName } from '@shared/types/secrets'
 
-/**
- * Names a paired device never reads, anywhere: keys, credentials, keychains
- * and browser profiles (compared per path segment, ignoring case).
- */
-const DENIED: readonly RegExp[] = [
-  /^\.(ssh|aws|gnupg|azure|kube|docker|mozilla)$/,
-  // A repository's own data: remote URLs carry tokens (`https://x-access-token:ghp_…@github.com`) — scm:* reads git for devices.
-  /^\.git$/,
-  /^\.env/,
-  /^\.(netrc|pgpass|git-credentials|npmrc|pypirc|yarnrc|yarnrc\.yml|htpasswd|terraformrc|dockercfg|boto|s3cfg|my\.cnf)$/,
-  /\.(pem|key|p12|pfx|jks|keystore|ppk|kdbx|keychain|keychain-db)$/,
-  // Terraform state (every secret of the infrastructure), cloud credentials and service accounts, app secrets.
-  /\.tfstate(\..*)?$/,
-  /^credentials.*\.json$/,
-  /service[-_]?account.*\.json$/,
-  /^secrets?\.(ya?ml|json)$/,
-  /^wp-config\.php$/,
-  // SSH keys (`id_rsa`, `id_ed25519.pub`, `id_github`) — not source files such as `id_utils.py`.
-  /^id_[^.]*(\.pub)?$/,
-  /^keychains$/,
-  /^(google-chrome|chromium|bravesoftware|vivaldi)$/,
-  /^(cookies|login data|web data|key4\.db|logins\.json|cookies\.sqlite)$/
-]
-
-/** A file or folder name on the deny list (keys, credentials, browser profiles), ignoring case. */
-export function isDeniedName(name: string): boolean {
-  return DENIED.some((re) => re.test(name.toLowerCase()))
-}
+export { isDeniedName }
 
 /** The operating system's own folders: never a device's, nor any folder that holds one. */
 function systemDirs(platform: NodeJS.Platform): string[] {
@@ -158,6 +132,9 @@ export class RemoteAccess {
     const items = Array.isArray(p.items) ? (p.items as { path?: unknown; restore?: unknown }[]) : []
     const moves = Array.isArray(p.moves) ? (p.moves as { from?: unknown; to?: unknown }[]) : []
     const named = [...filePaths(p), p.parent, p.dest, ...items.map((i) => i.path), ...moves.flatMap((m) => [m.from, m.to])].filter(str)
+    // A new name is judged where it will be: never a hidden file (`~/.zshenv`) or a key's name.
+    if (str(p.name) && channel === 'finder:rename' && str(p.path)) named.push(this.path.join(this.path.dirname(p.path), p.name))
+    if (str(p.name) && channel === 'finder:mkdir' && str(p.parent)) named.push(this.path.join(p.parent, p.name))
     for (const path of named) await this.reachable(path)
     for (const restore of items.map((i) => i.restore).filter(str)) await this.inTrash(restore)
   }
@@ -174,6 +151,11 @@ export class RemoteAccess {
       if (why) throw refused(`${candidate} is off-limits for paired devices (${why})`)
     }
     return real
+  }
+
+  /** Whether a device's Files may show `path` (a search hit): inside Home or a drive, nothing hidden, no key, no system folder or Mindeck's data. */
+  async shows(path: string): Promise<boolean> {
+    return this.path.isAbsolute(path) && !(await this.fileOffLimits(this.path.resolve(path)))
   }
 
   /** Why a device's Files may not touch `abs`, or null. */

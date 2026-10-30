@@ -17,7 +17,7 @@ function scope() {
     { id: 'r2', conversationId: 'c9', projectId: 'shared' } as unknown as PermissionRequest
   ]
   const s = new RemoteScope({
-    access: { project, check, denied: (path: string) => (/(^|\/)id_rsa$/.test(path) ? 'id_rsa' : undefined) },
+    access: { project, check, denied: (path: string) => (/(^|\/)id_rsa$/.test(path) ? 'id_rsa' : undefined), shows: async (path: string) => !path.includes('/Library/') },
     sessionProject: (id) => sessions[id],
     conversationProject: async (id) => conversations[id],
     pending: () => pending,
@@ -144,7 +144,7 @@ describe('RemoteScope · events', () => {
   })
 
   it('the clock defaults to Date.now', async () => {
-    const s = new RemoteScope({ access: { project: async () => {}, check: async () => {}, denied: () => undefined }, sessionProject: () => undefined, conversationProject: async () => undefined, pending: () => [] })
+    const s = new RemoteScope({ access: { project: async () => {}, check: async () => {}, denied: () => undefined, shows: async () => true }, sessionProject: () => undefined, conversationProject: async () => undefined, pending: () => [] })
     expect(await s.allows('p')).toBe(true)
   })
 })
@@ -158,5 +158,13 @@ describe('RemoteScope · Files', () => {
     expect(shown.entries.map((e) => e.name)).toEqual(['a.txt'])
     expect(shown.total).toBe(1001)
     expect(((await s.result('finder:search', [entry('a.txt'), entry('id_rsa')])) as FinderEntry[]).map((e) => e.name)).toEqual(['a.txt'])
+  })
+
+  it('search hits are judged like paths a device names (Spotlight reaches into ~/Library); progress names no file', async () => {
+    const { s } = scope()
+    const hit = (path: string) => ({ name: path.split('/').pop()!, path, kind: 'file', size: 1, mtimeMs: 0, hidden: false }) as FinderEntry
+    const found = (await s.result('finder:search', [hit('/home/ada/devices.txt'), hit('/home/ada/Library/Application Support/Mindeck/devices.json')])) as FinderEntry[]
+    expect(found.map((e) => e.path)).toEqual(['/home/ada/devices.txt'])
+    expect(await s.event('finder:progress', { id: 'j1', kind: 'copy', done: 1, total: 2, file: '/home/ada/.ssh/id_rsa' })).toEqual({ id: 'j1', kind: 'copy', done: 1, total: 2 })
   })
 })

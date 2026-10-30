@@ -122,13 +122,15 @@ export async function zip(paths: string[], out: string, job: Job): Promise<void>
 /** Moves what was extracted into `work` next to the archive: one item under its own name, several in a folder named like the archive. */
 async function settle(work: string, dir: string, stem: string, freeName: (dir: string, name: string) => Promise<string>): Promise<string> {
   const top = await readdir(work)
-  if (top.length === 1) {
+  // A hidden one goes into the folder: `.zshenv` or `.git` next to the archive would be read as configuration.
+  if (top.length === 1 && !top[0].startsWith('.')) {
     const target = await freeName(dir, top[0])
     await rename(join(work, top[0]), target)
     await rm(work, { recursive: true, force: true })
     return target
   }
-  const target = await freeName(dir, stem)
+  // …and that folder is never hidden itself (".git.zip").
+  const target = await freeName(dir, stem.replace(/^\.+/, '') || 'Archive')
   await rename(work, target)
   return target
 }
