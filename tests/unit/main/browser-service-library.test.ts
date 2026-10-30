@@ -217,6 +217,27 @@ describe('BrowserService · the session across restarts', () => {
     expect(saved.tabs.find((t: { id: string }) => t.id === unloaded.id).nav).toBeUndefined()
   })
 
+  it('a clean start keeps each page of the last session in the closed tabs with its back/forward list and its container', async () => {
+    const session = {
+      exit: 'clean',
+      tabs: [
+        { id: 'a', url: 'https://a.dev/', title: 'A', nav: nav(['https://a.dev/0', 'https://a.dev/']) },
+        { id: 'g', url: 'https://agent.dev/', title: 'G', profile: 'agents', openedBy: 'Claude Code' }
+      ]
+    }
+    const { b, dir } = await setupBrowser({ session })
+    expect(b.state().closed).toBe(2)
+    b.open({ url: 'https://new.dev/' })
+    await tick(450)
+    const saved = JSON.parse(await readFile(join(dir, 'session.json'), 'utf8'))
+    expect(saved.closed).toEqual([
+      expect.objectContaining({ url: 'https://agent.dev/', profile: 'agents' }),
+      expect.objectContaining({ url: 'https://a.dev/', nav: nav(['https://a.dev/0', 'https://a.dev/']) })
+    ])
+    expect(saved.closed[0]).not.toHaveProperty('nav')
+    expect(saved.closed[1]).not.toHaveProperty('profile')
+  })
+
   it('after a crash: starts with a new tab and offers the last session — restored or let go', async () => {
     const session = {
       exit: 'running',

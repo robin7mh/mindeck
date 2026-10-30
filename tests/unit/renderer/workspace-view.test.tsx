@@ -379,6 +379,8 @@ describe('WorkspaceMenu', () => {
 
     fireEvent.click(button)
     fireEvent.mouseDown(screen.getByRole('dialog')) // inside: stays
+    act(() => void window.dispatchEvent(new Event('resize'))) // the window changed size: still open, under its button
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: w.presets.rows }))
     fireEvent.click(screen.getByRole('button', { name: w.update('Coding') }))
     expect(s().saved[0].layout.preset).toBe('rows')

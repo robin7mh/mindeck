@@ -163,4 +163,31 @@ describe('browser and files channels', () => {
     expect(await shells.dispatch('finder:open', { path: '/a.txt' }, remote)).toMatchObject({ ok: false, error: { code: 'desktop-only' } })
     expect(await shells.dispatch('finder:clipboardRead', undefined, remote)).toMatchObject({ ok: false, error: { code: 'desktop-only' } })
   })
+
+  it('a device stops only the jobs it started; the desktop stops any', async () => {
+    const release: (() => void)[] = []
+    const pending = () => new Promise<never>((done) => release.push(() => done(undefined as never)))
+    const finder = { transfer: pending, folderSize: pending, compress: pending, extract: pending, cancel: vi.fn() }
+    const router = new Router({ remoteTerminal: () => true })
+    registerFinderIpc(router, finder as unknown as FinderService)
+    const phone = { transport: 'remote' as const, deviceId: 'phone' }
+    const running = [
+      router.dispatch('finder:transfer', { id: 'desk', paths: ['/a'], dest: '/b', mode: 'copy' }, ipc),
+      router.dispatch('finder:folderSize', { path: '/a', id: 'mine' }, phone),
+      router.dispatch('finder:compress', { paths: ['/a'], id: 'zip' }, phone),
+      router.dispatch('finder:extract', { path: '/a.zip', id: 'unzip' }, { transport: 'remote' as const, deviceId: 'tablet' })
+    ]
+    await new Promise((r) => setTimeout(r, 0))
+    for (const id of ['desk', 'unzip', 'gone']) await router.dispatch('finder:cancel', { id }, phone)
+    await router.dispatch('finder:cancel', { id: 'desk' }, { transport: 'remote' as const }) // no device: nobody's
+    expect(finder.cancel).not.toHaveBeenCalled()
+    await router.dispatch('finder:cancel', { id: 'mine' }, phone)
+    await router.dispatch('finder:cancel', { id: 'unzip' }, ipc)
+    expect(finder.cancel.mock.calls).toEqual([['mine'], ['unzip']])
+    // Finished: no longer anyone's.
+    release.forEach((done) => done())
+    await Promise.all(running)
+    await router.dispatch('finder:cancel', { id: 'zip' }, phone)
+    expect(finder.cancel).toHaveBeenCalledTimes(2)
+  })
 })

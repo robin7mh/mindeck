@@ -314,6 +314,7 @@ describe('AppShell', () => {
     vi.doMock('@/features/settings/components/SettingsView', () => ({ SettingsView: () => <div>SETTINGS</div> }))
     vi.doMock('@/features/system/components/SystemView', () => ({ SystemView: () => <div>SYSTEM</div> }))
     vi.doMock('@/features/account/components/AccountView', () => ({ AccountView: () => <div>ACCOUNT</div> }))
+    vi.doMock('@/features/logs/components/LogsView', () => ({ LogsView: () => <div>LOGS</div> }))
     vi.resetModules()
     const { AppShell } = await import('@/components/shell/AppShell')
     const { useAssistant } = await import('@/features/agents/store')
@@ -375,6 +376,8 @@ describe('AppShell', () => {
     expect(screen.getByText('SETTINGS')).toBeInTheDocument()
     fireEvent.click(screen.getByTitle('System'))
     expect(screen.getByText('SYSTEM')).toBeInTheDocument()
+    fireEvent.click(screen.getByTitle('Logs'))
+    expect(screen.getByText('LOGS')).toBeInTheDocument()
     fireEvent.click(screen.getByTitle('Settings'))
     expect(screen.getByText('SETTINGS')).toBeInTheDocument()
     fireEvent.click(screen.getByLabelText('Profile'))
@@ -419,6 +422,7 @@ describe('AppShell', () => {
     vi.doUnmock('@/features/settings/components/SettingsView')
     vi.doUnmock('@/features/system/components/SystemView')
     vi.doUnmock('@/features/account/components/AccountView')
+    vi.doUnmock('@/features/logs/components/LogsView')
     vi.doUnmock('@/features/terminal/components/TerminalView')
     vi.doUnmock('@/features/editor/components/EditorView')
     vi.doUnmock('@/features/dashboard/components/Dashboard')
@@ -463,7 +467,7 @@ describe('AppShell with the Browser and Files', () => {
     vi.doMock('@/features/agents/components/AgentsView', () => ({ AgentsView: () => <div>AGENTS</div> }))
     vi.doMock('@/features/settings/components/SettingsView', () => ({ SettingsView: () => <div>SETTINGS</div> }))
     vi.resetModules()
-    installBridge() // the desktop app: the page covers toasts
+    const bridge = installBridge() // the desktop app: the page covers toasts
     const { AppShell } = await import('@/components/shell/AppShell')
     const { useAssistant } = await import('@/features/agents/store')
     const { useAgents } = await import('@/features/agents/sessions')
@@ -512,6 +516,14 @@ describe('AppShell with the Browser and Files', () => {
     expect(openDialog).toHaveBeenLastCalledWith(en.browser.agentPrompt('Docs', 'https://b.dev/'))
     act(() => handlers.settings())
     expect(screen.getByText('SETTINGS')).toBeInTheDocument()
+    // An agent started a command in a terminal: that terminal's tab, and the Terminal on screen.
+    const { useTerminals } = await import('@/features/terminal/store')
+    const reveal = vi.fn(async () => {})
+    useTerminals.setState({ reveal })
+    const info = { id: 't9', title: 'demo', cwd: '/w', cwdLabel: 'w', shell: 'zsh', createdAt: '2026-10-29T00:00:00Z' }
+    act(() => bridge.emit('terminal:reveal', { info, by: 'Claude Code' }))
+    expect(reveal).toHaveBeenCalledWith(info)
+    expect(screen.getByText('TERMINAL').parentElement!).not.toHaveClass('hidden')
     act(() => useAssistant.setState({ pending: [] }))
     view.unmount()
     expect(disconnect).toHaveBeenCalled()

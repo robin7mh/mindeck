@@ -68,6 +68,7 @@ describe('what paired devices do with the files', () => {
     a.observe('browser:open', { url: 'https://x.dev/' }, {}, phone)
     a.observe('memory:read', { path: 'a.md' }, {}, phone)
     a.observe('finder:list', { path: '/home/ada' }, {}, phone)
+    a.observe('finder:places', undefined, {}, phone) // no payload at all
     await flush()
     expect(logged.map(([, id, p]) => [id, p])).toEqual([
       ['d1', { device: 'd1', action: 'mkdir', path: '/home/ada/A' }],

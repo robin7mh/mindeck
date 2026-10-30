@@ -931,6 +931,23 @@ describe('AgentsView', () => {
     expect(screen.getByRole('button', { name: 'Show side panel' })).toBeInTheDocument()
     localStorage.removeItem('mindeck.agents.side')
   })
+
+  it('without storage (private window, blocked site data) the column shows and folds all the same', async () => {
+    installBridge({ 'agents:list': () => ag().sessions, 'agents:changes': () => [] })
+    const blocked = () => {
+      throw new DOMException('denied', 'SecurityError')
+    }
+    const get = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(blocked)
+    const set = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(blocked)
+    useAgents.setState({ sessions: [session()], activeId: 's1', view: 'session', messages: { s1: [] } })
+    view()
+    await act(settle)
+    expect(screen.getByRole('tab', { name: 'Changes' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Hide side panel' }))
+    expect(screen.getByRole('button', { name: 'Show side panel' })).toBeInTheDocument()
+    get.mockRestore()
+    set.mockRestore()
+  })
 })
 
 describe('AssistantPane', () => {

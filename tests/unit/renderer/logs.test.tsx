@@ -102,6 +102,31 @@ describe('LogsView', () => {
     expect(screen.getByText('1 entry')).toBeInTheDocument()
   })
 
+  it('yesterday’s lines under Yesterday; details name the actor’s id, and show an event without a payload as {}', async () => {
+    const bare = { ...ev('e9', 'app.started', 86_400_000), payload: undefined } as MindeckEvent
+    const fromPhone = ev('e8', 'session.ended', 86_400_000, { code: 1 }, { actor: { kind: 'device', id: 'phone-1' } })
+    const bridge = installBridge({ 'events:recent': () => [fromPhone, bare] })
+    render(<LogsView />)
+    act(() => bridge.emit('events:event', fromPhone)) // arrived while loading, and loaded too: once
+    await act(settle)
+    expect(screen.getByText('2 entries')).toBeInTheDocument()
+    expect(screen.getByText('Yesterday')).toBeInTheDocument()
+    const [ended, started] = screen.getAllByRole('button', { expanded: false })
+    fireEvent.click(ended)
+    expect(screen.getByText('device · phone-1')).toBeInTheDocument()
+    fireEvent.click(started)
+    expect(screen.getByText('{}')).toBeInTheDocument()
+
+    // "Copied" goes again after a moment.
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText: vi.fn(async () => {}) }, configurable: true })
+    vi.useFakeTimers()
+    fireEvent.click(screen.getByRole('button', { name: /Copy/ }))
+    expect(screen.getByText('Copied')).toBeInTheDocument()
+    act(() => void vi.advanceTimersByTime(1500))
+    expect(screen.queryByText('Copied')).toBeNull()
+    vi.useRealTimers()
+  })
+
   it('sorts each event into its kind', () => {
     expect(['permission.requested', 'tool.denied', 'tool.started', 'agent.failed', 'session.started', 'app.started'].map((type) => logKind(ev('k', type as never, 0)))).toEqual([
       'approvals',
