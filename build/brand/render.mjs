@@ -1,0 +1,162 @@
+// Renders the logo (logo.mjs) everywhere it is used, plus the DMG background (dmg.html).
+//   node build/brand/render.mjs
+// Writes this repo's icons, and the phone app's and the website's when ../mindeck-mobile and
+// ../mindeck-web exist. Needs Playwright's Chromium (npx playwright install chromium).
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { crc32, deflateSync, inflateSync } from 'node:zlib'
+import { chromium } from 'playwright-core'
+import { COLORS, icon, mark, outline } from './logo.mjs'
+
+const brand = dirname(fileURLToPath(import.meta.url))
+const desktop = join(brand, '../..')
+const mobile = join(desktop, '../mindeck-mobile')
+const web = join(desktop, '../mindeck-web')
+
+const write = (file, data) => {
+  mkdirSync(dirname(file), { recursive: true })
+  writeFileSync(file, data)
+  console.log('  ' + file.slice(join(desktop, '..').length + 1))
+}
+
+const browser = await chromium.launch()
+/** An SVG drawn at `size` px square. */
+async function png(svg, size) {
+  const page = await browser.newPage({ viewport: { width: size, height: size } })
+  await page.setContent(`<style>html,body{margin:0;background:transparent}svg{display:block;width:100vw;height:100vh}</style>${svg}`)
+  const data = await page.screenshot({ omitBackground: true })
+  await page.close()
+  return data
+}
+
+/** Drops a PNG's alpha channel — iOS refuses app icons that have one. Takes 8-bit RGBA, not interlaced (what Chromium writes). */
+function opaque(data) {
+  let ihdr
+  const idat = []
+  for (let pos = 8; pos < data.length; ) {
+    const length = data.readUInt32BE(pos)
+    const type = data.toString('latin1', pos + 4, pos + 8)
+    if (type === 'IHDR') ihdr = data.subarray(pos + 8, pos + 8 + length)
+    if (type === 'IDAT') idat.push(data.subarray(pos + 8, pos + 8 + length))
+    pos += 12 + length
+  }
+  const width = ihdr.readUInt32BE(0)
+  const height = ihdr.readUInt32BE(4)
+  if (ihdr[9] === 2) return data // RGB already: Chromium leaves the alpha out when every pixel is opaque
+  if (ihdr[8] !== 8 || ihdr[9] !== 6 || ihdr[12] !== 0) throw new Error('expected an 8-bit RGBA PNG, not interlaced')
+  const raw = inflateSync(Buffer.concat(idat))
+  const stride = width * 4
+  const rgb = Buffer.alloc(height * (1 + width * 3))
+  let prev = Buffer.alloc(stride)
+  for (let y = 0; y < height; y++) {
+    const filter = raw[y * (stride + 1)]
+    const line = Buffer.from(raw.subarray(y * (stride + 1) + 1, (y + 1) * (stride + 1)))
+    for (let i = 0; i < stride; i++) {
+      const a = i >= 4 ? line[i - 4] : 0
+      const b = prev[i]
+      const c = i >= 4 ? prev[i - 4] : 0
+      let add = 0
+      if (filter === 1) add = a
+      else if (filter === 2) add = b
+      else if (filter === 3) add = (a + b) >> 1
+      else if (filter === 4) {
+        const p = a + b - c
+        const pa = Math.abs(p - a), pb = Math.abs(p - b), pc = Math.abs(p - c)
+        add = pa <= pb && pa <= pc ? a : pb <= pc ? b : c
+      }
+      line[i] = (line[i] + add) & 255
+    }
+    for (let x = 0; x < width; x++) line.copy(rgb, y * (1 + width * 3) + 1 + x * 3, x * 4, x * 4 + 3)
+    prev = line
+  }
+  const chunk = (type, body) => {
+    const head = Buffer.alloc(8)
+    head.writeUInt32BE(body.length, 0)
+    head.write(type, 4, 'latin1')
+    const crc = Buffer.alloc(4)
+    crc.writeUInt32BE(crc32(Buffer.concat([head.subarray(4), body])), 0)
+    return Buffer.concat([head, body, crc])
+  }
+  const header = Buffer.from(ihdr)
+  header[9] = 2 // RGB
+  return Buffer.concat([data.subarray(0, 8), chunk('IHDR', header), chunk('IDAT', deflateSync(rgb, { level: 9 })), chunk('IEND', Buffer.alloc(0))])
+}
+
+/** A Windows .ico of PNG images (Vista and later read those). */
+function ico(images) {
+  const head = Buffer.alloc(6 + 16 * images.length)
+  head.writeUInt16LE(1, 2)
+  head.writeUInt16LE(images.length, 4)
+  let offset = head.length
+  images.forEach(({ size, data }, i) => {
+    const entry = 6 + 16 * i
+    head[entry] = head[entry + 1] = size >= 256 ? 0 : size
+    head.writeUInt16LE(1, entry + 4)
+    head.writeUInt16LE(32, entry + 6)
+    head.writeUInt32LE(data.length, entry + 8)
+    head.writeUInt32LE(offset, entry + 12)
+    offset += data.length
+  })
+  return Buffer.concat([head, ...images.map((image) => image.data)])
+}
+
+/** The rounded tile at `size` px — the bolder small mark below 64 px. */
+const tile = (size) => png(icon('rounded', size < 64 ? 'small' : 'normal'), size)
+
+/** A value as TypeScript source. */
+const ts = (v, indent = '') =>
+  Array.isArray(v) ? `[${v.map((x) => ts(x, indent)).join(', ')}]`
+  : typeof v === 'object' ? `{\n${Object.entries(v).map(([k, x]) => `${indent}  ${k}: ${ts(x, indent + '  ')}`).join(',\n')}\n${indent}}`
+  : typeof v === 'string' ? `'${v}'`
+  : String(v)
+
+/** The mark's paths for the apps' and the website's own components. */
+const paths = (component) =>
+  `// Generated by mindeck/build/brand/render.mjs from logo.mjs — change the logo there, then run it.\n` +
+  `// Drawn by ${component}. Units: 100 tall, from (0,0); small is the bolder mark for below 40 px.\n` +
+  `export const MARK = ${ts({ normal: outline('normal'), small: outline('small') })} as const\n\n` +
+  `/** Per theme: the M's gradient (top to bottom), the layers' colors, and the small mark's one layer. */\n` +
+  `export const MARK_COLORS = ${ts(COLORS)} as const\n`
+
+console.log('desktop')
+write(join(brand, 'mark.svg'), mark('dark'))
+write(join(brand, 'mark-light.svg'), mark('light'))
+write(join(brand, 'mark-white.svg'), mark('#ffffff'))
+write(join(brand, 'mark-black.svg'), mark('#000000'))
+write(join(brand, 'icon.svg'), icon('full'))
+write(join(brand, 'icon-macos.svg'), icon('macos'))
+write(join(brand, 'favicon.svg'), icon('rounded', 'small')) // index.html: the web app's tab (npm run web)
+write(join(desktop, 'build/icon.png'), await png(icon('macos'), 1024))
+write(join(desktop, 'build/icon.ico'), ico(await Promise.all([16, 24, 32, 48, 64, 128, 256].map(async (size) => ({ size, data: await tile(size) })))))
+for (const size of [16, 24, 32, 48, 64, 128, 256, 512]) write(join(desktop, `build/icons/${size}x${size}.png`), await tile(size))
+write(join(desktop, 'build/tray.png'), await tile(32))
+write(join(desktop, 'src/components/brand/markPaths.ts'), paths('src/components/brand/MindeckMark.tsx'))
+for (const scale of [1, 2]) {
+  const page = await browser.newPage({ viewport: { width: 540, height: 380 }, deviceScaleFactor: scale })
+  await page.goto(`file://${join(brand, 'dmg.html')}`)
+  await page.evaluate(() => document.fonts.ready)
+  write(join(desktop, `build/background${scale === 2 ? '@2x' : ''}.png`), await page.screenshot())
+  await page.close()
+}
+
+if (existsSync(mobile)) {
+  console.log('phone app')
+  write(join(mobile, 'assets/images/icon.png'), opaque(await png(icon('full'), 1024)))
+  write(join(mobile, 'assets/images/android-icon-background.png'), opaque(await png(icon('android-bg'), 1024)))
+  write(join(mobile, 'assets/images/android-icon-foreground.png'), await png(icon('android-fg'), 1024))
+  write(join(mobile, 'assets/images/android-icon-monochrome.png'), await png(icon('android-mono'), 1024))
+  write(join(mobile, 'assets/images/splash-icon.png'), await png(icon('glyph'), 1024))
+  write(join(mobile, 'assets/images/favicon.png'), await tile(48))
+  write(join(mobile, 'src/components/mark-paths.ts'), paths('src/components/ui.tsx (Mark)'))
+}
+
+if (existsSync(web)) {
+  console.log('website')
+  write(join(web, 'public/favicon.svg'), icon('rounded', 'small'))
+  write(join(web, 'public/favicon.ico'), ico(await Promise.all([16, 32, 48].map(async (size) => ({ size, data: await tile(size) })))))
+  write(join(web, 'public/apple-touch-icon.png'), opaque(await png(icon('full'), 180)))
+  write(join(web, 'src/mark.ts'), paths('src/components/Mark.astro'))
+}
+
+await browser.close()

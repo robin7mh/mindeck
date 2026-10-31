@@ -63,7 +63,7 @@ function loadApp(win: BrowserWindow): void {
 
 /** The tray icon while Mindeck runs in the background (Windows/Linux). */
 function createTray(l: LifecycleLabels, actions: { show(): void; quit(): void }): Tray {
-  const icon = app.isPackaged ? join(process.resourcesPath, 'tray.png') : join(__dirname, '../../build/icon.png')
+  const icon = app.isPackaged ? join(process.resourcesPath, 'tray.png') : join(__dirname, '../../build/tray.png')
   const size = process.platform === 'win32' ? 16 : 22
   const tray = new Tray(nativeImage.createFromPath(icon).resize({ width: size, height: size }))
   tray.setToolTip(l.tooltip)

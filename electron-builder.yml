@@ -54,8 +54,9 @@ electronFuses:
 npmRebuild: false
 afterPack: build/afterPack.cjs
 # The tray icon while Mindeck runs in the background (Windows/Linux): resources/tray.png.
+# Every icon is rendered from build/brand/ (node build/brand/render.mjs).
 extraResources:
-  - from: build/icon.png
+  - from: build/tray.png
     to: tray.png
 asarUnpack:
   - node_modules/node-pty/**
@@ -111,7 +112,8 @@ win:
   target:
     - target: nsis
       arch: [x64, arm64]
-  icon: build/icon.png
+  # Its own sizes: the bolder small mark up to 48 px (taskbar, Explorer lists).
+  icon: build/icon.ico
   executableName: Mindeck
 
 nsis:
@@ -129,7 +131,8 @@ linux:
   target:
     - target: AppImage
     - target: deb
-  icon: build/icon.png
+  # One PNG per size (16x16.png … 512x512.png), the small ones with the bolder mark.
+  icon: build/icons
   category: Development
   executableName: mindeck
   # The window belongs to mindeck.desktop (package.json desktopName): docks group and pin it right.

@@ -7,6 +7,7 @@ import { OfflineChip } from '@/features/cloud/components/OfflineChip'
 import { WindowControls } from './WindowControls'
 import { TechLabel } from '@/components/ui/TechLabel'
 import { StatusDot } from '@/components/ui/StatusDot'
+import { MindeckMark } from '@/components/brand/MindeckMark'
 import { formatUptime } from '@/lib/format'
 import { cn } from '@/lib/cn'
 import { isMac, useFullScreen } from '@/lib/platform'
@@ -53,8 +54,8 @@ export function TopStatusBar({ since, showClock = true }: { since?: number; show
     >
       {/* Logo / codename */}
       <div className="flex items-center gap-2.5">
-        <div className="flex h-7 w-7 items-center justify-center rounded-md border border-cyan/40 bg-cyan/5 font-mono text-xs font-bold text-cyan text-glow-cyan">
-          MD
+        <div className="flex h-7 w-7 items-center justify-center">
+          <MindeckMark size={20} className="drop-shadow-[0_0_6px_rgba(56,214,232,0.45)]" />
         </div>
         <div className="leading-none">
           <div className="font-sans text-[13px] font-semibold tracking-wide text-text-primary">

@@ -15,6 +15,7 @@ import { RadialGauge } from '@/components/monitor/RadialGauge'
 import { Sparkline } from '@/components/monitor/Sparkline'
 import { SystemMonitorPanel } from '@/components/monitor/SystemMonitorPanel'
 import { BootSequence, BOOT_TOTAL_MS } from '@/components/boot/BootSequence'
+import { MindeckMark } from '@/components/brand/MindeckMark'
 import { useAssistant as staticAssistant } from '@/features/agents/store'
 import { useAgents as staticAgents } from '@/features/agents/sessions'
 import { HudClock } from '@/features/dashboard/components/HudClock'
@@ -283,6 +284,25 @@ describe('BootSequence', () => {
     expect(container.querySelector('.animate-pulse')).toBeNull()
     fireEvent.click(screen.getByText('click to skip'))
     expect(onSkip).toHaveBeenCalled()
+  })
+})
+
+describe('MindeckMark', () => {
+  it('draws the bolder one-layer mark below 40 px and the full deck from 40 px, each with its own gradient', () => {
+    const { container } = render(
+      <>
+        <MindeckMark size={20} />
+        <MindeckMark size={64} />
+      </>
+    )
+    const [small, full] = Array.from(container.querySelectorAll('svg'))
+    expect(small.querySelectorAll('path')).toHaveLength(2)
+    expect(full.querySelectorAll('path')).toHaveLength(3)
+    expect(full.getAttribute('height')).toBe('64')
+    const gradients = [small, full].map((svg) => svg.querySelector('linearGradient')!.id)
+    expect(gradients[0]).not.toBe(gradients[1])
+    expect(gradients[0]).toMatch(/^[\w-]+$/)
+    expect(full.querySelector('path:last-child')!.getAttribute('fill')).toBe(`url(#${gradients[1]})`)
   })
 })
 

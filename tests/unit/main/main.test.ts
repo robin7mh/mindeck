@@ -675,7 +675,7 @@ describe('stability', () => {
     expect(win.hide).toHaveBeenCalled()
     expect(h.settings).toEqual({ closeBehavior: 'background' })
     const tray = h.trays[0]
-    expect(tray.image).toEqual({ path: expect.stringMatching(/build[\\/]icon\.png$/), size: 22 })
+    expect(tray.image).toEqual({ path: expect.stringMatching(/build[\\/]tray\.png$/), size: 22 })
     expect(tray.tooltip).toContain('background')
     expect(tray.menu!.map((m) => m.label ?? m.type)).toEqual(['Show Mindeck', 'separator', 'Quit Mindeck'])
     tray.click!()

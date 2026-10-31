@@ -3,6 +3,7 @@ import { CirclePause, Hourglass, Loader2, LogOut, MailCheck, RefreshCw, Shopping
 import type { CloudStatus } from '@shared/types/cloud'
 import { Panel } from '@/components/ui/Panel'
 import { TechLabel } from '@/components/ui/TechLabel'
+import { MindeckMark } from '@/components/brand/MindeckMark'
 import { GlowBackground } from '@/components/shell/GlowBackground'
 import { cn } from '@/lib/cn'
 import { useT } from '@/lib/i18n'
@@ -24,8 +25,8 @@ function Frame({ children, overlay }: { children: ReactNode; overlay?: boolean }
       {!overlay && <GlowBackground />}
       <div className="relative z-10 w-full max-w-md">
         <div className="mb-5 flex items-center justify-center gap-2.5">
-          <div className="flex h-9 w-9 items-center justify-center rounded-md border border-cyan/40 bg-cyan/5 font-mono text-sm font-bold text-cyan text-glow-cyan">
-            MD
+          <div className="flex h-9 w-9 items-center justify-center">
+            <MindeckMark size={26} className="drop-shadow-[0_0_8px_rgba(56,214,232,0.45)]" />
           </div>
           <div className="leading-none">
             <div className="font-sans text-[15px] font-semibold tracking-wide text-text-primary">Mindeck</div>

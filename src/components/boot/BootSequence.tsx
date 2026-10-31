@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { BOOT_LINES } from '@/data/bootLines'
+import { MindeckMark } from '@/components/brand/MindeckMark'
 import { cn } from '@/lib/cn'
 import { useT } from '@/lib/i18n'
 
@@ -45,8 +46,8 @@ export function BootSequence({ onSkip }: { onSkip: () => void }) {
     >
       <div className="relative w-[min(560px,90vw)] px-6">
         <div className="mb-6 flex items-center gap-3">
-          <div className="flex h-9 w-9 items-center justify-center rounded-md border border-cyan/40 bg-cyan/5 font-mono text-sm font-bold text-cyan text-glow-cyan">
-            MD
+          <div className="flex h-9 w-9 items-center justify-center">
+            <MindeckMark size={26} className="drop-shadow-[0_0_8px_rgba(56,214,232,0.45)]" />
           </div>
           <div>
             <div className="font-sans text-sm font-semibold tracking-wide text-text-primary">
