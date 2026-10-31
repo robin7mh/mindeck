@@ -55,7 +55,7 @@ export function TopStatusBar({ since, showClock = true }: { since?: number; show
       {/* Logo / codename */}
       <div className="flex items-center gap-2.5">
         <div className="flex h-7 w-7 items-center justify-center">
-          <MindeckMark size={20} className="drop-shadow-[0_0_6px_rgba(56,214,232,0.45)]" />
+          <MindeckMark size={26} />
         </div>
         <div className="leading-none">
           <div className="font-sans text-[13px] font-semibold tracking-wide text-text-primary">

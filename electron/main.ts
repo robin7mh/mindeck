@@ -342,6 +342,8 @@ app.whenReady().then(async () => {
   )
   // Mindeck's own menu: Electron's default one would reload the UI on ⌘R and close the window on ⌘W.
   Menu.setApplicationMenu(Menu.buildFromTemplate(appMenuTemplate(process.platform, !app.isPackaged)))
+  // npm run dev runs inside Electron's own app: the Dock (macOS) shows Mindeck's icon, not Electron's.
+  if (!app.isPackaged) app.dock?.setIcon(join(__dirname, '../../build/icon.png'))
   try {
     await startCore()
   } catch (err) {

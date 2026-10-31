@@ -47,7 +47,7 @@ export function BootSequence({ onSkip }: { onSkip: () => void }) {
       <div className="relative w-[min(560px,90vw)] px-6">
         <div className="mb-6 flex items-center gap-3">
           <div className="flex h-9 w-9 items-center justify-center">
-            <MindeckMark size={26} className="drop-shadow-[0_0_8px_rgba(56,214,232,0.45)]" />
+            <MindeckMark size={34} />
           </div>
           <div>
             <div className="font-sans text-sm font-semibold tracking-wide text-text-primary">

@@ -88,6 +88,8 @@ const h = vi.hoisted(() => ({
     quitAndInstall: vi.fn()
   },
   packaged: false,
+  /** app.dock — macOS only. */
+  dock: undefined as undefined | { setIcon: ReturnType<typeof vi.fn> },
   appMenu: undefined as unknown,
   dark: true,
   fileIconFails: false,
@@ -127,6 +129,9 @@ vi.mock('electron', () => ({
     getVersion: () => '0.1.0',
     get isPackaged() {
       return h.packaged
+    },
+    get dock() {
+      return h.dock
     },
     getPath: (name: string) => (name === 'home' ? '/Users/me' : '/userData'),
     getLocale: () => 'de-DE',
@@ -311,6 +316,7 @@ beforeEach(() => {
   h.running = { agents: 0, terminals: 0 }
   h.settings = {}
   h.packaged = false
+  h.dock = undefined
 })
 afterEach(() => {
   Object.defineProperty(process, 'platform', { value: realPlatform })
@@ -387,6 +393,16 @@ describe('main process boot', () => {
     expect(win.webContents.send).toHaveBeenCalledWith('update:status', expect.objectContaining({ state: 'ready', version: '0.2.0' }))
     on.get('update:install')!()
     expect(h.updater.quitAndInstall).toHaveBeenCalledWith(false, true)
+  })
+
+  it("npm run dev on macOS: the Dock shows Mindeck's icon, not Electron's — a packaged app brings its own", async () => {
+    const dock = (h.dock = { setIcon: vi.fn() })
+    await boot()
+    expect(dock.setIcon).toHaveBeenCalledWith(expect.stringMatching(/build[\\/]icon\.png$/))
+    dock.setIcon.mockClear()
+    h.packaged = true
+    await boot()
+    expect(dock.setIcon).not.toHaveBeenCalled()
   })
 
   it('needs a license only when packaged, and counts the trial only while someone is at the computer, looking at Mindeck', async () => {

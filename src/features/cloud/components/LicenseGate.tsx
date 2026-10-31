@@ -26,7 +26,7 @@ function Frame({ children, overlay }: { children: ReactNode; overlay?: boolean }
       <div className="relative z-10 w-full max-w-md">
         <div className="mb-5 flex items-center justify-center gap-2.5">
           <div className="flex h-9 w-9 items-center justify-center">
-            <MindeckMark size={26} className="drop-shadow-[0_0_8px_rgba(56,214,232,0.45)]" />
+            <MindeckMark size={34} />
           </div>
           <div className="leading-none">
             <div className="font-sans text-[15px] font-semibold tracking-wide text-text-primary">Mindeck</div>

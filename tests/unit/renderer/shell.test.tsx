@@ -288,21 +288,12 @@ describe('BootSequence', () => {
 })
 
 describe('MindeckMark', () => {
-  it('draws the bolder one-layer mark below 40 px and the full deck from 40 px, each with its own gradient', () => {
-    const { container } = render(
-      <>
-        <MindeckMark size={20} />
-        <MindeckMark size={64} />
-      </>
-    )
-    const [small, full] = Array.from(container.querySelectorAll('svg'))
-    expect(small.querySelectorAll('path')).toHaveLength(2)
-    expect(full.querySelectorAll('path')).toHaveLength(3)
-    expect(full.getAttribute('height')).toBe('64')
-    const gradients = [small, full].map((svg) => svg.querySelector('linearGradient')!.id)
-    expect(gradients[0]).not.toBe(gradients[1])
-    expect(gradients[0]).toMatch(/^[\w-]+$/)
-    expect(full.querySelector('path:last-child')!.getAttribute('fill')).toBe(`url(#${gradients[1]})`)
+  it('shows the app icon\'s tile, square at the size asked for', () => {
+    const { container } = render(<MindeckMark size={26} className="x" />)
+    const img = container.querySelector('img')!
+    // Small enough for Vite to inline (index.html's policy allows data: images).
+    expect(img.getAttribute('src')).toMatch(/^data:image\/svg\+xml|tile\.svg$/)
+    expect([img.getAttribute('width'), img.getAttribute('height'), img.getAttribute('alt'), img.className]).toEqual(['26', '26', '', 'x'])
   })
 })
 
