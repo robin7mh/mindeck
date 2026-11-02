@@ -34,8 +34,10 @@ export interface AssistantDeps {
   events: EventBus
   context: ContextBuilder
   publish: <K extends IpcEvent>(channel: K, payload: IpcEvents[K]) => void
-  /** Whether paired remote devices may trigger command execution. */
+  /** Whether paired remote devices may trigger command execution and changes. */
   remoteShell: () => boolean
+  /** What a paired device may reach (shared folders, deny list): throws to refuse a tool call it started. */
+  remoteAccess?: { tool(input: unknown, projectId?: string): Promise<void> }
   /** Agent definitions (default: the built-in ones). */
   agents?: readonly AgentDefinition[]
 }
@@ -43,6 +45,8 @@ export interface AssistantDeps {
 interface ActiveRun {
   controller: AbortController
   done: Promise<void>
+  /** The conversation as the run has it — ahead of the saved copy (streamed text, a tool waiting for approval). */
+  conv?: StoredConversation
 }
 
 const errorCode = (err: unknown) => String((err as { code?: string })?.code ?? 'error')
@@ -82,11 +86,15 @@ export class AssistantService {
     return (await this.deps.store.list()).map((c) => ({ ...c, running: this.active.has(c.id) }))
   }
 
+  /**
+   * One conversation — while it runs, as it stands right now, so a client that missed push events
+   * (a reconnecting web UI or phone) gets the streamed text and the approvals waiting in it.
+   */
   async conversation(id: string): Promise<Conversation> {
-    const c = await this.deps.store.get(id)
+    const c = this.active.get(id)?.conv ?? (await this.deps.store.get(id))
     if (!c) throw aiError('not-found', 'Conversation not found')
     const { transcript: _t, ...rest } = c
-    return { ...rest, running: this.active.has(id) }
+    return { ...structuredClone(rest), running: this.active.has(id) }
   }
 
   runs(limit?: number): Promise<AgentRun[]> {
@@ -159,6 +167,7 @@ export class AssistantService {
       outputTokens: 0
     }
     const controller = entry.controller
+    entry.conv = conv
     this.active.set(conv.id, entry)
     this.deps.publish('ai:conversationsChanged', { reason: req.conversationId ? 'updated' : 'created', id: conv.id })
     this.deps.publish('ai:message', { conversationId: conv.id, message: user, running: true })
@@ -381,9 +390,12 @@ export class AssistantService {
       event('tool.denied', { reason: 'not-allowed' })
       return finish('denied', `The tool ${call.name} is not available to the ${agent.name} agent.`, true)
     }
-    if (tool.risk === 'execute' && r.ctx.transport === 'remote' && !this.deps.remoteShell()) {
+    // A run a paired device started changes nothing, runs nothing and reads no terminal without remote shells.
+    const remote = r.ctx.transport === 'remote'
+    if ((tool.risk !== 'read' || tool.shell) && remote && !this.deps.remoteShell()) {
       event('tool.denied', { reason: 'remote-shell-disabled' })
-      return finish('denied', 'Running commands is disabled for remote devices on this Mindeck core.', true)
+      const what = tool.risk === 'read' ? 'Reading terminals' : 'Changing files and running commands'
+      return finish('denied', `${what} is disabled for remote devices on this Mindeck core.`, true)
     }
     // 2. schema
     const parsed = this.deps.tools.parse(tool, call.input)
@@ -392,9 +404,19 @@ export class AssistantService {
       return finish('error', parsed.message, true)
     }
     const summary = tool.summarize(parsed.data)
-    // 3. permission gate
+    const projectId = (parsed.data as { projectId?: string }).projectId || conv.projectId
+    if (remote && this.deps.remoteAccess) {
+      try {
+        await this.deps.remoteAccess.tool(parsed.data, conv.projectId)
+      } catch (err) {
+        event('tool.denied', { reason: 'remote-forbidden' })
+        return finish('denied', errorText(err), true)
+      }
+    }
+    // 3. permission gate — an "Always allow" holds in the tool's project only
     if (tool.risk !== 'read') {
-      const granted = tool.risk === 'write' && (await this.deps.permissions.isGranted(agent.id, tool.name))
+      let granted = false
+      if (tool.risk === 'write') granted = await this.deps.permissions.isGranted(agent.id, tool.name, projectId)
       if (!granted) {
         const reason = String((parsed.data as { reason?: unknown }).reason ?? '')
         const asked = this.deps.permissions.ask(
@@ -409,7 +431,8 @@ export class AssistantService {
             summary,
             reason,
             input: parsed.data,
-            allowAlways: tool.risk === 'write'
+            allowAlways: tool.risk === 'write',
+            ...(projectId ? { projectId } : {})
           },
           r.controller.signal
         )
@@ -429,7 +452,7 @@ export class AssistantService {
     publish()
     event('tool.started', { summary })
     try {
-      const output = await tool.run(parsed.data, { projectId: conv.projectId, signal: r.controller.signal })
+      const output = await tool.run(parsed.data, { projectId: conv.projectId, signal: r.controller.signal, agent: agent.name, conversationId: conv.id })
       event('tool.completed', { summary, bytes: output.length })
       return finish('done', output, false)
     } catch (err) {

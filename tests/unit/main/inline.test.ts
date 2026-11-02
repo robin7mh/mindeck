@@ -99,6 +99,15 @@ describe('InlineService', () => {
     )
     expect(h.deltas.map((d) => d.text)).toEqual(['```js\n', 'const x = 1', '\n```'])
     expect(h.deltas.every((d) => d.requestId === 'e1')).toBe(true)
+    expect(h.deltas.some((d) => 'device' in d)).toBe(false) // the desktop's: for no paired device
+  })
+
+  it('an edit a paired device asked for is addressed to that device only', async () => {
+    const h = harness({}, () => ({ chunks: ['a', 'b'] }))
+    await h.service.edit(edit, { transport: 'remote', deviceId: 'phone' })
+    await h.service.edit(edit, { transport: 'remote' })
+    await h.service.edit(edit, { transport: 'ipc' })
+    expect(h.deltas.map((d) => d.device)).toEqual(['phone', 'phone', '', '', undefined, undefined])
   })
 
   it('through Mindeck Cloud an edit uses the cloud’s model', async () => {

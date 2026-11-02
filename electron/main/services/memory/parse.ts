@@ -1,4 +1,5 @@
 import { parse as parseYaml } from 'yaml'
+import { isAttachmentTarget } from '@shared/types/memory'
 
 /** Pure markdown parsing with Obsidian semantics — no fs, fully testable. */
 
@@ -8,7 +9,7 @@ export interface ParsedNote {
   frontmatter: Record<string, unknown>
   body: string
   tags: string[]
-  /** Raw link targets as written (`[[Target#Heading|alias]]` → `Target`). */
+  /** Raw link targets as written (`[[Target#Heading|alias]]` → `Target`); attachments (`![[bild.png]]`) are not links. */
   links: string[]
 }
 
@@ -54,7 +55,7 @@ export function parseNote(raw: string): ParsedNote {
   const text = stripCode(body)
 
   const links: string[] = []
-  for (const m of text.matchAll(WIKILINK)) links.push(m[1].trim())
+  for (const m of text.matchAll(WIKILINK)) if (!isAttachmentTarget(m[1])) links.push(m[1].trim())
   for (const m of text.matchAll(MD_LINK)) {
     if (/^[a-z]+:/i.test(m[1])) continue // external URL
     try {

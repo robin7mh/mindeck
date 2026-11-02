@@ -4,6 +4,7 @@
 // Pure module (no DOM/Node/Electron) so it compiles under every tsconfig.
 
 import type { ChatMessage } from './ai'
+import type { ComposerImage, ComposerRef } from './composer'
 
 export type AgentKind = 'claude-code' | 'codex' | 'gemini'
 
@@ -53,6 +54,21 @@ export interface SessionBranch {
   uncommitted: number
 }
 
+/** A model or mode the agent offers for a session. */
+export interface SessionOption {
+  id: string
+  name: string
+  description?: string
+}
+
+/** A slash command the agent offers (`/name`). */
+export interface AgentCommand {
+  name: string
+  description: string
+  /** What goes after the name, when it takes input. */
+  hint?: string
+}
+
 export interface AgentSession {
   id: string
   kind: AgentKind
@@ -76,6 +92,16 @@ export interface AgentSession {
   notes: string[]
   /** The session's journal note in the vault. */
   journal?: string
+  /** The model it runs (an id from `models`); unset = the agent's default. */
+  model?: string
+  models?: SessionOption[]
+  /** Claude Code: its permission mode · ACP agents: their session mode. */
+  mode?: string
+  modes?: SessionOption[]
+  /** Slash commands the agent offers. */
+  commands?: AgentCommand[]
+  /** The agent takes images in a message. */
+  images?: boolean
   createdAt: string
   updatedAt: string
   error?: string
@@ -93,6 +119,22 @@ export interface CreateSessionRequest {
   isolated?: boolean
   /** First message, sent once the agent is up. */
   prompt?: string
+  /** Claude Code: `--model` and `--permission-mode` from the start. */
+  model?: string
+  mode?: string
+}
+
+/** A message for the agent: its text, what the user referenced with `@`, and images. */
+export interface AgentInput {
+  text: string
+  refs?: ComposerRef[]
+  images?: ComposerImage[]
+}
+
+/** Switch the session's model or mode (Claude Code's permission mode applies from its next start). */
+export interface SessionConfigure {
+  model?: string
+  mode?: string
 }
 
 export interface AgentMessageUpdate {

@@ -1,14 +1,17 @@
 import { create } from 'zustand'
 import { errorMessage, ipc } from '@shared/ipc/client'
 import type { FileDiff } from '@shared/types/agents'
-import type { ScmBranch, ScmCommit, ScmCommitDetail, ScmDiffTarget, ScmFile, ScmStatus, SearchResult } from '@shared/types/scm'
+import type { ScmBranch, ScmCommit, ScmCommitDetail, ScmCommitFile, ScmDiffTarget, ScmFile, ScmStash, ScmStatus } from '@shared/types/scm'
 import { useEditor } from './store'
 
+/** A repository with no `origin` to push to: it goes to GitHub first ("Publish to GitHub"). */
+export const needsPublish = (status?: ScmStatus): boolean => !!status?.repo && !status.upstream && !!status.remotes && !status.remotes.includes('origin')
+
 /** The editor's sidebar views — VS Code's activity bar. */
-export type EditorPane = 'files' | 'search' | 'scm' | 'graph' | 'debug' | 'remote' | 'prs' | 'mongo' | 'tests'
+export type EditorPane = 'files' | 'outline' | 'search' | 'scm' | 'graph' | 'debug' | 'remote' | 'prs' | 'mongo' | 'tests'
 
 /** A git operation in flight (one at a time — git locks the repo anyway). */
-export type ScmOp = 'stage' | 'unstage' | 'discard' | 'commit' | 'fetch' | 'pull' | 'push' | 'sync' | 'checkout' | 'branch' | 'init'
+export type ScmOp = 'stage' | 'unstage' | 'discard' | 'commit' | 'fetch' | 'pull' | 'push' | 'sync' | 'checkout' | 'branch' | 'init' | 'abort' | 'continue' | 'stash'
 
 export interface OpenDiff extends FileDiff {
   /** Shown above the diff, e.g. "a.ts (Working Tree)". */
@@ -35,7 +38,9 @@ interface ScmState {
   pick?: QuickPick
   /** Every file of the current project (for quick open), loaded when it opens. */
   files: string[]
-  search: { query: string; regex: boolean; caseSensitive: boolean; result?: SearchResult; searching: boolean }
+  stashes: ScmStash[]
+  /** The files of stashes opened in the list, by stash hash. */
+  stashFiles: Record<string, ScmCommitFile[]>
 
   setPane: (pane: EditorPane) => void
   /** Status and branches of the editor's project. */
@@ -62,8 +67,17 @@ interface ScmState {
   setQuickOpen: (open: boolean, query?: string) => void
   /** Ask the user to choose (or, with `onText`, to type) — in the quick open box. */
   openPick: (pick: QuickPick) => void
-  setSearch: (patch: Partial<{ query: string; regex: boolean; caseSensitive: boolean }>) => void
-  runSearch: () => Promise<void>
+  /** Give up the merge / rebase / cherry-pick / revert in progress. */
+  abortOperation: () => Promise<void>
+  /** Go on with it (commit the merge, rebase the next commit). */
+  continueOperation: () => Promise<void>
+  /** Stash the changes (`untracked`: new files too); resolves true when stashed. */
+  stash: (message: string, untracked: boolean) => Promise<boolean>
+  /** Apply a stash; `pop` drops it afterwards. */
+  applyStash: (hash: string, pop: boolean) => Promise<void>
+  dropStash: (hash: string) => Promise<void>
+  /** Open or close a stash's file list in the panel. */
+  toggleStash: (hash: string) => Promise<void>
   clearError: () => void
 }
 
@@ -84,11 +98,8 @@ export interface QuickPick {
   onText?: (text: string) => unknown
 }
 
-const NO_SEARCH = { query: '', regex: false, caseSensitive: false, searching: false }
-let searchSeq = 0
-
 /**
- * Source control, search and quick open for the editor's project. Every git
+ * Source control (stashes, merges and rebases too) and quick open for the editor's project. Every git
  * operation reloads the status afterwards, so the panel always shows what git
  * sees — also after an agent or a terminal changed something.
  */
@@ -120,7 +131,8 @@ export const useScm = create<ScmState>((set, get) => {
     quickOpen: false,
     quickQuery: '',
     files: [],
-    search: NO_SEARCH,
+    stashes: [],
+    stashFiles: {},
 
     setPane: (pane) => {
       set({ pane })
@@ -133,9 +145,9 @@ export const useScm = create<ScmState>((set, get) => {
       if (!projectId) return
       try {
         const status = await ipc('scm:status', { projectId })
-        const branches = status.repo ? await ipc('scm:branches', { projectId }) : []
+        const [branches, stashes] = status.repo ? await Promise.all([ipc('scm:branches', { projectId }), ipc('scm:stashes', { projectId })]) : [[], []]
         // The editor switched projects meanwhile: don't show this one's status there.
-        if (project() === projectId) set({ status, branches })
+        if (project() === projectId) set({ status, branches, stashes })
       } catch (err) {
         if (project() === projectId) set({ error: errorMessage(err) })
       }
@@ -218,22 +230,25 @@ export const useScm = create<ScmState>((set, get) => {
 
     openPick: (pick) => set({ quickOpen: true, quickQuery: '', pick }),
 
-    setSearch: (patch) => set((s) => ({ search: { ...s.search, ...patch } })),
+    abortOperation: async () => void (await run('abort', (projectId) => ipc('scm:abort', { projectId }))),
+    continueOperation: async () => void (await run('continue', (projectId) => ipc('scm:continue', { projectId }))),
 
-    runSearch: async () => {
+    stash: (message, untracked) => run('stash', (projectId) => ipc('scm:stash', { projectId, message, untracked })),
+    applyStash: async (hash, pop) => void (await run('stash', (projectId) => ipc('scm:applyStash', { projectId, hash, pop }))),
+    dropStash: async (hash) => void (await run('stash', (projectId) => ipc('scm:dropStash', { projectId, hash }))),
+
+    toggleStash: async (hash) => {
       const projectId = project()
-      const { query, regex, caseSensitive } = get().search
-      if (!projectId || !query.trim()) return set((s) => ({ search: { ...s.search, result: undefined } }))
-      const seq = ++searchSeq
-      set((s) => ({ search: { ...s.search, searching: true } }))
+      if (!projectId) return
+      if (get().stashFiles[hash]) {
+        const { [hash]: _closed, ...open } = get().stashFiles
+        return set({ stashFiles: open })
+      }
       try {
-        const result = await ipc('scm:search', { projectId, query, regex, caseSensitive })
-        // A newer search (typing is debounced, not serialized) or another project wins.
-        if (seq !== searchSeq || project() !== projectId) return
-        set((s) => ({ search: { ...s.search, result, searching: false } }))
+        const files = await ipc('scm:stashFiles', { projectId, hash })
+        set((s) => ({ stashFiles: { ...s.stashFiles, [hash]: files } }))
       } catch (err) {
-        if (seq !== searchSeq || project() !== projectId) return
-        set((s) => ({ search: { ...s.search, searching: false }, error: errorMessage(err) }))
+        set({ error: errorMessage(err) })
       }
     },
 
@@ -244,6 +259,6 @@ export const useScm = create<ScmState>((set, get) => {
 /** Everything about the project resets when the editor switches projects. */
 useEditor.subscribe((s, prev) => {
   if (s.projectId === prev.projectId) return
-  useScm.setState({ status: undefined, branches: [], diff: undefined, log: [], selected: undefined, detail: undefined, files: [], search: NO_SEARCH, error: undefined })
+  useScm.setState({ status: undefined, branches: [], diff: undefined, log: [], selected: undefined, detail: undefined, files: [], stashes: [], stashFiles: {}, error: undefined })
   void useScm.getState().refresh()
 })

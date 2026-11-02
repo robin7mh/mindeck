@@ -26,7 +26,7 @@ export function ActivityTimeline({
       {events.slice(0, max).map((e) => {
         const { text, tone } = describeEvent(e)
         return (
-          <li key={e.id} className="flex items-start gap-2 rounded px-1.5 py-0.5 hover:bg-elevated/40">
+          <li key={e.id} className="flex items-start gap-2 rounded-sm px-1.5 py-0.5 hover:bg-elevated/40">
             <span className="mt-[5px]">
               <StatusDot tone={tone} pulse={false} />
             </span>

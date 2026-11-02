@@ -2,6 +2,7 @@ import { resolve } from 'node:path'
 import { builtinModules } from 'node:module'
 import { defineConfig } from 'vite'
 import pkg from './package.json'
+import { cloudDefines } from './electron/main/services/cloud/config'
 
 // The standalone Mindeck core (server/main.ts) as one CommonJS file:
 // out/server/index.cjs. npm dependencies stay external (node_modules at
@@ -18,9 +19,9 @@ export default defineConfig({
   resolve: { alias: { '@shared': resolve(__dirname, 'src/shared') } },
   define: {
     __MINDECK_VERSION__: JSON.stringify(pkg.version),
-    // Where Mindeck Cloud lives (see electron/main/services/cloud/config.ts).
-    __MINDECK_CLOUD_URL__: JSON.stringify(process.env.MINDECK_CLOUD_URL ?? ''),
-    __MINDECK_CLOUD_KEY__: JSON.stringify(process.env.MINDECK_CLOUD_KEY ?? '')
+    // Where Mindeck Cloud lives (see electron/main/services/cloud/config.ts). With it
+    // baked in, the build is a release and requires a license.
+    ...cloudDefines()
   },
   build: {
     outDir: 'out/server',

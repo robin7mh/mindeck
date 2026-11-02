@@ -15,7 +15,7 @@ import { RadialGauge } from '@/components/monitor/RadialGauge'
 import { Sparkline } from '@/components/monitor/Sparkline'
 import { SystemMonitorPanel } from '@/components/monitor/SystemMonitorPanel'
 import { BootSequence, BOOT_TOTAL_MS } from '@/components/boot/BootSequence'
-import { BottomDashboard } from '@/components/dashboard/BottomDashboard'
+import { MindeckMark } from '@/components/brand/MindeckMark'
 import { useAssistant as staticAssistant } from '@/features/agents/store'
 import { useAgents as staticAgents } from '@/features/agents/sessions'
 import { HudClock } from '@/features/dashboard/components/HudClock'
@@ -73,7 +73,7 @@ describe('shell pieces', () => {
   it('SideNavigation marks the active item and selects', () => {
     const onSelect = vi.fn()
     render(<SideNavigation active="terminal" onSelect={onSelect} />)
-    expect(screen.getAllByRole('button')).toHaveLength(NAV_ITEMS.length + 1) // + profile
+    expect(screen.getAllByRole('button')).toHaveLength(NAV_ITEMS.length + 2) // + fold, profile
     expect(screen.getByTitle('Terminal').className).toContain('text-text-primary')
     expect(screen.getByTitle('Core').className).toContain('text-text-muted')
     fireEvent.click(screen.getByTitle('Memory'))
@@ -92,6 +92,47 @@ describe('shell pieces', () => {
     expect(screen.getByLabelText('Profile').className).toContain('border-cyan/40')
   })
 
+  it('SideNavigation folds to icons and back, remembers it, and the panes measure their place again', async () => {
+    const { onRelayout } = await import('@/lib/relayout')
+    const moved = vi.fn()
+    const off = onRelayout(moved)
+    const first = render(<SideNavigation active="core" open={['core', 'browser']} onSelect={vi.fn()} />)
+    expect(moved).not.toHaveBeenCalled() // the first look moves nothing
+    expect(screen.getByText('Modules')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse the modules' }))
+    expect(moved).toHaveBeenCalledTimes(1)
+    expect(localStorage.getItem('mindeck.nav.collapsed')).toBe('1')
+    expect(screen.queryByText('Modules')).toBeNull()
+    expect(screen.queryByText('Memory')).toBeNull() // icons only, the name in the tooltip
+    expect(screen.getByTitle('Memory')).toBeInTheDocument()
+    expect(screen.queryByText('Not signed in')).toBeNull()
+    expect(screen.getByTestId('open-browser')).toHaveClass('absolute') // the dot sits on the icon
+    first.unmount()
+
+    // remembered on the next start; unfolds again
+    render(<SideNavigation active="core" onSelect={vi.fn()} />)
+    const unfold = screen.getByRole('button', { name: 'Expand the modules' })
+    expect(unfold).toHaveAttribute('aria-expanded', 'false')
+    fireEvent.click(unfold)
+    expect(screen.getByText('Memory')).toBeInTheDocument()
+    expect(localStorage.getItem('mindeck.nav.collapsed')).toBe('0')
+    off()
+  })
+
+  it('SideNavigation without storage: unfolded, and folding still works', () => {
+    const get = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new Error('blocked')
+    })
+    const set = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('blocked')
+    })
+    render(<SideNavigation active="core" onSelect={vi.fn()} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse the modules' }))
+    expect(screen.getByRole('button', { name: 'Expand the modules' })).toBeInTheDocument()
+    get.mockRestore()
+    set.mockRestore()
+  })
+
   it('WindowControls drive the bridge and follow the maximized state', async () => {
     const bridge = installBridge({}, 'win32')
     render(<WindowControls />)
@@ -102,6 +143,18 @@ describe('shell pieces', () => {
     expect(bridge.minimize).toHaveBeenCalled()
     expect(bridge.toggleMaximize).toHaveBeenCalled()
     expect(bridge.close).toHaveBeenCalled()
+    act(() => bridge.setMaximized(true))
+    expect(screen.getByLabelText('Restore')).toBeInTheDocument()
+  })
+
+  it('WindowControls: a window that can’t say whether it is maximized still works and follows later changes', async () => {
+    const bridge = installBridge({}, 'win32')
+    bridge.isMaximized.mockRejectedValueOnce(new Error('window is gone'))
+    render(<WindowControls />)
+    await act(settle)
+    expect(bridge.isMaximized).toHaveBeenCalled()
+    fireEvent.click(screen.getByLabelText('Maximize'))
+    expect(bridge.toggleMaximize).toHaveBeenCalled()
     act(() => bridge.setMaximized(true))
     expect(screen.getByLabelText('Restore')).toBeInTheDocument()
   })
@@ -133,7 +186,7 @@ describe('TopStatusBar', () => {
 
   it('on macOS leaves room for the traffic lights and has no custom controls', async () => {
     const TopStatusBar = await load('darwin')
-    const { container } = render(<TopStatusBar uptime={61} />)
+    const { container } = render(<TopStatusBar since={Date.now() - 61_000} />)
     await act(settle)
     expect(container.querySelector('header')!.className).toContain('pl-[88px]')
     expect(screen.queryByLabelText('Close')).toBeNull()
@@ -142,7 +195,8 @@ describe('TopStatusBar', () => {
 
   it('elsewhere shows window controls; hides the clock on request', async () => {
     const TopStatusBar = await load('linux')
-    const { container } = render(<TopStatusBar uptime={0} showClock={false} />)
+    const { container } = render(<TopStatusBar showClock={false} />)
+    expect(screen.getByText('00:00:00')).toBeInTheDocument() // not booted yet
     expect(container.querySelector('header')!.className).not.toContain('pl-[88px]')
     expect(screen.getByLabelText('Close')).toBeInTheDocument()
   })
@@ -155,7 +209,7 @@ describe('TopStatusBar in a browser', () => {
     const { useSession } = await import('@/features/session/store')
     const logout = vi.fn(async () => {})
     useSession.setState({ link: 'online', info: { mode: 'server', version: '2.0.0', platform: 'linux', hostname: 'nas', remoteTerminal: false }, logout })
-    render(<TopStatusBar uptime={0} />)
+    render(<TopStatusBar />)
     expect(screen.queryByLabelText('Close')).toBeNull()
     expect(screen.getByText('REMOTE · nas')).toBeInTheDocument()
     expect(screen.getByText('v2.0.0')).toBeInTheDocument()
@@ -245,90 +299,13 @@ describe('BootSequence', () => {
   })
 })
 
-describe('BottomDashboard', () => {
-  it('starts collapsed, toggles and remembers the choice', () => {
-    render(<BottomDashboard />)
-    const btn = screen.getByRole('button', { name: /command deck/i })
-    expect(btn).toHaveAttribute('aria-expanded', 'false')
-    fireEvent.click(btn)
-    expect(btn).toHaveAttribute('aria-expanded', 'true')
-    expect(screen.getByText('No agent is running')).toBeInTheDocument()
-    expect(screen.getByText('No agent activity yet')).toBeInTheDocument()
-    expect(localStorage.getItem('mindeck.commandDeck.open')).toBe('1')
-    fireEvent.click(btn)
-    expect(localStorage.getItem('mindeck.commandDeck.open')).toBe('0')
-  })
-
-  it('opens from the saved preference and survives blocked storage', () => {
-    localStorage.setItem('mindeck.commandDeck.open', '1')
-    const first = render(<BottomDashboard />)
-    expect(screen.getByRole('button', { name: /command deck/i })).toHaveAttribute('aria-expanded', 'true')
-    first.unmount()
-
-    const get = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
-      throw new Error('blocked')
-    })
-    const set = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
-      throw new Error('blocked')
-    })
-    render(<BottomDashboard />)
-    const btn = screen.getByRole('button', { name: /command deck/i })
-    expect(btn).toHaveAttribute('aria-expanded', 'false')
-    fireEvent.click(btn)
-    expect(btn).toHaveAttribute('aria-expanded', 'true')
-    get.mockRestore()
-    set.mockRestore()
-  })
-})
-
-describe('BottomDashboard with live agents', () => {
-  it('shows running agents (open / stop), waiting approvals and the activity outcomes', async () => {
-    const useAssistant = staticAssistant
-    const stop = vi.fn(async () => {})
-    const ev = (id: string, type: string, payload: Record<string, unknown> = {}) => ({ id, type, ts: '2026-10-02T08:00:00.000Z', actor: { kind: 'agent' }, payload }) as never
-    useAssistant.setState({
-      conversations: [
-        { id: 'c1', title: 'Plan week', agentId: 'assistant', createdAt: '', updatedAt: '', running: true },
-        { id: 'c2', title: 'Idle', agentId: 'assistant', createdAt: '', updatedAt: '', running: false }
-      ],
-      running: { c1: true },
-      pending: [{ id: 'r1' } as never],
-      activity: [ev('e1', 'agent.status.updated', { text: 'Thinking' }), ev('e2', 'tool.completed', { summary: 'Read A' })],
-      stop
-    })
-    localStorage.setItem('mindeck.commandDeck.open', '1')
-    const onOpen = vi.fn()
-    render(<BottomDashboard onOpenConversation={onOpen} />)
-    expect(screen.getByText('1 running')).toBeInTheDocument()
-    expect(screen.getByText('1 waiting for approval')).toBeInTheDocument()
-    expect(screen.getByText('1 action(s) wait for your approval')).toBeInTheDocument()
-    expect(screen.queryByText('Idle')).toBeNull()
-    expect(screen.getByText('Done: Read A')).toBeInTheDocument()
-    expect(screen.queryByText('Thinking')).toBeNull()
-    fireEvent.click(screen.getByText('Plan week'))
-    expect(onOpen).toHaveBeenCalledWith('c1')
-    fireEvent.click(screen.getByLabelText('Stop Plan week'))
-    expect(stop).toHaveBeenCalledWith('c1')
-    useAssistant.setState({ conversations: [], running: {}, pending: [], activity: [] })
-  })
-
-  it('shows coding agent sessions too: who needs you, open, end', () => {
-    const session = (id: string, status: string, terminalId?: string) =>
-      ({ id, title: `Session ${id}`, status, terminalId, live: !!terminalId, projectId: 'p', projectName: 'P', kind: 'claude-code', cwd: '/', isolated: false, plan: [], notes: [], createdAt: '', updatedAt: '' }) as never
-    const stop = vi.fn(async () => {})
-    staticAgents.setState({ sessions: [session('a', 'working', 't1'), session('b', 'approval', 't2'), session('c', 'ended')], stop })
-    localStorage.setItem('mindeck.commandDeck.open', '1')
-    const onOpenSession = vi.fn()
-    render(<BottomDashboard onOpenSession={onOpenSession} />)
-    expect(screen.getByText('2 running')).toBeInTheDocument()
-    expect(screen.getByText('1 need you')).toBeInTheDocument()
-    expect(screen.getByText('· Needs your approval')).toBeInTheDocument()
-    expect(screen.queryByText('Session c')).toBeNull() // ended: not running
-    fireEvent.click(screen.getByText('Session a'))
-    expect(onOpenSession).toHaveBeenCalledWith('a')
-    fireEvent.click(screen.getByLabelText('End Session b'))
-    expect(stop).toHaveBeenCalledWith('b')
-    staticAgents.setState({ sessions: [] })
+describe('MindeckMark', () => {
+  it('shows the app icon\'s tile, square at the size asked for', () => {
+    const { container } = render(<MindeckMark size={26} className="x" />)
+    const img = container.querySelector('img')!
+    // Small enough for Vite to inline (index.html's policy allows data: images).
+    expect(img.getAttribute('src')).toMatch(/^data:image\/svg\+xml|tile\.svg$/)
+    expect([img.getAttribute('width'), img.getAttribute('height'), img.getAttribute('alt'), img.className]).toEqual(['26', '26', '', 'x'])
   })
 })
 
@@ -360,6 +337,7 @@ describe('AppShell', () => {
     vi.doMock('@/features/settings/components/SettingsView', () => ({ SettingsView: () => <div>SETTINGS</div> }))
     vi.doMock('@/features/system/components/SystemView', () => ({ SystemView: () => <div>SYSTEM</div> }))
     vi.doMock('@/features/account/components/AccountView', () => ({ AccountView: () => <div>ACCOUNT</div> }))
+    vi.doMock('@/features/logs/components/LogsView', () => ({ LogsView: () => <div>LOGS</div> }))
     vi.resetModules()
     const { AppShell } = await import('@/components/shell/AppShell')
     const { useAssistant } = await import('@/features/agents/store')
@@ -390,12 +368,12 @@ describe('AppShell', () => {
 
     expect(screen.queryByText('TERMINAL')).toBeNull()
     fireEvent.click(screen.getByTitle('Terminal'))
-    expect(screen.getByText('TERMINAL').parentElement!.className).not.toContain('hidden')
+    expect(screen.getByText('TERMINAL').parentElement!).not.toHaveClass('hidden')
     expect(screen.queryByText('MONITOR')).toBeNull()
 
     expect(screen.queryByText(/EDITOR/)).toBeNull()
     fireEvent.click(screen.getByTitle('Editor'))
-    expect(screen.getByText('EDITOR ON').parentElement!.className).not.toContain('hidden')
+    expect(screen.getByText('EDITOR ON').parentElement!).not.toHaveClass('hidden')
     expect(screen.queryByText('MONITOR')).toBeNull()
     expect(screen.getByText('TERMINAL').parentElement!.className).toBe('hidden')
     fireEvent.click(screen.getByTitle('Terminal')) // second visit: both stay mounted
@@ -421,12 +399,15 @@ describe('AppShell', () => {
     expect(screen.getByText('SETTINGS')).toBeInTheDocument()
     fireEvent.click(screen.getByTitle('System'))
     expect(screen.getByText('SYSTEM')).toBeInTheDocument()
+    fireEvent.click(screen.getByTitle('Logs'))
+    expect(screen.getByText('LOGS')).toBeInTheDocument()
     fireEvent.click(screen.getByTitle('Settings'))
     expect(screen.getByText('SETTINGS')).toBeInTheDocument()
     fireEvent.click(screen.getByLabelText('Profile'))
     expect(screen.getByText('ACCOUNT')).toBeInTheDocument()
 
-    // approvals float above modules; the Command Deck jumps into a conversation
+    // approvals float above modules; the chat open in Agents shows its own inline
+    fireEvent.click(screen.getByTitle('Core'))
     act(() =>
       useAssistant.setState({
         pending: [{ id: 'p1', conversationId: 'c1', agentName: 'Assistant', toolTitle: 'Create note', risk: 'write', summary: 'Create X', reason: '', allowAlways: true } as never],
@@ -436,24 +417,18 @@ describe('AppShell', () => {
       })
     )
     expect(screen.getByRole('alertdialog')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: /command deck/i }))
-    fireEvent.click(screen.getByText('Chat one'))
-    expect(open).toHaveBeenCalledWith('c1')
+    fireEvent.click(screen.getByTitle('Agents'))
+    act(() => useAgents.getState().showAssistant())
     expect(screen.getByText('AGENTS')).toBeInTheDocument()
     expect(screen.queryByRole('alertdialog')).toBeNull() // the open chat shows it inline
-    expect(useAgents.getState().view).toBe('assistant')
     act(() => useAssistant.setState({ pending: [], conversations: [], running: {}, activeId: undefined }))
 
-    // …and into a coding agent session
-    fireEvent.click(screen.getByTitle('Core'))
+    // …and a coding agent session
     act(() =>
       useAgents.setState({
         sessions: [{ id: 's1', title: 'Fix login', status: 'working', live: true, terminalId: 't', projectId: 'p', projectName: 'P', kind: 'claude-code', cwd: '/', isolated: false, plan: [], notes: [], createdAt: '', updatedAt: '' }]
       })
     )
-    fireEvent.click(screen.getByText('Fix login'))
-    expect(openSession).toHaveBeenCalledWith('s1')
-    expect(screen.getByText('AGENTS')).toBeInTheDocument()
     // its approval shows inline in the open session, not as a toast
     act(() =>
       useAssistant.setState({
@@ -470,6 +445,7 @@ describe('AppShell', () => {
     vi.doUnmock('@/features/settings/components/SettingsView')
     vi.doUnmock('@/features/system/components/SystemView')
     vi.doUnmock('@/features/account/components/AccountView')
+    vi.doUnmock('@/features/logs/components/LogsView')
     vi.doUnmock('@/features/terminal/components/TerminalView')
     vi.doUnmock('@/features/editor/components/EditorView')
     vi.doUnmock('@/features/dashboard/components/Dashboard')
@@ -498,5 +474,178 @@ describe('AppShell in a browser without remote shells', () => {
     vi.doUnmock('@/features/terminal/components/TerminalView')
     vi.doUnmock('@/features/dashboard/components/Dashboard')
     vi.doUnmock('@/components/monitor/SystemMonitorPanel')
+  })
+})
+
+describe('AppShell with the Browser and Files', () => {
+  it('keeps the browser mounted, follows what it asks for, shows Files — and lets the page show approvals itself', async () => {
+    vi.doMock('@/features/browser/components/BrowserView', () => ({ BrowserView: ({ active }: { active: boolean }) => <div>{active ? 'BROWSER ON' : 'BROWSER OFF'}</div> }))
+    vi.doMock('@/features/files/components/FilesView', () => ({
+      FilesView: ({ onNavigate }: { onNavigate: (id: string) => void }) => <button onClick={() => onNavigate('terminal')}>FILES</button>
+    }))
+    vi.doMock('@/features/terminal/components/TerminalView', () => ({ TerminalView: () => <div>TERMINAL</div> }))
+    vi.doMock('@/features/dashboard/components/Dashboard', () => ({ Dashboard: () => <div>DASHBOARD</div> }))
+    vi.doMock('@/components/monitor/SystemMonitorPanel', () => ({ SystemMonitorPanel: () => <div>MONITOR</div> }))
+    vi.doMock('@/components/topbar/TopStatusBar', () => ({ TopStatusBar: () => null }))
+    vi.doMock('@/features/agents/components/AgentsView', () => ({ AgentsView: () => <div>AGENTS</div> }))
+    vi.doMock('@/features/settings/components/SettingsView', () => ({ SettingsView: () => <div>SETTINGS</div> }))
+    vi.resetModules()
+    const bridge = installBridge() // the desktop app: the page covers toasts
+    const { AppShell } = await import('@/components/shell/AppShell')
+    const { useAssistant } = await import('@/features/agents/store')
+    const { useAgents } = await import('@/features/agents/sessions')
+    const { useBrowser } = await import('@/features/browser/store')
+    const { tab } = await import('./browserFixtures')
+    let handlers!: Parameters<ReturnType<typeof useBrowser.getState>['connect']>[0]
+    const disconnect = vi.fn()
+    useBrowser.setState({
+      connect: (h) => {
+        handlers = h
+        return disconnect
+      }
+    })
+    useAssistant.setState({ connect: () => () => {} })
+    const openDialog = vi.fn()
+    useAgents.setState({ connect: () => () => {}, openDialog })
+
+    vi.useFakeTimers()
+    const view = render(<AppShell />)
+    fireEvent.click(screen.getByText('click to skip'))
+    act(() => {
+      vi.advanceTimersByTime(BOOT_TOTAL_MS)
+    })
+    vi.useRealTimers()
+
+    fireEvent.click(screen.getByTitle('Files'))
+    fireEvent.click(screen.getByText('FILES')) // Files sends you on (a terminal in a folder, …)
+    expect(screen.getByText('TERMINAL').parentElement!).not.toHaveClass('hidden')
+
+    expect(screen.queryByText(/BROWSER/)).toBeNull()
+    act(() => handlers.reveal()) // a link opened somewhere: show the browser
+    expect(screen.getByText('BROWSER ON').parentElement!).not.toHaveClass('hidden')
+    act(() =>
+      useAssistant.setState({
+        pending: [{ id: 'p1', conversationId: 'c1', agentName: 'Assistant', toolTitle: 'Create note', risk: 'write', summary: 'Create X', reason: '', allowAlways: true } as never]
+      })
+    )
+    expect(screen.queryByRole('alertdialog')).toBeNull() // the browser shows approvals over the page itself
+
+    act(() => handlers.sendToAgent(tab('a', 'https://a.dev/')))
+    expect(screen.getByText('AGENTS')).toBeInTheDocument()
+    expect(openDialog).toHaveBeenCalledWith(en.browser.agentPrompt('https://a.dev/', 'https://a.dev/'))
+    expect(screen.getByText('BROWSER OFF').parentElement!.className).toBe('hidden') // still mounted
+    expect(screen.getByRole('alertdialog')).toBeInTheDocument()
+    act(() => handlers.sendToAgent(tab('b', 'https://b.dev/', { title: 'Docs' })))
+    expect(openDialog).toHaveBeenLastCalledWith(en.browser.agentPrompt('Docs', 'https://b.dev/'))
+    act(() => handlers.settings())
+    expect(screen.getByText('SETTINGS')).toBeInTheDocument()
+    // An agent started a command in a terminal: that terminal's tab, and the Terminal on screen.
+    const { useTerminals } = await import('@/features/terminal/store')
+    const reveal = vi.fn(async () => {})
+    useTerminals.setState({ reveal })
+    const info = { id: 't9', title: 'demo', cwd: '/w', cwdLabel: 'w', shell: 'zsh', createdAt: '2026-10-29T00:00:00Z' }
+    act(() => bridge.emit('terminal:reveal', { info, by: 'Claude Code' }))
+    expect(reveal).toHaveBeenCalledWith(info)
+    expect(screen.getByText('TERMINAL').parentElement!).not.toHaveClass('hidden')
+    act(() => useAssistant.setState({ pending: [] }))
+    view.unmount()
+    expect(disconnect).toHaveBeenCalled()
+
+    for (const m of [
+      '@/features/browser/components/BrowserView',
+      '@/features/files/components/FilesView',
+      '@/features/terminal/components/TerminalView',
+      '@/features/dashboard/components/Dashboard',
+      '@/components/monitor/SystemMonitorPanel',
+      '@/components/topbar/TopStatusBar',
+      '@/features/agents/components/AgentsView',
+      '@/features/settings/components/SettingsView'
+    ])
+      vi.doUnmock(m)
+    Reflect.deleteProperty(window, 'mindeck')
+  })
+})
+
+describe('AppShell with panes', () => {
+  it('shows modules side by side, follows the page’s focus, and hides the chrome in zen mode', async () => {
+    vi.doMock('@/features/browser/components/BrowserView', () => ({ BrowserView: ({ active }: { active: boolean }) => <div>{active ? 'BROWSER ON' : 'BROWSER OFF'}</div> }))
+    vi.doMock('@/features/agents/components/AgentsView', () => ({ AgentsView: () => <div>AGENTS</div> }))
+    vi.doMock('@/features/terminal/components/TerminalView', () => ({ TerminalView: () => <div>TERMINAL</div> }))
+    vi.doMock('@/features/dashboard/components/Dashboard', () => ({ Dashboard: () => <div>DASHBOARD</div> }))
+    vi.doMock('@/components/monitor/SystemMonitorPanel', () => ({ SystemMonitorPanel: () => <div>MONITOR</div> }))
+    vi.doMock('@/components/topbar/TopStatusBar', () => ({ TopStatusBar: ({ showClock }: { showClock: boolean }) => <div>{showClock ? 'TOPBAR CLOCK' : 'TOPBAR'}</div> }))
+    vi.resetModules()
+    installBridge({}, 'linux')
+    const { AppShell } = await import('@/components/shell/AppShell')
+    const { useAssistant } = await import('@/features/agents/store')
+    const { useAgents } = await import('@/features/agents/sessions')
+    const { useBrowser } = await import('@/features/browser/store')
+    const { useWorkspace } = await import('@/features/workspace/store')
+    const { makeLayout } = await import('@/features/workspace/layout')
+    let handlers!: Parameters<ReturnType<typeof useBrowser.getState>['connect']>[0]
+    useBrowser.setState({
+      connect: (h) => {
+        handlers = h
+        return () => {}
+      }
+    })
+    useAssistant.setState({ connect: () => () => {} })
+    useAgents.setState({ connect: () => () => {} })
+    useWorkspace.setState({ layout: makeLayout('columns', ['agents', 'browser']) })
+
+    vi.useFakeTimers()
+    render(<AppShell />)
+    expect(screen.getByText('BROWSER OFF')).toBeInTheDocument() // not over the boot screen
+    fireEvent.click(screen.getByText('click to skip'))
+    act(() => {
+      vi.advanceTimersByTime(BOOT_TOTAL_MS)
+    })
+    vi.useRealTimers()
+
+    expect(screen.getByText('AGENTS')).toBeInTheDocument()
+    expect(screen.getByText('BROWSER ON')).toBeInTheDocument()
+    expect(screen.getByText('TOPBAR CLOCK')).toBeInTheDocument()
+    expect(screen.getByTestId('open-browser')).toBeInTheDocument() // on screen in the other pane
+    expect(screen.queryByTestId('open-agents')).toBeNull() // the focused one is marked in full
+
+    act(() => handlers.focused!()) // a click into the page
+    expect(useWorkspace.getState().layout.focus).toBe('p2')
+    // a workspace key pressed in the page: the focus moves to the pane on the left
+    const { macKeys } = await import('@/features/workspace/keys')
+    const mac = macKeys()
+    const paneKey = (key: string) => ({ key, code: key, metaKey: mac, ctrlKey: !mac, altKey: true, shiftKey: false })
+    act(() => handlers.workspaceKey!(paneKey('PageUp'))) // not one of the workspace's
+    expect(useWorkspace.getState().layout.focus).toBe('p2')
+    act(() => handlers.workspaceKey!(paneKey('ArrowLeft')))
+    expect(useWorkspace.getState().layout.focus).toBe('p1')
+    act(() => handlers.focused!())
+    const { usePalette } = await import('@/features/palette/store')
+    act(() => handlers.palette!()) // ⇧⌘P while the page has the keyboard: the palette, over everything
+    expect(screen.getByRole('dialog', { name: 'Command palette' })).toBeInTheDocument()
+    act(() => handlers.palette!()) // …and the same key closes it
+    expect(usePalette.getState().view).toBeUndefined()
+    fireEvent.click(screen.getByTitle('Core')) // the side navigation fills the focused pane
+    expect(useWorkspace.getState().layout.panes.map((p) => p.module)).toEqual(['agents', 'core'])
+    expect(screen.getByText('DASHBOARD')).toBeInTheDocument()
+    expect(screen.getByText('MONITOR')).toBeInTheDocument()
+    expect(screen.getByText('TOPBAR')).toBeInTheDocument()
+    expect(screen.getByText('BROWSER OFF')).toBeInTheDocument() // kept, hidden
+
+    act(() => useWorkspace.getState().setZen(true))
+    expect(screen.queryByText('TOPBAR')).toBeNull()
+    expect(screen.queryByTitle('Terminal')).toBeNull()
+    expect(screen.getAllByRole('button', { name: /Leave zen mode/ }).length).toBeGreaterThan(0)
+    act(() => useWorkspace.getState().setZen(false))
+    expect(screen.getByText('TOPBAR')).toBeInTheDocument()
+
+    for (const m of [
+      '@/features/browser/components/BrowserView',
+      '@/features/agents/components/AgentsView',
+      '@/features/terminal/components/TerminalView',
+      '@/features/dashboard/components/Dashboard',
+      '@/components/monitor/SystemMonitorPanel',
+      '@/components/topbar/TopStatusBar'
+    ])
+      vi.doUnmock(m)
   })
 })

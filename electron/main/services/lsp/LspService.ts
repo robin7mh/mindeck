@@ -7,7 +7,8 @@ import type {
   LspLocation,
   LspRange,
   LspRename,
-  LspSignature
+  LspSignature,
+  LspSymbol
 } from '@shared/types/lsp'
 import { isTypeScriptFile, languageOf } from '@shared/types/languages'
 import { TsBackend, type TsOptions } from './TsBackend'
@@ -35,7 +36,7 @@ export class LspService {
 
   constructor(opts: LspOptions) {
     this.ts = new TsBackend(opts)
-    this.generic = new GenericBackend({ resolveRoot: opts.resolveRoot, tools: NO_SERVERS, ...opts.servers })
+    this.generic = new GenericBackend({ resolveRoot: opts.resolveRoot, trusted: opts.trusted, tools: NO_SERVERS, ...opts.servers })
   }
 
   async open(projectId: string, path: string, text: string): Promise<{ available: boolean; language?: string }> {
@@ -95,6 +96,17 @@ export class LspService {
   /** Quick fixes: TypeScript's for these error codes, a language server's for the diagnostics in the range. */
   codeFixes(projectId: string, path: string, at: LspRange, errorCodes: number[]): Promise<LspCodeFix[]> {
     return isTypeScriptFile(path) ? this.ts.codeFixes(projectId, path, at, errorCodes) : this.generic.codeFixes(projectId, path, at)
+  }
+
+  /** A file's symbols (the outline) — TypeScript's come from Monaco's own service in the editor. */
+  async symbols(projectId: string, path: string): Promise<LspSymbol[]> {
+    return isTypeScriptFile(path) ? [] : this.generic.symbols(projectId, path)
+  }
+
+  /** A project's trust changed: TypeScript switches servers (keeping the open files); other servers stop until files open again. */
+  async retrust(projectId: string): Promise<void> {
+    // A server that can't start now (the folder is gone) starts with the next file opened.
+    await Promise.all([this.ts.retrust(projectId).catch(() => {}), this.generic.forget(projectId)])
   }
 
   dispose(): void {

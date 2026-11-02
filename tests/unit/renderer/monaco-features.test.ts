@@ -143,7 +143,8 @@ const mon = vi.hoisted(() => {
       registerReferenceProvider: register('references'),
       registerRenameProvider: register('rename'),
       registerSignatureHelpProvider: register('signature'),
-      registerCodeActionProvider: register('codeActions')
+      registerCodeActionProvider: register('codeActions'),
+      registerDocumentSymbolProvider: register('symbols')
     }
   }
   return { state, monaco, Model, Editor, Uri }
@@ -409,6 +410,7 @@ describe('TypeScript through tsserver', () => {
     await flush() // a failed sync is not fatal
 
     m.type('y')
+    routes['lsp:close'] = () => Promise.reject(new Error('gone')) // closing a server that went: fine
     m.dispose()
     await flush()
     expect(calls('lsp:close')).toEqual([{ projectId: 's1', path: 'a.ts' }])
@@ -631,6 +633,21 @@ describe('TypeScript through tsserver', () => {
     useEditor.setState({ tabs: [tab('l1', 'app.py')] })
     await act(() => refreshDiagnostics('l1'))
     expect(mon.state.markers.get('lsp:/l1/app.py')).toEqual([expect.objectContaining({ code: 'reportX', source: 'Pyright' })])
+    // Symbols (outline, breadcrumbs): LSP's kinds count from 1, Monaco's from 0; TypeScript keeps Monaco's own provider.
+    routes['lsp:symbols'] = () => [
+      { name: 'C', kind: 5, range: range(1, 1, 3, 1), selection: range(1, 7, 1, 8), children: [{ name: 'm', detail: '()', kind: 6, range: range(2, 1, 2, 9), selection: range(2, 5, 2, 6), children: [] }] }
+    ]
+    const symbols = (await provider('symbols', 'python').provideDocumentSymbols(py)) as { name: string; detail: string; kind: number; selectionRange: unknown; children: unknown[] }[]
+    expect(symbols).toMatchObject([{ name: 'C', detail: '', kind: 4, tags: [], selectionRange: { startLineNumber: 1, startColumn: 7 }, children: [{ name: 'm', detail: '()', kind: 5 }] }])
+    expect(calls('lsp:symbols')).toContainEqual({ projectId: 'l1', path: 'app.py' })
+    routes['lsp:symbols'] = () => {
+      throw new Error('server gone')
+    }
+    expect(await provider('symbols', 'python').provideDocumentSymbols(py)).toEqual([])
+    expect(mon.state.providers.typescript.symbols).toBeUndefined()
+    const go = make('l1', 'main.go', 'package main') // its server isn't there
+    await flush()
+    expect(await provider('symbols', 'go').provideDocumentSymbols(go)).toEqual([])
     py.dispose()
     expect(useLanguages.getState().files['l1:app.py']).toBeUndefined()
   })

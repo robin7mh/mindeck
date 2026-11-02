@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useState } from 'react'
-import { ArrowDownToLine, BookOpen, Check, CircleDot, FileDiff, GitMerge, Loader2, RefreshCw, Trash2, X } from 'lucide-react'
+import { ArrowDownToLine, BookOpen, Check, CircleDot, FileDiff, GitMerge, Loader2, PanelRightClose, RefreshCw, Trash2, X } from 'lucide-react'
 import type { AgentSession } from '@shared/types/agents'
 import { TechLabel } from '@/components/ui/TechLabel'
 import { cn } from '@/lib/cn'
@@ -18,7 +18,7 @@ export function DiffModal() {
   const diff = useAgents((s) => s.diff)
   if (!diff) return null
   return (
-    <div role="dialog" aria-label={t.agents.changesIn(diff.path)} className="fixed inset-0 z-50 flex items-center justify-center bg-void/70 p-6 backdrop-blur-sm">
+    <div role="dialog" aria-label={t.agents.changesIn(diff.path)} className="fixed inset-0 z-50 flex items-center justify-center bg-void/70 p-6 backdrop-blur-xs">
       <div className="panel flex h-full max-h-[85vh] w-full max-w-6xl flex-col overflow-hidden">
         <div className="flex h-10 shrink-0 items-center gap-2 border-b border-hud/60 px-3">
           <FileDiff size={14} className="text-cyan" />
@@ -35,6 +35,16 @@ export function DiffModal() {
         </div>
       </div>
     </div>
+  )
+}
+
+/** Folds the column beside the chat away (the Agents module remembers it). */
+export function HideSideButton({ onHide }: { onHide: () => void }) {
+  const t = useT()
+  return (
+    <button type="button" aria-label={t.agents.hideSide} title={t.agents.hideSide} onClick={onHide} className="ml-auto shrink-0 rounded-sm p-1 text-text-muted hover:bg-elevated hover:text-text-primary">
+      <PanelRightClose size={14} />
+    </button>
   )
 }
 
@@ -64,7 +74,7 @@ function ConfirmDiscard({ onDiscard, onKeep }: { onDiscard: () => void; onKeep: 
  * away an own working folder — or, once its pull request is merged, update
  * the project and clean up), its plan, and the memory it used.
  */
-export function SessionSide({ session, onOpenNote }: { session: AgentSession; onOpenNote: (path: string) => void }) {
+export function SessionSide({ session, onOpenNote, onHide }: { session: AgentSession; onOpenNote: (path: string) => void; onHide: () => void }) {
   const t = useT()
   const changes = useAgents((s) => s.changes[session.id])
   const branch = useAgents((s) => s.branches[session.id])
@@ -94,6 +104,7 @@ export function SessionSide({ session, onOpenNote }: { session: AgentSession; on
       window.removeEventListener('focus', reload)
       window.clearInterval(timer)
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reload is recreated each render; these say when to load again
   }, [session.id, session.status, isolated])
 
   // The merged work into the project: `git pull` there, no terminal needed.
@@ -111,7 +122,7 @@ export function SessionSide({ session, onOpenNote }: { session: AgentSession; on
   ]
 
   return (
-    <aside className="hidden w-72 shrink-0 flex-col border-l border-hud/50 xl:flex">
+    <aside className="hidden w-72 shrink-0 flex-col border-l border-hud/50 pane-xl:flex">
       <div role="tablist" className="flex h-10 shrink-0 items-center gap-1 border-b border-hud/50 px-2">
         {tabs.map(([id, label, count]) => (
           <button
@@ -120,12 +131,13 @@ export function SessionSide({ session, onOpenNote }: { session: AgentSession; on
             role="tab"
             aria-selected={tab === id}
             onClick={() => setTab(id)}
-            className={cn('rounded px-2 py-1 font-sans text-[11.5px] font-medium', tab === id ? 'bg-cyan/10 text-cyan' : 'text-text-muted hover:text-text-secondary')}
+            className={cn('rounded-sm px-2 py-1 font-sans text-[11.5px] font-medium', tab === id ? 'bg-cyan/10 text-cyan' : 'text-text-muted hover:text-text-secondary')}
           >
             {label}
             {count > 0 && <span className="ml-1 font-mono text-[10px]">{count}</span>}
           </button>
         ))}
+        <HideSideButton onHide={onHide} />
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto p-2">
@@ -153,7 +165,7 @@ export function SessionSide({ session, onOpenNote }: { session: AgentSession; on
               </p>
             )}
             {merged && (
-              <div className="mb-1 space-y-2 rounded-md border border-green/40 bg-green/[0.06] p-2">
+              <div className="mb-1 space-y-2 rounded-md border border-green/40 bg-green/6 p-2">
                 <p className="flex items-center gap-1.5 font-sans text-[12px] font-medium text-green">
                   <GitMerge size={13} /> {t.agents.mergedTitle}
                 </p>
@@ -167,7 +179,7 @@ export function SessionSide({ session, onOpenNote }: { session: AgentSession; on
                       type="button"
                       disabled={pulling}
                       onClick={() => void updateProject()}
-                      className="flex flex-1 items-center justify-center gap-1 rounded-md border border-green/50 bg-green/[0.08] px-2 py-1 font-sans text-[11.5px] text-green hover:bg-green/15 disabled:opacity-40"
+                      className="flex flex-1 items-center justify-center gap-1 rounded-md border border-green/50 bg-green/8 px-2 py-1 font-sans text-[11.5px] text-green hover:bg-green/15 disabled:opacity-40"
                     >
                       {pulling ? <Loader2 size={12} className="animate-spin" /> : <ArrowDownToLine size={12} />} {t.agents.updateProject}
                     </button>
@@ -192,7 +204,7 @@ export function SessionSide({ session, onOpenNote }: { session: AgentSession; on
                 key={c.path}
                 type="button"
                 onClick={() => void showDiff(c.path)}
-                className="flex w-full items-center gap-2 rounded px-1.5 py-1 text-left hover:bg-elevated/50"
+                className="flex w-full items-center gap-2 rounded-sm px-1.5 py-1 text-left hover:bg-elevated/50"
               >
                 <span className={cn('font-mono text-[10px] font-semibold', c.status === 'added' ? 'text-green' : c.status === 'deleted' ? 'text-danger' : 'text-amber')}>
                   {c.status === 'added' ? 'A' : c.status === 'deleted' ? 'D' : 'M'}
@@ -213,7 +225,7 @@ export function SessionSide({ session, onOpenNote }: { session: AgentSession; on
                       type="button"
                       disabled={busy}
                       onClick={() => void accept()}
-                      className="flex flex-1 items-center justify-center gap-1 rounded-md border border-cyan/50 bg-cyan/[0.08] px-2 py-1 font-sans text-[11.5px] text-cyan hover:bg-cyan/15 disabled:opacity-40"
+                      className="flex flex-1 items-center justify-center gap-1 rounded-md border border-cyan/50 bg-cyan/8 px-2 py-1 font-sans text-[11.5px] text-cyan hover:bg-cyan/15 disabled:opacity-40"
                     >
                       {busy ? <Loader2 size={12} className="animate-spin" /> : <GitMerge size={12} />} {t.agents.takeOver}
                     </button>
@@ -252,13 +264,13 @@ export function SessionSide({ session, onOpenNote }: { session: AgentSession; on
         {tab === 'memory' && (
           <div className="space-y-1">
             {session.journal && (
-              <button type="button" onClick={() => onOpenNote(session.journal!)} className="flex w-full items-center gap-2 rounded px-1.5 py-1 text-left hover:bg-elevated/50">
+              <button type="button" onClick={() => onOpenNote(session.journal!)} className="flex w-full items-center gap-2 rounded-sm px-1.5 py-1 text-left hover:bg-elevated/50">
                 <BookOpen size={12} className="shrink-0 text-cyan" />
                 <span className="min-w-0 flex-1 truncate font-sans text-[12px] text-text-primary">{t.agents.journal}</span>
               </button>
             )}
             {session.notes.map((n) => (
-              <button key={n} type="button" onClick={() => onOpenNote(n)} className="flex w-full items-center gap-2 rounded px-1.5 py-1 text-left hover:bg-elevated/50">
+              <button key={n} type="button" onClick={() => onOpenNote(n)} className="flex w-full items-center gap-2 rounded-sm px-1.5 py-1 text-left hover:bg-elevated/50">
                 <BookOpen size={12} className="shrink-0 text-text-muted" />
                 <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-text-secondary">{n}</span>
               </button>

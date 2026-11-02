@@ -1,4 +1,4 @@
-import { mkdir, readdir, readFile, rm, stat } from 'node:fs/promises'
+import { lstat, mkdir, readdir, readFile, rm, stat, symlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { tempDir } from './helpers'
@@ -23,5 +23,16 @@ describe('writeAtomic', () => {
     await writeAtomic(file, 'c', 0o600)
     expect(await readFile(file, 'utf8')).toBe('c')
     expect((await stat(file)).mode & 0o777).toBe(0o600)
+  })
+
+  it('replaces a (dangling) link with the file instead of writing through it (BE-SEC-02)', async () => {
+    const dir = await tempDir()
+    const outside = await tempDir()
+    const file = join(dir, 'state.json')
+    await symlink(join(outside, 'pwned.json'), file)
+    await writeAtomic(file, 'x')
+    expect((await lstat(file)).isSymbolicLink()).toBe(false)
+    expect(await readFile(file, 'utf8')).toBe('x')
+    expect(await readdir(outside)).toEqual([])
   })
 })

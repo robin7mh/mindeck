@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
-import { AlertTriangle, ChevronDown, ChevronUp, Code2, FolderGit2, GitBranch, Play, Power, Square, TerminalSquare, X } from 'lucide-react'
+import { AlertTriangle, ChevronDown, ChevronUp, Cpu, FolderGit2, GitBranch, Play, Power, SlidersHorizontal, Square, TerminalSquare, X } from 'lucide-react'
 import type { ChatMessage } from '@shared/types/ai'
-import type { AgentSession, SessionStatus } from '@shared/types/agents'
-import { isDesktop } from '@shared/ipc/client'
+import type { AgentSession, SessionOption, SessionStatus } from '@shared/types/agents'
+import { Select } from '@/components/ui/Select'
 import { cn } from '@/lib/cn'
 import { useT } from '@/lib/i18n'
 import { repoLink } from '@/lib/repo'
@@ -49,6 +49,45 @@ function SessionTerminal({ id, ended }: { id: string; ended: string }) {
   )
 }
 
+/**
+ * The session's model and mode, as the agent offers them. Claude Code's
+ * model aliases and permission modes read in the UI language; its mode
+ * changes from its next start (it is a start option).
+ */
+function SessionControls({ session }: { session: AgentSession }) {
+  const t = useT()
+  const configure = useAgents((s) => s.configure)
+  const claude = session.kind === 'claude-code'
+  const modelLabel = (o: SessionOption) => (claude && o.id === 'default' ? t.agents.defaultModel : o.name)
+  const modeLabel = (o: SessionOption) => (claude ? t.agents.claudeModes[o.id] : o.name)
+  return (
+    <>
+      {!!session.models?.length && (
+        <Select
+          variant="quiet"
+          icon={Cpu}
+          label={t.agents.model}
+          value={session.model ?? ''}
+          placeholder={t.agents.defaultModel}
+          options={session.models.map((o) => ({ value: o.id, label: modelLabel(o), hint: o.description }))}
+          onChange={(model) => void configure({ model })}
+        />
+      )}
+      {!!session.modes?.length && (
+        <Select
+          variant="quiet"
+          icon={SlidersHorizontal}
+          label={t.agents.mode}
+          value={session.mode ?? ''}
+          placeholder={t.agents.defaultMode}
+          options={session.modes.map((o) => ({ value: o.id, label: modeLabel(o), hint: claude && session.live ? t.agents.fromNextStart : o.description }))}
+          onChange={(mode) => void configure({ mode })}
+        />
+      )}
+    </>
+  )
+}
+
 /** The session's name: click to edit, Enter or leaving the field saves, Esc cancels. */
 function TitleInput({ title, onRename }: { title: string; onRename: (title: string) => void }) {
   const t = useT()
@@ -71,7 +110,7 @@ function TitleInput({ title, onRename }: { title: string; onRename: (title: stri
       title={t.agents.rename}
       spellCheck={false}
       style={{ width: `${Math.max(value.length, 4) + 2}ch` }}
-      className="-mx-1 min-w-0 max-w-[40%] truncate rounded bg-transparent px-1 font-sans text-[13px] font-semibold text-text-primary outline-none transition-colors hover:bg-elevated/50 focus:bg-elevated/70 focus:ring-1 focus:ring-cyan/40"
+      className="-mx-1 min-w-0 max-w-[40%] truncate rounded-sm bg-transparent px-1 font-sans text-[13px] font-semibold text-text-primary outline-hidden transition-colors hover:bg-elevated/50 focus:bg-elevated/70 focus:ring-1 focus:ring-cyan/40"
     />
   )
 }
@@ -116,7 +155,7 @@ export function SessionPane({ session, messages }: { session: AgentSession; mess
   const shownId = agentTerminal ? (terminal || needsTerminal ? agentTerminal : undefined) : terminal ? shellId : undefined
   const showTerminal = !!shownId
   const repo = session.repoUrl ? repoLink(session.repoUrl) : undefined
-  const { send, interrupt, stop, resume, clearError, rename, openShell, openInEditor } = useAgents.getState()
+  const { send, interrupt, stop, resume, clearError, rename, openShell } = useAgents.getState()
 
   const toggleTerminal = async () => {
     if (showTerminal) return setTerminal(false)
@@ -147,11 +186,6 @@ export function SessionPane({ session, messages }: { session: AgentSession; mess
             <a href={session.repoUrl} target="_blank" rel="noreferrer" className={iconButton} title={t.agents.openUrl(session.repoUrl!)}>
               <repo.Icon size={12} /> {repo.label}
             </a>
-          )}
-          {isDesktop() && (
-            <button type="button" className={iconButton} title={t.agents.openInVsCode(session.cwd)} onClick={() => void openInEditor(session.id)}>
-              <Code2 size={12} /> VS Code
-            </button>
           )}
           <button
             type="button"
@@ -185,7 +219,7 @@ export function SessionPane({ session, messages }: { session: AgentSession; mess
         </p>
       )}
       {(session.error || error) && (
-        <div className="flex items-start gap-2 border-b border-danger/30 bg-danger/[0.06] px-3 py-2">
+        <div className="flex items-start gap-2 border-b border-danger/30 bg-danger/6 px-3 py-2">
           <AlertTriangle size={13} className="mt-0.5 shrink-0 text-danger" />
           <span className="min-w-0 flex-1 font-mono text-[11px] text-text-secondary">{error ?? session.error}</span>
           {error && (
@@ -208,7 +242,12 @@ export function SessionPane({ session, messages }: { session: AgentSession; mess
             </p>
           </div>
         ) : (
-          <ChatThread messages={messages} pending={pending.filter((p) => p.conversationId === session.id)} onRespond={(id, d) => void respond(id, d)} />
+          <ChatThread
+            messages={messages}
+            pending={pending.filter((p) => p.conversationId === session.id)}
+            conversationId={session.id}
+            onRespond={(id, d) => void respond(id, d)}
+          />
         )}
       </div>
 
@@ -219,10 +258,13 @@ export function SessionPane({ session, messages }: { session: AgentSession; mess
       )}
 
       <Composer
+        key={session.id}
         running={running && busy}
         sending={false}
         disabled={!running}
         placeholder={running ? t.agents.messageTo(name) : t.agents.resumeToContinue}
+        agent={{ sessionId: session.id, projectId: session.projectId, commands: session.commands ?? [], images: !!session.images }}
+        toolbar={<SessionControls session={session} />}
         onSend={send}
         onStop={() => void interrupt()}
       />

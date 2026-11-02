@@ -1,4 +1,6 @@
 import type { Config } from 'tailwindcss'
+import plugin from 'tailwindcss/plugin'
+import { PANE_STEPS } from './src/features/workspace/steps'
 
 /**
  * Colors map to CSS variables declared in src/index.css so the whole app has a
@@ -38,9 +40,16 @@ export default {
         label: '0.18em'
       },
       keyframes: {
+        // Transform + opacity only: the compositor runs it without repainting.
+        // (An animated box-shadow repainted — and re-blurred the backdrop — every frame.)
         pulseDot: {
-          '0%, 100%': { opacity: '1', boxShadow: '0 0 0 0 rgb(var(--accent-cyan) / 0.55)' },
-          '50%': { opacity: '0.55', boxShadow: '0 0 0 5px rgb(var(--accent-cyan) / 0)' }
+          '0%': { opacity: '0.55', transform: 'scale(1)' },
+          '70%, 100%': { opacity: '0', transform: 'scale(2.25)' }
+        },
+        // The browser's loading line: slides across while a page loads (transform only).
+        loadbar: {
+          '0%': { transform: 'translateX(-100%)' },
+          '100%': { transform: 'translateX(300%)' }
         },
         flicker: {
           '0%, 100%': { opacity: '1' },
@@ -50,10 +59,18 @@ export default {
         }
       },
       animation: {
-        'pulse-dot': 'pulseDot 2.2s ease-in-out infinite',
-        flicker: 'flicker 6s linear infinite'
+        // Stepped: a smooth infinite loop makes Chromium composite the whole
+        // window at 60 fps (~20 % of a core in GPU + renderer); 8 steps ≈ 4 fps.
+        'pulse-dot': 'pulseDot 2.2s steps(8, end) infinite',
+        flicker: 'flicker 6s linear infinite',
+        loadbar: 'loadbar 1.1s ease-in-out infinite'
       }
     }
   },
-  plugins: []
+  plugins: [
+    // `pane-lg:flex`: like `lg:`, but for the width of the module's pane (see steps.ts).
+    plugin(({ addVariant }) => {
+      for (const step of Object.keys(PANE_STEPS)) addVariant(`pane-${step}`, `[data-pane~="${step}"] &`)
+    })
+  ]
 } satisfies Config

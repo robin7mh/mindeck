@@ -2,157 +2,9 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { tempDir } from './helpers'
-import { CATALOG, pythonFor, systemPython, which } from '../../../electron/main/services/tools/catalog'
-import { loginShellRunner, ToolsService } from '../../../electron/main/services/tools/ToolsService'
 import { APPS, appDataDir, fixesEslintOnSave, MigrateService, parseJsonc, prettierSettings, snippetsOf, vimMappings } from '../../../electron/main/services/migrate/MigrateService'
 import { SettingsService } from '../../../electron/main/services/settings/SettingsService'
 import { isSupportedCommand } from '@shared/types/migrate'
-import type { ToolProgress } from '@shared/types/languages'
-
-describe('the tools catalog', () => {
-  it('every language has a server; locate snippets, arguments, settings and install commands', async () => {
-    const root = await tempDir()
-    for (const [id, entry] of Object.entries(CATALOG)) {
-      for (const spec of [entry.server, entry.debugger].filter(Boolean)) {
-        expect(spec!.locate('/tools'), id).toMatch(/true; \}$/)
-        if (spec!.install) expect(spec!.install.command('/tools'), id).toBeTruthy()
-      }
-      expect(Array.isArray(entry.server.args({ root, tools: '/tools' }))).toBe(true)
-      entry.server.settings?.(root)
-    }
-    expect(CATALOG.python.server.install!.command('/my tools')).toBe("npm install --prefix '/my tools/npm' --no-audit --no-fund --loglevel=error pyright")
-    expect(CATALOG.python.server.locate('/t')).toContain('[ -x /t/npm/node_modules/.bin/pyright-langserver ]')
-    expect(CATALOG.java.server.args({ root: '/a', tools: '/t' })).toEqual(['-data', expect.stringMatching(/^\/t\/jdtls\/[0-9a-f]{12}$/)])
-    expect(which('x')).toBe('{ command -v x 2>/dev/null; true; }')
-    expect(which('x', ['/a', '/b'])).toBe('{ command -v x 2>/dev/null || { for p in /a /b; do [ -x "$p" ] && echo "$p" && break; done; }; true; }')
-  })
-
-  it('Python runs in the project’s virtualenv when it has one', async () => {
-    const root = await tempDir()
-    expect(pythonFor(root)).toBe('python3')
-    await mkdir(join(root, 'venv/bin'), { recursive: true })
-    await writeFile(join(root, 'venv/bin/python'), '')
-    expect(pythonFor(root)).toBe(join(root, 'venv/bin/python'))
-    // Windows: the virtualenv keeps it in Scripts, the system's is `python`.
-    expect(pythonFor(root, 'win32')).toBe('python')
-    await mkdir(join(root, '.venv/Scripts'), { recursive: true })
-    await writeFile(join(root, '.venv/Scripts/python.exe'), '')
-    expect(pythonFor(root, 'win32')).toBe(join(root, '.venv/Scripts/python.exe'))
-    expect([systemPython('linux'), systemPython('win32')]).toEqual(['python3', 'python'])
-  })
-})
-
-describe('ToolsService', () => {
-  const lines = (pairs: Record<string, string>) => Object.entries(pairs).map(([k, v]) => `${k}\t${v}`).join('\n')
-
-  it('one shell round trip tells what is ready, installable, needs a toolchain or comes with one', async () => {
-    const scripts: string[] = []
-    const tools = new ToolsService({
-      dir: '/t',
-      probe: async (script) => {
-        scripts.push(script)
-        return `${lines({ 'python:server': '/t/npm/node_modules/.bin/pyright-langserver', 'cpp:server': '/usr/bin/clangd', 'python:debugger': '', 'has:npm': '/usr/bin/npm', 'has:python3': '/usr/bin/python3', 'has:brew': '' })}\nnoise without a tab`
-      }
-    })
-    const status = await tools.status()
-    expect(scripts).toHaveLength(1)
-    const byId = Object.fromEntries(status.map((l) => [l.id, l]))
-    expect(byId.python.server).toEqual({ name: 'Pyright', state: 'ready' })
-    expect(byId.python.debugger).toMatchObject({ name: 'debugpy', state: 'missing', requires: 'python3' })
-    expect(byId.go.server).toMatchObject({ state: 'toolchain', requires: 'go', command: 'go install golang.org/x/tools/gopls@latest' })
-    expect(byId.cpp.server.state).toBe('ready')
-    expect(byId.java.server).toMatchObject({ state: 'toolchain', requires: 'brew' })
-    expect(byId.swift.server).toEqual({ name: 'SourceKit-LSP', state: 'manual' })
-    expect(byId.rust.debugger).toMatchObject({ name: 'lldb-dap', state: 'toolchain', requires: 'brew' })
-    expect(byId.lua.debugger).toBeUndefined()
-    // What status() found is what locate() answers — no second shell.
-    expect(await tools.locate('python', 'server')).toBe('/t/npm/node_modules/.bin/pyright-langserver')
-    expect(await tools.locate('python', 'debugger')).toBeUndefined()
-    expect(scripts).toHaveLength(1)
-    expect(tools.dir).toBe('/t')
-  })
-
-  it('locate asks the shell for what it doesn’t know yet; unknown tools are not there; a failing shell finds nothing', async () => {
-    let answer = '/opt/gopls\nsecond line'
-    const tools = new ToolsService({ dir: '/t', probe: async () => answer })
-    expect(await tools.locate('go', 'server')).toBe('/opt/gopls')
-    answer = ''
-    expect(await tools.locate('go', 'server')).toBe('/opt/gopls') // cached
-    expect(await tools.locate('rust', 'debugger')).toBeUndefined()
-    expect(await tools.locate('cobol', 'server')).toBeUndefined()
-    const broken = new ToolsService({ dir: '/t', probe: async () => Promise.reject(new Error('no shell')) })
-    expect(await broken.locate('go', 'server')).toBeUndefined()
-    expect((await broken.status()).every((l) => l.server.state !== 'ready')).toBe(true)
-  })
-
-  it('installs on request: output streams, a failure says why, one install at a time', async () => {
-    const dir = join(await tempDir(), 'tools')
-    const progress: ToolProgress[] = []
-    let exit = 0
-    let release!: () => void
-    let ready = false
-    const tools = new ToolsService({
-      dir,
-      probe: async (script) => (ready && script.includes('python:server') ? 'python:server\t/x/pyright' : ''),
-      publish: (p) => progress.push(p),
-      run: async (command, cwd, onLine) => {
-        expect(cwd).toBe(dir)
-        for (let i = 1; i <= 14; i += 1) onLine(`line ${i}`)
-        if (command.includes('slow')) await new Promise<void>((r) => (release = r))
-        return exit
-      }
-    })
-    ready = true
-    const result = await tools.install('python', 'server')
-    expect(result.server.state).toBe('ready')
-    expect(progress[0]).toEqual({ id: 'python', part: 'server', line: expect.stringContaining('$ npm install --prefix') })
-    expect(progress).toHaveLength(15)
-
-    exit = 1
-    await expect(tools.install('php', 'server')).rejects.toMatchObject({ code: 'install-failed', message: expect.stringMatching(/^line 3\n[\s\S]*line 14$/) })
-    const quiet = new ToolsService({ dir, run: async () => 2 })
-    await expect(quiet.install('yaml', 'server')).rejects.toMatchObject({ message: 'YAML Language Server: exit 2' })
-    await expect(tools.install('swift', 'server')).rejects.toMatchObject({ code: 'not-installable' })
-    await expect(tools.install('lua', 'debugger')).rejects.toMatchObject({ code: 'not-installable' })
-    await expect(tools.install('cobol', 'server')).rejects.toMatchObject({ code: 'not-installable' })
-
-    exit = 0
-    CATALOG.lua.server.install!.command = () => 'slow'
-    const first = tools.install('lua', 'server')
-    await new Promise((r) => setTimeout(r, 10))
-    await expect(tools.install('lua', 'server')).rejects.toMatchObject({ code: 'busy' })
-    release()
-    await first
-  })
-
-  it('by default it asks the user’s login shell and installs through it', async () => {
-    const dir = join(await tempDir(), 'tools')
-    const tools = new ToolsService({ dir })
-    const status = await tools.status()
-    expect(status.map((l) => l.id)).toContain('python')
-    expect(await tools.locate('kotlin', 'server')).toSatisfy((v: unknown) => v === undefined || typeof v === 'string')
-    const fresh = new ToolsService({ dir })
-    expect(await fresh.locate('cobol', 'server')).toBeUndefined()
-    await fresh.locate('lua', 'server') // asks the shell on its own
-    const original = CATALOG.yaml.server.install!.command
-    CATALOG.yaml.server.install!.command = () => 'echo installed'
-    const lines: string[] = []
-    const installer = new ToolsService({ dir, publish: (p) => lines.push(p.line) })
-    await installer.install('yaml', 'server')
-    expect(lines).toEqual(['$ echo installed', 'installed'])
-    CATALOG.yaml.server.install!.command = original
-  }, 30_000)
-
-  it('the login-shell runner: lines from stdout and stderr, the exit code, a shell that can’t start', async () => {
-    const got: string[] = []
-    expect(await loginShellRunner("printf 'a\\nb'; echo err >&2; exit 3", await tempDir(), (l) => got.push(l))).toBe(3)
-    expect(got.sort()).toEqual(['a', 'b', 'err'])
-    expect(await loginShellRunner('kill -9 $$', await tempDir(), () => {})).toBe(1) // killed: no exit code
-    const failed: string[] = []
-    expect(await loginShellRunner('true', '/definitely/not/here', (l) => failed.push(l))).toBe(127)
-    expect(failed[0]).toMatch(/ENOENT/)
-  }, 20_000)
-})
 
 describe('moving over from VS Code / Cursor', () => {
   async function machine() {
@@ -247,6 +99,9 @@ describe('moving over from VS Code / Cursor', () => {
     // Cursor installed too, with one setting; VSCodium with settings Mindeck can't use.
     await mkdir(join(appData, 'Cursor', 'User'), { recursive: true })
     await writeFile(join(appData, 'Cursor', 'User', 'settings.json'), '{ "editor.fontLigatures": false }')
+    // Vim in Cursor too — without remappings
+    await mkdir(join(home, '.cursor', 'extensions', 'vscodevim.vim-1'), { recursive: true })
+    await writeFile(join(home, '.cursor', 'extensions', 'vscodevim.vim-1', 'package.json'), JSON.stringify({ publisher: 'vscodevim', name: 'vim', displayName: 'Vim', main: './x.js' }))
     await mkdir(join(appData, 'VSCodium', 'User'), { recursive: true })
     const invalid = {
       'editor.fontSize': 2,
@@ -296,7 +151,7 @@ describe('moving over from VS Code / Cursor', () => {
       'vscodevim.vim|Vim|built-in|',
       'zhuangtongfa.material-theme|One Dark Pro|theme|'
     ])
-    expect(cursor).toEqual({ app: 'Cursor', name: 'Cursor', settings: 1, keybindings: 0, snippets: 0, extensions: [] })
+    expect(cursor).toEqual({ app: 'Cursor', name: 'Cursor', settings: 2, keybindings: 0, snippets: 0, extensions: [{ id: 'vscodevim.vim', name: 'Vim', fate: 'built-in' }] })
   })
 
   it('takes settings, the keybindings Mindeck can honor and every snippet over', async () => {
@@ -338,6 +193,10 @@ describe('moving over from VS Code / Cursor', () => {
     expect(snippets.find((s: { prefix: string }) => s.prefix === 'rfc')).toMatchObject({ name: 'Comp', body: 'export function $1() {\n  return null\n}', description: 'A component' })
     expect(await service.editor()).toMatchObject({ settings: { fontSize: 15 }, snippets: expect.any(Array) })
     await expect(service.apply('Notepad')).rejects.toMatchObject({ code: 'not-found' })
+    // From Cursor: Vim keys, but no remappings to take
+    expect(await service.apply('Cursor')).toEqual({ settings: 2, keybindings: 0, snippets: 0 })
+    expect(settings.get().editor).toMatchObject({ vim: true, importedFrom: { app: 'Cursor' } })
+    expect(settings.get().editor).not.toHaveProperty('vimMappings')
     const elsewhere = new MigrateService({ home: '/nowhere', appData: await tempDir(), settings, snippetsFile: join(data, 'x.json') })
     await expect(elsewhere.apply('Code')).rejects.toMatchObject({ code: 'not-found' }) // not installed here
     expect(await elsewhere.scan()).toEqual([])

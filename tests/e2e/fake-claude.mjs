@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 // A stand-in for the Claude Code CLI in end-to-end tests (MINDECK_CLAUDE_BIN):
 // it reads the flags Mindeck passes, talks back through the real hooks, asks
-// for one approval and writes a file — without any model or account.
-import { writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+// for one approval and writes a file — without any model or account. A prompt
+// with `@` mentions is answered with what it found there (files, images).
+import { readFileSync, statSync, writeFileSync } from 'node:fs'
+import { basename, isAbsolute, join } from 'node:path'
 
 const args = process.argv.slice(2)
 if (args[0] === '--version') {
@@ -16,7 +17,9 @@ if (args[0] === 'auth' && args[1] === 'status') {
 }
 
 const flag = (name) => args[args.indexOf(name) + 1]
-const settings = JSON.parse(flag('--settings'))
+// --settings: a file (it holds the session's token), or inline JSON as older Mindecks passed it.
+const rawSettings = flag('--settings')
+const settings = JSON.parse(rawSettings.trimStart().startsWith('{') ? rawSettings : readFileSync(rawSettings, 'utf8'))
 const http = settings.hooks.Stop[0].hooks[0]
 const sessionId = flag('--session-id') ?? flag('--resume')
 const hook = async (event, extra = {}) => {
@@ -28,8 +31,27 @@ const hook = async (event, extra = {}) => {
   return res.status === 200 ? res.json() : undefined
 }
 
+/** What the `@` mentions point at: each file with its size, images by their kind. */
+function mentioned(prompt) {
+  const paths = [...prompt.matchAll(/(?:^|\s)@(?:"([^"]+)"|(\S+))/g)].map((m) => m[1] ?? m[2])
+  return paths.map((path) => {
+    const abs = isAbsolute(path) ? path : join(process.cwd(), path)
+    try {
+      if (/\.(png|jpe?g|gif|webp)$/i.test(path)) {
+        const png = readFileSync(abs).subarray(1, 4).toString() === 'PNG'
+        return `an image (${png ? 'PNG' : 'unknown'})`
+      }
+      return `${basename(path)} (${statSync(abs).size} bytes)`
+    } catch {
+      return `${path} (missing)`
+    }
+  })
+}
+
 async function turn(prompt) {
   await hook('UserPromptSubmit', { prompt })
+  const seen = mentioned(prompt)
+  if (seen.length) return hook('Stop', { last_assistant_message: `Read ${seen.join(' and ')}` })
   const input = { command: 'echo written by the fake agent > fake-output.txt' }
   await hook('PreToolUse', { tool_name: 'Bash', tool_input: input, tool_use_id: 'tool-1' })
   const answer = await hook('PermissionRequest', { tool_name: 'Bash', tool_input: input, tool_use_id: 'tool-1' })
@@ -50,15 +72,27 @@ await fetch(process.env.MINDECK_HOOK_URL, {
 })
 console.log('fake claude ready')
 
-let line = ''
 const prompt = args.includes('--') ? args[args.indexOf('--') + 1] : undefined
 if (prompt) await turn(prompt)
+// Typed input: a prompt ends at Enter — line breaks inside a bracketed paste are part of it.
+// Slash commands (`/model sonnet`) are the CLI's own: no turn.
+let line = ''
+let pasting = false
 process.stdin.setEncoding('utf8')
 process.stdin.on('data', (chunk) => {
-  line += chunk.replace(/\x1b\[20[01]~/g, '')
-  const end = line.search(/[\r\n]/)
-  if (end < 0) return
-  const text = line.slice(0, end).trim()
-  line = ''
-  if (text) void turn(text)
+  for (const part of chunk.split(/(\x1b\[20[01]~)/)) {
+    if (part === '\x1b[200~') pasting = true
+    else if (part === '\x1b[201~') pasting = false
+    else if (pasting) line += part
+    else {
+      for (const ch of part) {
+        if (ch !== '\r' && ch !== '\n') line += ch
+        else {
+          const text = line.trim()
+          line = ''
+          if (text && !text.startsWith('/')) void turn(text)
+        }
+      }
+    }
+  }
 })

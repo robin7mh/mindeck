@@ -1,12 +1,42 @@
-import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
-import { AlertTriangle, Ban, BookOpen, ChevronRight, Globe, Loader2, PencilLine, TerminalSquare, User, Wrench } from 'lucide-react'
-import type { ApprovalDecision, ChatMessage, PermissionRequest, ToolCallPart } from '@shared/types/ai'
-import { renderMarkdown } from '@/features/memory/markdown'
+import { useEffect, useRef, useState } from 'react'
+import { AlertTriangle, Ban, BookOpen, BookText, ChevronRight, FileText, Folder, Globe, Image, Loader2, PencilLine, TerminalSquare, User, Wrench, type LucideIcon } from 'lucide-react'
+import type { ApprovalDecision, ChatMessage, MessageAttachment, PermissionRequest, ToolCallPart } from '@shared/types/ai'
+import { Markdown } from '@/components/ui/Markdown'
 import { TechLabel } from '@/components/ui/TechLabel'
 import { cn } from '@/lib/cn'
 import { useT } from '@/lib/i18n'
 import { useAssistant } from '../store'
 import { ApprovalCard } from './ApprovalCard'
+
+/** While an answer streams, its Markdown renders at most this often (each render parses all of it). */
+export const STREAM_RENDER_MS = 100
+
+/** `value`, but while `on` at most every STREAM_RENDER_MS — the last value always comes through. */
+function useThrottled(value: string, on: boolean): string {
+  const [shown, setShown] = useState(value)
+  const at = useRef(0)
+  useEffect(() => {
+    if (!on) return
+    const show = () => {
+      at.current = Date.now()
+      setShown(value)
+    }
+    const wait = at.current + STREAM_RENDER_MS - Date.now()
+    if (wait <= 0) return show()
+    const timer = window.setTimeout(show, wait)
+    return () => window.clearTimeout(timer)
+  }, [value, on])
+  return on ? shown : value
+}
+
+function Prose({ text, streaming }: { text: string; streaming: boolean }) {
+  return <Markdown text={useThrottled(text, streaming)} className="chat-prose" />
+}
+
+/** What changes as an answer grows — cheap to compute on every render (no JSON of tool outputs). */
+const partSize = (part: ChatMessage['parts'][number] | undefined) => (!part ? '' : part.type === 'text' ? part.text.length : `${part.status}:${part.output?.length ?? 0}`)
+
+const ATTACHMENT_ICON: Record<MessageAttachment['kind'], LucideIcon> = { file: FileText, folder: Folder, note: BookText, tab: Globe, image: Image }
 
 const STATUS_TONE: Record<ToolCallPart['status'], string> = {
   pending: 'text-text-muted',
@@ -63,13 +93,13 @@ function ToolCard({ part, request, onRespond }: { part: ToolCallPart; request?: 
       {open && (
         <div className="mt-1 space-y-1.5 rounded-md border border-hud/40 bg-surface/60 p-2">
           <TechLabel className="text-text-muted">{t.agents.input}</TechLabel>
-          <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words font-mono text-[11px] text-text-secondary">
+          <pre className="max-h-40 overflow-auto whitespace-pre-wrap wrap-break-word font-mono text-[11px] text-text-secondary">
             {JSON.stringify(part.input, null, 2)}
           </pre>
           {part.output !== undefined && (
             <>
               <TechLabel className="text-text-muted">{t.agents.result}</TechLabel>
-              <pre className="max-h-60 overflow-auto whitespace-pre-wrap break-words font-mono text-[11px] text-text-secondary">{part.output}</pre>
+              <pre className="max-h-60 overflow-auto whitespace-pre-wrap wrap-break-word font-mono text-[11px] text-text-secondary">{part.output}</pre>
             </>
           )}
         </div>
@@ -81,11 +111,6 @@ function ToolCard({ part, request, onRespond }: { part: ToolCallPart; request?: 
       )}
     </div>
   )
-}
-
-function Markdown({ text }: { text: string }) {
-  const html = useMemo(() => renderMarkdown(text, {}), [text])
-  return <div className="md-prose chat-prose" dangerouslySetInnerHTML={{ __html: html }} />
 }
 
 function Message({
@@ -108,17 +133,31 @@ function Message({
             <User size={11} className="text-cyan" />
             <TechLabel className="text-text-muted">{t.agents.you}</TechLabel>
           </div>
-          <p className="whitespace-pre-wrap break-words font-sans text-[13px] text-text-primary">{text}</p>
+          {text && <p className="whitespace-pre-wrap wrap-break-word font-sans text-[13px] text-text-primary">{text}</p>}
+          {message.attachments && (
+            <ul aria-label={t.agents.attached} className="mt-1 flex flex-wrap gap-1">
+              {message.attachments.map((a, i) => {
+                const Icon = ATTACHMENT_ICON[a.kind]
+                return (
+                  <li key={i} className="flex max-w-[220px] items-center gap-1 rounded-sm border border-cyan/25 px-1.5 py-0.5 font-mono text-[10.5px] text-text-secondary">
+                    <Icon size={10} className="shrink-0 text-cyan" />
+                    <span className="truncate">{a.label}</span>
+                  </li>
+                )
+              })}
+            </ul>
+          )}
         </div>
       </div>
     )
   }
   const empty = message.parts.length === 0
   return (
-    <div className="max-w-full">
+    // aria-busy: a screen reader reads the answer once it is complete, not every streamed piece.
+    <div className="max-w-full" aria-busy={message.status === 'streaming'}>
       {message.parts.map((part, i) =>
         part.type === 'text' ? (
-          <Markdown key={i} text={part.text} />
+          <Prose key={i} text={part.text} streaming={message.status === 'streaming' && i === message.parts.length - 1} />
         ) : (
           <ToolCard key={part.id} part={part} request={pending.find((p) => p.id === part.requestId)} onRespond={onRespond} />
         )
@@ -149,35 +188,35 @@ function Message({
   )
 }
 
-/** Opens http(s) links outside the app (Electron: the OS browser; web: a new tab). */
-export function interceptLinks(e: MouseEvent<HTMLElement>): void {
-  const a = (e.target as HTMLElement).closest('a')
-  if (!a) return
-  e.preventDefault()
-  const href = a.getAttribute('href') ?? ''
-  if (/^https?:\/\//i.test(href)) window.open(href, '_blank', 'noopener,noreferrer')
-}
-
 export function ChatThread({
   messages,
   pending,
-  onRespond
+  onRespond,
+  conversationId
 }: {
   messages: ChatMessage[]
   pending: PermissionRequest[]
   onRespond: (id: string, d: ApprovalDecision) => void
+  /** Show this conversation's approvals that belong to no tool card (a Mindeck tool's own gate) at the end. */
+  conversationId?: string
 }) {
   const end = useRef<HTMLDivElement>(null)
+  const attached = new Set(messages.flatMap((m) => m.parts.flatMap((p) => (p.type === 'tool' && p.requestId ? [p.requestId] : []))))
+  const loose = conversationId ? pending.filter((p) => p.conversationId === conversationId && !attached.has(p.id)) : []
   const last = messages[messages.length - 1]
-  const signature = `${messages.length}:${last?.parts.length ?? 0}:${last?.status ?? ''}:${JSON.stringify(last?.parts.at(-1) ?? '').length}`
+  const signature = `${messages.length}:${last?.parts.length ?? 0}:${last?.status ?? ''}:${partSize(last?.parts.at(-1))}`
   useEffect(() => {
     end.current?.scrollIntoView?.({ block: 'end' })
   }, [signature])
 
   return (
-    <div className="space-y-4 px-4 py-4" onClick={interceptLinks}>
+    // A log: new answers are announced (politely) to screen readers.
+    <div role="log" aria-live="polite" className="space-y-4 px-4 py-4">
       {messages.map((m) => (
         <Message key={m.id} message={m} pending={pending} onRespond={onRespond} />
+      ))}
+      {loose.map((req) => (
+        <ApprovalCard key={req.id} request={req} onRespond={(d) => onRespond(req.id, d)} />
       ))}
       <div ref={end} />
     </div>

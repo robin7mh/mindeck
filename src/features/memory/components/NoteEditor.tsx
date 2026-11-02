@@ -1,19 +1,30 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowDownLeft, ArrowUpRight, BookOpen, Check, Link2, Loader2, PencilLine, Plus, Search, Trash2, X } from 'lucide-react'
+import { ArrowDownLeft, ArrowUpRight, BookOpen, Check, Code2, FileStack, Link2, Loader2, PencilLine, Plus, Search, Trash2, X } from 'lucide-react'
 import type { Note, NoteMeta } from '@shared/types/memory'
 import { TechLabel } from '@/components/ui/TechLabel'
 import { cn } from '@/lib/cn'
 import { intlLocale, useT } from '@/lib/i18n'
+import { openExternal } from '@/lib/links'
 import { renderMarkdown } from '../markdown'
+import { usePaneFocused } from '@/features/workspace/pane'
+import { MarkdownEditor, type MarkdownEditorHandle } from './MarkdownEditor'
 
 interface Props {
   note: Note
   notes: NoteMeta[]
+  /** Notes in the templates folder. */
+  templates: NoteMeta[]
   draft: string
   mode: 'edit' | 'preview'
+  /** Editing shows plain Markdown instead of Live Preview. */
+  source: boolean
   saving: boolean
   onDraft: (body: string) => void
   onMode: (mode: 'edit' | 'preview') => void
+  onSource: (source: boolean) => void
+  onInsertTemplate: (path: string) => Promise<string | null>
+  onAttach: (file: File) => Promise<string | null>
+  loadImage: (target: string) => Promise<string | null>
   onSave: () => void
   onRename: (title: string) => void
   onOpen: (path: string) => void
@@ -46,14 +57,18 @@ function formatValue(v: unknown): string {
 }
 
 /**
- * One note: read (rendered) or edit (the text only — the frontmatter stays
- * hidden and untouched), an editable title (renaming keeps links intact), and
- * the connections in both directions with link / unlink controls.
+ * One note: Live Preview, source or read (the text only — the frontmatter
+ * stays hidden and untouched), an editable title (renaming keeps links
+ * intact), and the connections in both directions with link / unlink
+ * controls.
  */
 export function NoteEditor(p: Props) {
   const t = useT()
   const { note } = p
   const [confirmTrash, setConfirmTrash] = useState(false)
+  const editor = useRef<MarkdownEditorHandle>(null)
+  const preview = useRef<HTMLDivElement>(null)
+  const { mode, onMode, onSave } = p
   const dirty = p.draft !== note.body
   const html = useMemo(() => renderMarkdown(note.body, note.links), [note.body, note.links])
   const props = Object.entries(note.frontmatter).filter(([k]) => !HIDDEN_PROPS.has(k))
@@ -70,9 +85,28 @@ export function NoteEditor(p: Props) {
 
   useEffect(() => setConfirmTrash(false), [note.path])
 
-  // Obsidian shortcuts: ⌘/Ctrl+E toggles read/edit, ⌘/Ctrl+S saves now.
-  const { mode, onMode, onSave } = p
+  // Read mode: pictures come from the vault, never from where the note says.
+  const { loadImage } = p
   useEffect(() => {
+    if (mode !== 'preview') return
+    let alive = true
+    preview.current?.querySelectorAll<HTMLImageElement>('img[data-embed]').forEach((img) => {
+      void loadImage(img.dataset.embed!).then((url) => {
+        if (!alive) return
+        if (url) img.src = url
+        else img.classList.add('missing')
+      })
+    })
+    return () => {
+      alive = false
+    }
+  }, [html, mode, loadImage])
+
+  // Obsidian shortcuts: ⌘/Ctrl+E toggles read/edit, ⌘/Ctrl+S saves now.
+  // Only while Memory's pane has the focus — next to the editor, ⌘S is the editor's.
+  const focused = usePaneFocused()
+  useEffect(() => {
+    if (!focused) return
     const onKey = (e: KeyboardEvent) => {
       if (!(e.metaKey || e.ctrlKey)) return
       const key = e.key.toLowerCase()
@@ -86,7 +120,16 @@ export function NoteEditor(p: Props) {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [mode, onMode, onSave])
+  }, [mode, onMode, onSave, focused])
+
+  /** A Markdown link: web addresses leave the app (main routes them to a browser), `.md` paths open notes. */
+  const followHref = (href: string) => {
+    if (openExternal(href)) return
+    const target = safeDecode(href.split('#')[0])
+    const path = note.links[target]
+    if (path) p.onOpen(path)
+    else if (/\.md$/i.test(target)) p.onOpenOrCreate(target)
+  }
 
   const onPreviewClick = (e: React.MouseEvent) => {
     const a = (e.target as HTMLElement).closest('a')
@@ -99,18 +142,10 @@ export function NoteEditor(p: Props) {
       else p.onOpenOrCreate(target)
       return
     }
-    const href = a.getAttribute('href') ?? ''
-    if (/^(https?:|mailto:)/i.test(href)) {
-      window.open(href, '_blank', 'noopener,noreferrer') // main routes this to the OS browser
-      return
-    }
-    const target = safeDecode(href.split('#')[0])
-    const path = note.links[target]
-    if (path) p.onOpen(path)
-    else if (/\.md$/i.test(target)) p.onOpenOrCreate(target)
+    followHref(a.getAttribute('href') ?? '')
   }
 
-  const seg = 'flex items-center gap-1.5 rounded px-2 py-1 font-sans text-[11px] font-medium transition-colors'
+  const seg = 'flex items-center gap-1.5 rounded-sm px-2 py-1 font-sans text-[11px] font-medium transition-colors'
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -126,12 +161,12 @@ export function NoteEditor(p: Props) {
           {(note.type || note.tags.length > 0) && (
             <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
               {note.type && (
-                <span className="rounded border border-cyan/30 bg-cyan/[0.06] px-1.5 py-px font-mono text-[10px] text-cyan">
+                <span className="rounded-sm border border-cyan/30 bg-cyan/6 px-1.5 py-px font-mono text-[10px] text-cyan">
                   {note.type}
                 </span>
               )}
               {note.tags.map((tag) => (
-                <span key={tag} className="rounded border border-hud/60 bg-elevated/50 px-1.5 py-px font-mono text-[10px] text-purple">
+                <span key={tag} className="rounded-sm border border-hud/60 bg-elevated/50 px-1.5 py-px font-mono text-[10px] text-purple">
                   #{tag}
                 </span>
               ))}
@@ -153,22 +188,36 @@ export function NoteEditor(p: Props) {
               </>
             )}
           </span>
+          {mode === 'edit' && p.templates.length > 0 && (
+            <TemplatePicker templates={p.templates} onPick={(path) => void p.onInsertTemplate(path).then((text) => text && editor.current?.insert(text))} />
+          )}
           <div className="flex rounded-md border border-hud/60 bg-surface/50 p-0.5">
             <button
               type="button"
+              title={t.memory.liveTitle}
+              aria-pressed={mode === 'edit' && !p.source}
+              onClick={() => p.onSource(false)}
+              className={cn(seg, mode === 'edit' && !p.source ? 'bg-cyan/10 text-cyan' : 'text-text-muted hover:text-text-secondary')}
+            >
+              <PencilLine size={12} /> {t.memory.live}
+            </button>
+            <button
+              type="button"
+              title={t.memory.sourceTitle}
+              aria-pressed={mode === 'edit' && p.source}
+              onClick={() => p.onSource(true)}
+              className={cn(seg, mode === 'edit' && p.source ? 'bg-cyan/10 text-cyan' : 'text-text-muted hover:text-text-secondary')}
+            >
+              <Code2 size={12} /> {t.memory.source}
+            </button>
+            <button
+              type="button"
               title={t.memory.readTitle}
+              aria-pressed={mode === 'preview'}
               onClick={() => onMode('preview')}
               className={cn(seg, mode === 'preview' ? 'bg-cyan/10 text-cyan' : 'text-text-muted hover:text-text-secondary')}
             >
               <BookOpen size={12} /> {t.memory.read}
-            </button>
-            <button
-              type="button"
-              title={t.memory.editTitle}
-              onClick={() => onMode('edit')}
-              className={cn(seg, mode === 'edit' ? 'bg-cyan/10 text-cyan' : 'text-text-muted hover:text-text-secondary')}
-            >
-              <PencilLine size={12} /> {t.memory.edit}
             </button>
           </div>
           {confirmTrash ? (
@@ -197,12 +246,18 @@ export function NoteEditor(p: Props) {
       {/* body */}
       <div className="min-h-0 flex-1 overflow-y-auto">
         {mode === 'edit' ? (
-          <textarea
+          <MarkdownEditor
+            key={note.path}
+            ref={editor}
             value={p.draft}
-            onChange={(e) => p.onDraft(e.target.value)}
-            autoFocus
-            className="h-full min-h-[300px] w-full resize-none bg-transparent px-5 py-4 font-sans text-[14px] leading-[1.75] text-text-primary caret-cyan outline-none placeholder:text-text-muted/60"
+            live={!p.source}
+            notes={p.notes}
             placeholder={t.memory.writeHint}
+            onChange={p.onDraft}
+            onOpenNote={p.onOpenOrCreate}
+            onOpenUrl={followHref}
+            onAttach={p.onAttach}
+            loadImage={p.loadImage}
           />
         ) : (
           <div className="mx-auto max-w-3xl px-5 py-4">
@@ -217,7 +272,7 @@ export function NoteEditor(p: Props) {
               </dl>
             )}
             {note.body.trim() ? (
-              <div className="md-prose" onClick={onPreviewClick} dangerouslySetInnerHTML={{ __html: html }} />
+              <div ref={preview} className="md-prose" onClick={onPreviewClick} dangerouslySetInnerHTML={{ __html: html }} />
             ) : (
               <button type="button" onClick={() => onMode('edit')} className="font-sans text-[13px] text-text-muted hover:text-cyan">
                 {t.memory.emptyNote}
@@ -289,7 +344,7 @@ function TitleInput({ title, onRename }: { title: string; onRename: (title: stri
       }}
       title={t.memory.renameHint}
       spellCheck={false}
-      className="-mx-1 w-full truncate rounded bg-transparent px-1 font-sans text-[18px] font-semibold text-text-primary outline-none transition-colors hover:bg-elevated/40 focus:bg-elevated/60 focus:ring-1 focus:ring-cyan/40"
+      className="-mx-1 w-full truncate rounded-sm bg-transparent px-1 font-sans text-[18px] font-semibold text-text-primary outline-hidden transition-colors hover:bg-elevated/40 focus:bg-elevated/60 focus:ring-1 focus:ring-cyan/40"
     />
   )
 }
@@ -323,7 +378,7 @@ function ConnectionChip({
         onClick={onRemove}
         title={t.memory.disconnectHint}
         aria-label={t.memory.disconnect(title)}
-        className="mr-1 rounded p-0.5 text-text-muted opacity-0 transition-opacity hover:bg-elevated hover:text-danger group-hover:opacity-100"
+        className="mr-1 rounded-sm p-0.5 text-text-muted opacity-0 transition-opacity hover:bg-elevated hover:text-danger group-hover:opacity-100"
       >
         <X size={11} />
       </button>
@@ -367,7 +422,7 @@ function ConnectPicker({ notes, onPick }: { notes: NoteMeta[]; onPick: (path: st
           setOpen((o) => !o)
           setQ('')
         }}
-        className="flex items-center gap-1 rounded-md border border-cyan/40 bg-cyan/[0.06] px-2 py-0.5 font-sans text-[11px] font-medium text-cyan transition-colors hover:bg-cyan/[0.12]"
+        className="flex items-center gap-1 rounded-md border border-cyan/40 bg-cyan/6 px-2 py-0.5 font-sans text-[11px] font-medium text-cyan transition-colors hover:bg-cyan/12"
       >
         <Plus size={12} /> {t.memory.connect}
       </button>
@@ -388,7 +443,7 @@ function ConnectPicker({ notes, onPick }: { notes: NoteMeta[]; onPick: (path: st
               }}
               placeholder={t.memory.connectTo}
               spellCheck={false}
-              className="min-w-0 flex-1 bg-transparent font-sans text-[12px] text-text-primary outline-none placeholder:text-text-muted/70"
+              className="min-w-0 flex-1 bg-transparent font-sans text-[12px] text-text-primary outline-hidden placeholder:text-text-muted/70"
             />
           </label>
           <div className="max-h-56 overflow-y-auto py-1">
@@ -408,6 +463,58 @@ function ConnectPicker({ notes, onPick }: { notes: NoteMeta[]; onPick: (path: st
               </button>
             ))}
           </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** "Insert template": a note from the templates folder, filled in at the cursor. */
+function TemplatePicker({ templates, onPick }: { templates: NoteMeta[]; onPick: (path: string) => void }) {
+  const t = useT()
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const onDown = (e: MouseEvent) => {
+      if (!ref.current?.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [open])
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        title={t.memory.insertTemplate}
+        aria-label={t.memory.insertTemplate}
+        aria-expanded={open}
+        // Keep the editor's cursor where it is.
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => setOpen((o) => !o)}
+        className="flex h-7 w-7 items-center justify-center rounded-md border border-hud/60 text-text-muted transition-colors hover:border-cyan/40 hover:text-cyan"
+      >
+        <FileStack size={13} />
+      </button>
+      {open && (
+        <div role="menu" aria-label={t.memory.insertTemplate} className="absolute right-0 top-full z-30 mt-1 w-60 rounded-md border border-hud/60 bg-panel py-1 shadow-lg">
+          {templates.map((n) => (
+            <button
+              key={n.path}
+              type="button"
+              role="menuitem"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => {
+                setOpen(false)
+                onPick(n.path)
+              }}
+              className="flex w-full items-center px-3 py-1.5 text-left font-sans text-[12.5px] text-text-secondary transition-colors hover:bg-elevated/60 hover:text-text-primary"
+            >
+              <span className="truncate">{n.title}</span>
+            </button>
+          ))}
         </div>
       )}
     </div>

@@ -9,7 +9,7 @@ export function registerMemoryIpc(router: Router, service: VaultService): void {
   router.register('memory:list', () => service.list())
   router.register('memory:read', ({ path }) => service.read(path))
   router.register('memory:write', ({ path, raw }) => service.write(path, raw))
-  router.register('memory:create', ({ title, folder }) => service.create(title, folder))
+  router.register('memory:create', ({ title, folder, template, now }) => service.create(title, folder, template, now))
   router.register('memory:trash', ({ path }) => service.trash(path))
   router.register('memory:graph', () => service.graph())
   router.register('memory:search', ({ query }) => service.search(query))
@@ -24,4 +24,9 @@ export function registerMemoryIpc(router: Router, service: VaultService): void {
   router.register('memory:link', ({ from, to }) => service.link(from, to))
   router.register('memory:unlink', ({ from, to }) => service.unlink(from, to))
   router.register('memory:setVault', ({ path }) => service.setVault(path))
+  router.register('memory:daily', ({ now }) => service.daily(now))
+  router.register('memory:setDailyNotes', (daily) => service.setDailyNotes(daily))
+  router.register('memory:renderTemplate', ({ path, title, now }) => service.renderTemplate(path, title, now))
+  router.register('memory:attach', ({ name, data }) => service.attach(name, data))
+  router.register('memory:attachment', ({ target, from }) => service.attachment(target, from))
 }

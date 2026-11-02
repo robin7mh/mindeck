@@ -27,7 +27,7 @@ export function ProjectListItem({
       className={cn(
         'group relative w-full rounded-md border px-3 py-2.5 text-left transition-colors',
         active
-          ? 'border-cyan/40 bg-cyan/[0.06]'
+          ? 'border-cyan/40 bg-cyan/6'
           : 'border-hud/50 bg-surface/40 hover:border-hud-strong/60'
       )}
     >
@@ -55,7 +55,7 @@ export function ProjectListItem({
         {project.stack?.frameworks.slice(0, 2).map((f) => (
           <span
             key={f}
-            className="rounded border border-hud/60 bg-elevated/40 px-1.5 py-px font-mono text-[9px] text-text-muted"
+            className="rounded-sm border border-hud/60 bg-elevated/40 px-1.5 py-px font-mono text-[9px] text-text-muted"
           >
             {f}
           </span>

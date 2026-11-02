@@ -1,6 +1,7 @@
 import type { Effort, InlineCompleteRequest, InlineDelta, InlineEditRequest } from '@shared/types/ai'
 import type { AiService } from './AiService'
 import { aiError } from './llm'
+import type { CallContext } from '../../../ipc/router'
 
 const COMPLETE_SYSTEM = `You are the code completion engine of the Mindeck editor. You get one file with a <CURSOR/> marker where the user is typing.
 
@@ -70,12 +71,16 @@ export class InlineService {
     }
   }
 
-  /** The new text for the selection; what is written so far goes out as `ai:inlineDelta`. */
-  async edit(req: InlineEditRequest): Promise<string> {
+  /**
+   * The new text for the selection; what is written so far goes out as
+   * `ai:inlineDelta` — to the paired device that asked (`ctx`) only, it is its code.
+   */
+  async edit(req: InlineEditRequest, ctx?: CallContext): Promise<string> {
     const model = await this.deps.ai.model()
     const file = fileBlock(req.path, req.language, `${req.before}<SELECTION>${req.selection}</SELECTION>${req.after}`)
+    const device = ctx?.transport === 'remote' ? { device: ctx.deviceId ?? '' } : {}
     const text = await this.run(req.requestId, model, 'medium', EDIT_SYSTEM, `${file}\n\n<instruction>\n${req.instruction}\n</instruction>`, EDIT_TOKENS, (delta) =>
-      this.deps.publish({ requestId: req.requestId, text: delta }), 'edit'
+      this.deps.publish({ requestId: req.requestId, text: delta, ...device }), 'edit'
     )
     return unfence(text)
   }

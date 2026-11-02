@@ -87,6 +87,19 @@ export interface LspCodeFix {
   files: LspFileEdits[]
 }
 
+/** A symbol of a file (a class, a function, a heading …) — LSP's DocumentSymbol, for the outline. */
+export interface LspSymbol {
+  name: string
+  detail?: string
+  /** LSP's SymbolKind (1 file … 26 type parameter). */
+  kind: number
+  /** All of it. */
+  range: LspRange
+  /** Its name. */
+  selection: LspRange
+  children: LspSymbol[]
+}
+
 export interface LspRename {
   /** Why the symbol can't be renamed. */
   error?: string

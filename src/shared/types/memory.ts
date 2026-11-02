@@ -29,6 +29,7 @@ export interface VaultStatus {
   exists: boolean
   noteCount: number
   graphStyle: GraphStyle
+  dailyNotes: DailyNotesSettings
 }
 
 /** Vault-relative POSIX path, e.g. `Projekte/Mindeck.md`. Identity in the UI. */
@@ -84,7 +85,53 @@ export interface MemoryGraph {
 export interface SearchHit {
   path: NotePath
   title: string
+  /** The best stretch of the note (whitespace collapsed, `…` where cut). */
   snippet: string
+  /** [from, to) of each match within `snippet`. */
+  matches?: [number, number][]
+  /** [from, to) of each match within `title`. */
+  titleMatches?: [number, number][]
+}
+
+/** Daily notes: one note per day, `YYYY-MM-DD.md` in `folder`, started from `template`. */
+export interface DailyNotesSettings {
+  /** Vault-relative folder ('' = the vault root). */
+  folder: string
+  /** Vault-relative path of the template note ('' = start empty). */
+  template: string
+}
+
+export const DEFAULT_DAILY_NOTES: DailyNotesSettings = { folder: 'Daily', template: '' }
+
+/** Where templates live (Obsidian's core plugin default). */
+export const TEMPLATES_FOLDER = 'Templates'
+/** Where pasted and dropped files go. */
+export const ATTACHMENTS_FOLDER = 'attachments'
+
+/** Pictures a note can show inline (`![[x.png]]`, `![](x.png)`). */
+export const IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'bmp', 'svg'] as const
+
+/** Files that sit next to notes and are linked, not notes themselves. */
+const ATTACHMENT_EXTS = new Set<string>([...IMAGE_EXTS, 'heic', 'tif', 'tiff', 'pdf', 'mp3', 'wav', 'm4a', 'ogg', 'flac', 'mp4', 'mov', 'webm', 'mkv', 'zip', 'csv', 'canvas'])
+
+/** `[[bild.png]]` points at an attachment, `[[Notiz]]` / `[[v1.2 Plan]]` at a note. */
+export function isAttachmentTarget(target: string): boolean {
+  const m = /\.([a-z0-9]+)$/i.exec(target.trim())
+  return !!m && ATTACHMENT_EXTS.has(m[1].toLowerCase())
+}
+
+/** `bild.PNG` → a picture Mindeck shows inline. */
+export function isImageTarget(target: string): boolean {
+  const m = /\.([a-z0-9]+)$/i.exec(target.trim())
+  return !!m && (IMAGE_EXTS as readonly string[]).includes(m[1].toLowerCase())
+}
+
+/** A vault file for the renderer: a picture as a data: URL. */
+export interface VaultAttachment {
+  /** Vault-relative path. */
+  path: string
+  mime: string
+  dataUrl: string
 }
 
 /** Pushed after any vault change (Mindeck's own writes or external edits). */

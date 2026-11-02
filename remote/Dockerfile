@@ -16,6 +16,9 @@ RUN npm ci --no-audit --no-fund
 COPY . .
 ARG MINDECK_CLOUD_URL=
 ARG MINDECK_CLOUD_KEY=
+# The one server build that may follow the desktop's license (MINDECK_LICENSE=follower,
+# set by the desktop when it starts it) — see electron/main/services/cloud/config.ts.
+ENV MINDECK_FOLLOWER_BUILD=1
 RUN npm run web:build && npm run server:build && npm prune --omit=dev \
   # Renderer-only packages: bundled into out/web already.
   && rm -rf node_modules/monaco-editor node_modules/react node_modules/react-dom node_modules/framer-motion \

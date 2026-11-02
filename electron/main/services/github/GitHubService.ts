@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process'
 import type {
   CheckState,
+  GitHubOwners,
   GitHubStatus,
   MergeMethod,
   PullCreate,
@@ -10,12 +11,16 @@ import type {
   PullFileDiff,
   PullFilter,
   PullListState,
+  PublishRepo,
   PullSummary,
   ReviewAction,
   ReviewDecision
 } from '@shared/types/github'
+import type { ScmStatus } from '@shared/types/scm'
 import { shellCommand, shellEnv, shellQuote } from '../terminal/TerminalService'
 import { shellArgs } from '../../lib/shellArgs'
+import { spawnProgram } from '../../lib/executables'
+import { overrideEnv, untrustedOverrides } from '../../lib/git'
 
 function coded(code: string, message: string): Error {
   return Object.assign(new Error(message), { code })
@@ -27,18 +32,19 @@ export interface GhResult {
   stderr: string
 }
 
-/** Runs `gh <args>` in a folder (stdin = input). */
-export type GhRunner = (args: string[], cwd: string, input?: string) => Promise<GhResult>
+/** Runs `gh <args>` in a folder (stdin = input, `env` added to the user's). */
+export type GhRunner = (args: string[], cwd: string, input?: string, env?: Record<string, string>) => Promise<GhResult>
 
 const TIMEOUT_MS = 120_000
 
 /** A program (gh) started from the user's login shell (their PATH), never prompting; killed after `timeoutMs`. */
 export const shellRunner =
   (program: string, timeoutMs = TIMEOUT_MS): GhRunner =>
-  (args, cwd, input) =>
+  (args, cwd, input, extra) =>
     new Promise((resolve) => {
       const env = {
         ...shellEnv(),
+        ...extra,
         GH_PROMPT_DISABLED: '1',
         GH_NO_UPDATE_NOTIFIER: '1',
         GH_PAGER: 'cat',
@@ -46,12 +52,13 @@ export const shellRunner =
         CLICOLOR: '0'
       }
       const proc =
-        process.platform === 'win32' ? spawn(program, args, { cwd, env, windowsHide: true }) : spawn(shellCommand().file, shellArgs([program, ...args].map(shellQuote).join(' ')), { cwd, env })
+        // Windows: gh from the PATH by its full path (spawnProgram) — never a gh.exe in the project folder.
+        process.platform === 'win32' ? spawnProgram(program, args, { cwd, env }) : spawn(shellCommand().file, shellArgs([program, ...args].map(shellQuote).join(' ')), { cwd, env })
       const out: Buffer[] = []
       const err: Buffer[] = []
       const timer = setTimeout(() => proc.kill(), timeoutMs)
-      proc.stdout.on('data', (d: Buffer) => out.push(d))
-      proc.stderr.on('data', (d: Buffer) => err.push(d))
+      proc.stdout!.on('data', (d: Buffer) => out.push(d))
+      proc.stderr!.on('data', (d: Buffer) => err.push(d))
       proc.on('error', (e) => {
         clearTimeout(timer)
         resolve({ code: 127, stdout: '', stderr: e.message })
@@ -65,8 +72,8 @@ export const shellRunner =
         })
       })
       // gh may exit before reading its input (EPIPE): the exit code reports it, not an uncaught 'error'.
-      proc.stdin.on('error', () => {})
-      proc.stdin.end(input ?? '')
+      proc.stdin!.on('error', () => {})
+      proc.stdin!.end(input ?? '')
     })
 
 /** The user's own gh. */
@@ -74,8 +81,12 @@ export const loginShellGh = shellRunner('gh')
 
 export interface GitHubOptions {
   resolveRoot: (projectId: string) => string | undefined
+  /** Whether a project folder is trusted (WorkspaceTrust): else the git gh runs (checkout, push) gets the untrusted overrides. */
+  trusted?: (dir: string) => boolean
   /** How gh runs (loginShellGh). */
   gh: GhRunner
+  /** The project's git state (ScmService.status): publishing needs a commit and no `origin` yet. */
+  scm: (projectId: string) => Promise<ScmStatus>
 }
 
 /** gh's JSON for one pull request (the fields Mindeck asks for). */
@@ -326,6 +337,28 @@ export class GitHubService {
     return { number: Number(/\/pull\/(\d+)/.exec(url)?.[1] ?? 0), url }
   }
 
+  /** Where a new repository can go. Organizations need gh's `read:org` scope — without it, only the account. */
+  async owners(projectId: string): Promise<GitHubOwners> {
+    const root = this.root(projectId)
+    const [user, orgs] = await Promise.all([this.run(root, ['api', 'user', '--jq', '.login']), this.run(root, ['api', 'user/orgs', '--jq', '.[].login']).catch(() => '')])
+    return { user: user.trim(), orgs: orgs.split('\n').filter(Boolean) }
+  }
+
+  /**
+   * VS Code's "Publish to GitHub": a new repository under the account or an
+   * organization, added as `origin`, the current branch pushed to it.
+   */
+  async publish(projectId: string, repo: PublishRepo): Promise<{ nameWithOwner: string; url: string }> {
+    const root = this.root(projectId)
+    const status = await this.opts.scm(projectId)
+    if (!status.head) throw coded('no-commits', 'Commit something first — there is nothing to push yet')
+    if (status.remotes?.includes('origin')) throw coded('has-remote', 'This repository already has a remote "origin"')
+    const args = ['repo', 'create', repo.owner ? `${repo.owner}/${repo.name}` : repo.name, repo.private ? '--private' : '--public', '--source=.', '--remote=origin', '--push']
+    if (repo.description) args.push(`--description=${repo.description}`)
+    await this.run(root, args)
+    return JSON.parse(await this.run(root, ['repo', 'view', '--json', 'nameWithOwner,url'])) as { nameWithOwner: string; url: string }
+  }
+
   async merge(projectId: string, number: number, method: MergeMethod, deleteBranch = false): Promise<void> {
     const args = ['pr', 'merge', String(number), `--${method}`]
     if (deleteBranch) args.push('--delete-branch')
@@ -356,7 +389,9 @@ export class GitHubService {
   }
 
   private async run(cwd: string, args: string[], input?: string): Promise<string> {
-    const r = await this.opts.gh(args, cwd, input)
+    // gh runs git (checkout, push): in an untrusted repository with the same overrides as Mindeck's own git.
+    const env = this.opts.trusted?.(cwd) ? undefined : { GIT_CONFIG_PARAMETERS: overrideEnv(await untrustedOverrides(cwd), process.env.GIT_CONFIG_PARAMETERS) }
+    const r = await this.opts.gh(args, cwd, input, env)
     if (r.code === 0) return r.stdout
     const why = r.stderr.trim().split('\n').filter(Boolean).slice(-3).join('\n')
     if (r.code === 127 || /command not found|not recognized|ENOENT/i.test(why)) throw coded('gh-missing', 'The GitHub CLI (gh) is not installed')

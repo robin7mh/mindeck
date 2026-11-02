@@ -1,13 +1,15 @@
 import { useState, type KeyboardEvent, type ReactNode } from 'react'
-import { ArrowDownToLine, ArrowUpFromLine, Check, FileCode2, GitBranch, GitBranchPlus, GitPullRequestCreate, Loader2, Minus, Plus, RefreshCcw, Undo2, X } from 'lucide-react'
-import type { ScmChange, ScmFile } from '@shared/types/scm'
+import { ArrowDownToLine, ArrowUpFromLine, Check, CheckCheck, CircleStop, CloudUpload, FileCode2, GitBranch, GitBranchPlus, GitPullRequestCreate, Loader2, Minus, Play, Plus, RefreshCcw, Undo2, X } from 'lucide-react'
+import type { ScmChange, ScmFile, ScmStatus } from '@shared/types/scm'
 import { Select } from '@/components/ui/Select'
 import { TechLabel } from '@/components/ui/TechLabel'
 import { cn } from '@/lib/cn'
 import { useT } from '@/lib/i18n'
 import { useEditor } from '../store'
-import { useScm } from '../scm'
+import { needsPublish, useScm } from '../scm'
 import { useGitHub } from '../github'
+import { PublishForm } from './PublishForm'
+import { StashSection } from './StashSection'
 
 const LETTER: Record<ScmChange, string> = { modified: 'M', added: 'A', deleted: 'D', renamed: 'R', copied: 'C', untracked: 'U', conflicted: '!' }
 const TONE: Record<ScmChange, string> = {
@@ -20,7 +22,7 @@ const TONE: Record<ScmChange, string> = {
   conflicted: 'text-danger'
 }
 
-const icon = 'flex h-6 w-6 shrink-0 items-center justify-center rounded text-text-muted transition-colors hover:bg-elevated hover:text-text-primary disabled:opacity-40'
+const icon = 'flex h-6 w-6 shrink-0 items-center justify-center rounded-sm text-text-muted transition-colors hover:bg-elevated hover:text-text-primary disabled:opacity-40'
 const syncButton =
   'flex flex-1 items-center justify-center gap-1 rounded-md border border-hud/60 px-2 py-1 font-sans text-[11.5px] text-text-secondary transition-colors hover:border-cyan/50 hover:text-cyan disabled:opacity-40'
 
@@ -34,12 +36,14 @@ function FileRow({ file, section, onDiscard }: { file: ScmFile; section: Section
   const dir = file.path.slice(0, file.path.length - name.length - 1)
   const target = section === 'staged' ? ({ kind: 'staged' } as const) : ({ kind: 'unstaged' } as const)
   const where = section === 'staged' ? t.scm.index : t.scm.workingTree
+  // A conflicted file opens in the editor — its conflicts are resolved there.
+  const show = () => (section === 'conflicts' ? openFile(file.path) : openDiff(file, target, `${name} (${where})`))
   return (
-    <li className="group flex items-center gap-1.5 rounded px-1.5 py-0.5 hover:bg-elevated/50">
+    <li className="group flex items-center gap-1.5 rounded-sm px-1.5 py-0.5 hover:bg-elevated/50">
       <button
         type="button"
         title={`${file.path} · ${t.scm.change[change]}`}
-        onClick={() => void openDiff(file, target, `${name} (${where})`)}
+        onClick={() => void show()}
         className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
       >
         <span className="min-w-0 truncate font-sans text-[12.5px] text-text-primary">{name}</span>
@@ -57,6 +61,10 @@ function FileRow({ file, section, onDiscard }: { file: ScmFile; section: Section
         {section === 'staged' ? (
           <button type="button" aria-label={`${t.scm.unstage}: ${file.path}`} title={t.scm.unstage} className={icon} disabled={!!busy} onClick={() => void unstage([file.path])}>
             <Minus size={13} />
+          </button>
+        ) : section === 'conflicts' ? (
+          <button type="button" aria-label={`${t.conflicts.markResolved}: ${file.path}`} title={t.conflicts.markResolved} className={icon} disabled={!!busy} onClick={() => void stage([file.path])}>
+            <CheckCheck size={13} />
           </button>
         ) : (
           <button type="button" aria-label={`${t.scm.stage}: ${file.path}`} title={t.scm.stage} className={icon} disabled={!!busy} onClick={() => void stage([file.path])}>
@@ -94,14 +102,61 @@ function Group({ title, files, section, actions, onDiscard }: { title: string; f
   )
 }
 
+/** A merge / rebase / cherry-pick / revert that stopped: what it is, abort (asks first), continue once resolved. */
+function OperationBanner({ status, readOnly }: { status: ScmStatus; readOnly: boolean }) {
+  const t = useT()
+  const busy = useScm((s) => s.busy)
+  const [confirm, setConfirm] = useState(false)
+  const op = status.operation!
+  const conflicts = status.files.filter((f) => f.unstaged === 'conflicted').length
+  const label = op.kind === 'rebase' && op.step && op.total ? `${t.operation.kinds.rebase} ${op.step}/${op.total}` : t.operation.kinds[op.kind]
+  return (
+    <div role="status" className="mb-2 space-y-1.5 rounded-md border border-amber/40 bg-amber/[0.07] px-2 py-1.5">
+      <p className="font-sans text-[11.5px] text-text-primary">
+        <span className="font-semibold">{label}</span> · {conflicts ? t.operation.conflicts(conflicts) : t.operation.resolved}
+      </p>
+      {!readOnly &&
+        (confirm ? (
+          <div className="flex items-center gap-1.5">
+            <span className="flex-1 font-sans text-[11px] text-text-secondary">{t.operation.confirmAbort}</span>
+            <button
+              type="button"
+              className={cn(syncButton, 'flex-none border-danger/50 text-danger hover:border-danger hover:text-danger')}
+              onClick={() => {
+                setConfirm(false)
+                void useScm.getState().abortOperation()
+              }}
+            >
+              {t.operation.abort}
+            </button>
+            <button type="button" className={cn(syncButton, 'flex-none')} onClick={() => setConfirm(false)}>
+              {t.common.cancel}
+            </button>
+          </div>
+        ) : (
+          <div className="flex gap-1.5">
+            <button type="button" className={syncButton} disabled={!!busy} onClick={() => setConfirm(true)}>
+              <CircleStop size={12} /> {t.operation.abort}
+            </button>
+            <button type="button" className={syncButton} disabled={!!busy || conflicts > 0} title={conflicts ? t.operation.resolveFirst : undefined} onClick={() => void useScm.getState().continueOperation()}>
+              {busy === 'continue' ? <Loader2 size={12} className="animate-spin" /> : <Play size={12} />} {t.operation.continue}
+            </button>
+          </div>
+        ))}
+    </div>
+  )
+}
+
 /**
  * VS Code's Source Control view: branch, pull / push / fetch, the commit box
  * and the changes — staged, unstaged and conflicts — with stage, unstage,
- * discard and a diff on click. Everything runs on the user's own git.
+ * discard and a diff on click; a merge or rebase in progress (abort /
+ * continue) and the stashes. Everything runs on the user's own git.
  */
-export function ScmPanel() {
+export function ScmPanel({ readOnly = false }: { readOnly?: boolean }) {
   const t = useT()
   const { status, branches, busy, message, amend } = useScm()
+  const publishing = useGitHub((s) => s.publishing)
   const [naming, setNaming] = useState(false)
   const [branchName, setBranchName] = useState('')
   const [confirm, setConfirm] = useState<{ paths: string[]; name: string }>()
@@ -125,6 +180,8 @@ export function ScmPanel() {
   const local = branches.filter((b) => !b.remote)
   const remoteOnly = branches.filter((b) => b.remote && !local.some((l) => b.name.endsWith(`/${l.name}`)))
   const options = [
+    // Before the first commit the branch is no ref yet: git lists nothing, but HEAD is on it.
+    ...(status.branch && !status.head ? [{ value: status.branch, label: status.branch, hint: t.scm.unborn }] : []),
     ...local.map((b) => ({ value: b.name, label: b.name, hint: b.upstream })),
     ...remoteOnly.map((b) => ({ value: b.name, label: b.name, hint: t.scm.remote }))
   ]
@@ -174,7 +231,7 @@ export function ScmPanel() {
                 if (e.key === 'Enter') createBranch()
                 if (e.key === 'Escape') setNaming(false)
               }}
-              className="min-w-0 flex-1 rounded-md border border-hud/60 bg-surface/50 px-2 py-1 font-mono text-[12px] text-text-primary outline-none focus:border-cyan/50"
+              className="min-w-0 flex-1 rounded-md border border-hud/60 bg-surface/50 px-2 py-1 font-mono text-[12px] text-text-primary outline-hidden focus:border-cyan/50"
             />
             <button type="button" className={syncButton} disabled={!branchName.trim()} onClick={createBranch}>
               {t.scm.create}
@@ -186,10 +243,16 @@ export function ScmPanel() {
             {busy === 'pull' ? <Loader2 size={12} className="animate-spin" /> : <ArrowDownToLine size={12} />} {t.scm.pull}
             {status.behind > 0 && <span className="font-mono">{status.behind}</span>}
           </button>
-          <button type="button" className={syncButton} disabled={!!busy} onClick={() => void scm.push()} title={status.upstream ? t.scm.push : t.scm.publish}>
-            {busy === 'push' ? <Loader2 size={12} className="animate-spin" /> : <ArrowUpFromLine size={12} />} {status.upstream ? t.scm.push : t.scm.publish}
-            {status.ahead > 0 && <span className="font-mono">{status.ahead}</span>}
-          </button>
+          {needsPublish(status) ? (
+            <button type="button" className={syncButton} disabled={!!busy} aria-expanded={publishing} onClick={() => useGitHub.getState().setPublishing(!publishing)}>
+              <CloudUpload size={12} /> {t.scm.publishGitHub}
+            </button>
+          ) : (
+            <button type="button" className={syncButton} disabled={!!busy} onClick={() => void scm.push()} title={status.upstream ? t.scm.push : t.scm.publish}>
+              {busy === 'push' ? <Loader2 size={12} className="animate-spin" /> : <ArrowUpFromLine size={12} />} {status.upstream ? t.scm.push : t.scm.publish}
+              {status.ahead > 0 && <span className="font-mono">{status.ahead}</span>}
+            </button>
+          )}
           <button type="button" aria-label={t.scm.fetch} title={t.scm.fetch} className={cn(syncButton, 'flex-none px-2')} disabled={!!busy} onClick={() => void scm.fetch()}>
             <RefreshCcw size={12} className={cn(busy === 'fetch' && 'animate-spin')} />
           </button>
@@ -208,10 +271,11 @@ export function ScmPanel() {
             </button>
           )}
         </div>
+        {publishing && <PublishForm status={status} />}
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto p-2">
-        {status.merging && <p className="mb-2 rounded-md border border-amber/40 bg-amber/[0.07] px-2 py-1.5 font-sans text-[11.5px] text-text-primary">{t.scm.merging}</p>}
+        {status.operation && <OperationBanner status={status} readOnly={readOnly} />}
         <textarea
           aria-label={t.scm.message}
           placeholder={t.scm.message}
@@ -219,14 +283,14 @@ export function ScmPanel() {
           rows={3}
           onChange={(e) => scm.setMessage(e.target.value)}
           onKeyDown={onMessageKey}
-          className="w-full resize-y rounded-md border border-hud/60 bg-surface/50 px-2 py-1.5 font-sans text-[12.5px] text-text-primary outline-none placeholder:text-text-muted focus:border-cyan/50"
+          className="w-full resize-y rounded-md border border-hud/60 bg-surface/50 px-2 py-1.5 font-sans text-[12.5px] text-text-primary outline-hidden placeholder:text-text-muted focus:border-cyan/50"
         />
         <div className="mt-1.5 flex items-center gap-2">
           <button
             type="button"
             disabled={!canCommit}
             onClick={() => void scm.commit()}
-            className="flex flex-1 items-center justify-center gap-1.5 rounded-md border border-cyan/50 bg-cyan/[0.1] px-2 py-1.5 font-sans text-[12px] font-medium text-cyan transition-colors hover:bg-cyan/[0.16] disabled:opacity-40"
+            className="flex flex-1 items-center justify-center gap-1.5 rounded-md border border-cyan/50 bg-cyan/[0.1] px-2 py-1.5 font-sans text-[12px] font-medium text-cyan transition-colors hover:bg-cyan/16 disabled:opacity-40"
           >
             {busy === 'commit' ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} {staged.length || amend ? t.scm.commit : t.scm.commitAll}
           </button>
@@ -237,7 +301,7 @@ export function ScmPanel() {
         </div>
 
         {confirm && (
-          <div role="alertdialog" className="mt-2 space-y-1.5 rounded-md border border-danger/40 bg-danger/[0.06] p-2">
+          <div role="alertdialog" className="mt-2 space-y-1.5 rounded-md border border-danger/40 bg-danger/6 p-2">
             <p className="font-sans text-[11.5px] text-text-primary">{t.scm.confirmDiscard(confirm.name)}</p>
             <div className="flex gap-1.5">
               <button
@@ -286,6 +350,7 @@ export function ScmPanel() {
             </>
           }
         />
+        <StashSection readOnly={readOnly} />
       </div>
     </div>
   )

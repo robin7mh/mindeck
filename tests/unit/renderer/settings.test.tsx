@@ -4,15 +4,18 @@ import { fail, installBridge, installRemote, settle, choose } from './bridge'
 import type { ServerStatus } from '@shared/types/server'
 import type { SystemSnapshot } from '@shared/types/system'
 import type { ProjectContext } from '@shared/types/context'
-import { isLoopback, pairingReachable, pairingUrl, useSettings } from '@/features/settings/store'
+import { canManage, isLoopback, myDeviceId, pairingReachable, pairingUrl, useSettings } from '@/features/settings/store'
 import { SettingsView } from '@/features/settings/components/SettingsView'
 import { SystemView } from '@/features/system/components/SystemView'
 import { ContextSection } from '@/features/projects/components/ContextSection'
 import { useContextStore } from '@/features/context/store'
 import { useAssistant } from '@/features/agents/store'
+import { useComposerPrefs } from '@/features/agents/composerPrefs'
 import { useSession } from '@/features/session/store'
-import { codeFromHash, PairScreen } from '@/features/session/components/PairScreen'
+import { linkFromHash, PairScreen } from '@/features/session/components/PairScreen'
+import { formatFingerprint, normalizeFingerprint, pairingLink, parsePairingLink } from '@shared/ipc/transport'
 import { AppearanceCard } from '@/features/settings/components/AppearanceCard'
+import { BrowserCard } from '@/features/settings/components/BrowserCard'
 import { surfaceTokens, useAppearance } from '@/lib/theme'
 
 const initialSettings = useSettings.getState()
@@ -23,8 +26,14 @@ beforeEach(() => {
   useContextStore.setState({ byProject: {} })
 })
 
+const HEX = 'AB'.repeat(16) + 'CD'.repeat(16)
+const FP = formatFingerprint(HEX)
+/** The public key's fingerprint (stays when the certificate is renewed). */
+const PK_HEX = 'EF'.repeat(32)
+const PK = formatFingerprint(PK_HEX)
+
 const server = (over: Partial<ServerStatus> = {}): ServerStatus => ({
-  config: { enabled: true, lan: false, port: 7420, remoteTerminal: false },
+  config: { enabled: true, lan: false, tls: true, port: 7420, remoteTerminal: false, remoteRoots: [] },
   running: true,
   urls: ['http://127.0.0.1:7420'],
   configurable: true,
@@ -36,10 +45,13 @@ function settingsCore(over: Record<string, (p: never) => unknown> = {}) {
     'agents:detect': () => [],
     'server:status': () => server(),
     'server:devices': () => [
-      { id: 'd1', name: 'Pixel Phone', createdAt: new Date().toISOString(), lastSeenAt: new Date().toISOString() },
-      { id: 'd2', name: 'Chrome · macOS', createdAt: new Date().toISOString() }
+      { id: 'd1', name: 'Pixel Phone', role: 'member', createdAt: new Date().toISOString(), lastSeenAt: new Date().toISOString() },
+      { id: 'd2', name: 'Chrome · macOS', role: 'member', createdAt: new Date().toISOString() }
     ],
     'permission:grants': () => [{ agentId: 'assistant', toolName: 'memory_create_note', createdAt: '' }],
+    'server:setDeviceRole': ({ id, role }: { id: string; role: string }) => [
+      { id: 'd2', name: 'Chrome · macOS', role: id === 'd2' ? role : 'member', createdAt: new Date().toISOString() }
+    ],
     'server:configure': (patch: Record<string, unknown>) => server({ config: { ...server().config, ...patch } as never }),
     'server:createPairingCode': () => ({ code: 'ABCD-EFGH', expiresAt: '', urls: ['http://127.0.0.1:7420', 'http://192.168.1.9:7420'] }),
     'server:revokeDevice': () => undefined,
@@ -69,6 +81,14 @@ describe('settings store', () => {
     for (const origin of ['http://localhost:5173', 'http://127.0.0.1:7420', 'http://[::1]:7420']) {
       expect(pairingUrl('X', lan, origin)).toBe('http://192.168.1.9:7420/#pair=X')
     }
+    // Over HTTPS the link names the certificate; over HTTP there is none to name.
+    const tls = ['http://127.0.0.1:7420', 'https://192.168.1.9:7420']
+    expect(pairingUrl('X', tls, undefined, true, FP)).toBe(`https://192.168.1.9:7420/#pair=X&fp=${HEX.toLowerCase()}`)
+    expect(pairingUrl('X', tls, 'https://nas.local:7420', false, FP)).toBe(`https://nas.local:7420/#pair=X&fp=${HEX.toLowerCase()}`)
+    expect(pairingUrl('X', lan, undefined, true, FP)).toBe('http://192.168.1.9:7420/#pair=X')
+    // …and its public key, which stays the same when the core renews the certificate.
+    expect(pairingUrl('X', tls, undefined, true, FP, PK)).toBe(`https://192.168.1.9:7420/#pair=X&fp=${HEX.toLowerCase()}&pk=${PK_HEX.toLowerCase()}`)
+    expect(pairingUrl('X', lan, undefined, true, FP, PK)).toBe('http://192.168.1.9:7420/#pair=X')
   })
 
   it('knows when a phone could reach the core at all', () => {
@@ -111,6 +131,29 @@ describe('settings store', () => {
     expect(s()).toMatchObject({ busy: false, error: 'port busy' })
   })
 
+  it('knows who may manage devices: the desktop window, or an admin device', () => {
+    const devices = [{ id: 'me', name: 'x', role: 'admin' as const, createdAt: '' }, { id: 'other', name: 'y', role: 'member' as const, createdAt: '' }]
+    expect(canManage(devices, true, null)).toBe(true)
+    expect(canManage(devices, false, 'me')).toBe(true)
+    expect(canManage(devices, false, 'other')).toBe(false)
+    expect(canManage(devices, false, null)).toBe(false)
+    localStorage.setItem('mindeck.deviceId', 'me')
+    expect(myDeviceId()).toBe('me')
+    const get = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new Error('blocked')
+    })
+    expect(myDeviceId()).toBeNull()
+    get.mockRestore()
+    localStorage.removeItem('mindeck.deviceId')
+  })
+
+  it('loads without the projects when they can\'t be listed', async () => {
+    installBridge(settingsCore({ 'projects:list': () => fail('busy') }))
+    await useSettings.getState().load()
+    expect(useSettings.getState().projects).toEqual([])
+    expect(useSettings.getState().devices).toHaveLength(2)
+  })
+
   it('loads, configures, pairs (with a QR code), revokes; reports failures', async () => {
     installBridge(settingsCore())
     const s = () => useSettings.getState()
@@ -120,6 +163,9 @@ describe('settings store', () => {
     await s().configureServer({ lan: true })
     expect(s().server?.config.lan).toBe(true)
     await s().createPairing()
+    expect(window.mindeck!.invoke).toHaveBeenLastCalledWith('server:createPairingCode', {})
+    await s().createPairing('admin')
+    expect(window.mindeck!.invoke).toHaveBeenLastCalledWith('server:createPairingCode', { role: 'admin' })
     expect(s().pairing).toMatchObject({ code: 'ABCD-EFGH', url: expect.stringContaining('#pair=ABCD-EFGH') })
     expect(s().pairing!.qr).toContain('<svg')
     s().closePairing()
@@ -127,12 +173,19 @@ describe('settings store', () => {
     await settle() // closing reloads the device list
     await s().revokeDevice('d1')
     expect(s().devices.map((d) => d.id)).toEqual(['d2'])
-    await s().revokeGrant('assistant', 'memory_create_note')
+    await s().setDeviceRole('d2', 'admin')
+    expect(s().devices).toEqual([expect.objectContaining({ id: 'd2', role: 'admin' })])
+    await s().revokeGrant(s().grants[0])
+    expect(window.mindeck!.invoke).toHaveBeenLastCalledWith('permission:revoke', { agentId: 'assistant', toolName: 'memory_create_note' })
     expect(s().grants).toEqual([])
+    useSettings.setState({ grants: [{ agentId: 'claude-code', toolName: 'Write', projectId: 'p1', createdAt: '' }] })
+    await s().revokeGrant(s().grants[0])
+    expect(window.mindeck!.invoke).toHaveBeenLastCalledWith('permission:revoke', { agentId: 'claude-code', toolName: 'Write', projectId: 'p1' })
+    expect(s().projects).toEqual([]) // the bridge had no projects:list
 
     installBridge(
       Object.fromEntries(
-        ['server:status', 'server:configure', 'server:createPairingCode', 'server:revokeDevice', 'permission:revoke'].map((ch) => [ch, () => fail(`${ch} failed`)])
+        ['server:status', 'server:configure', 'server:createPairingCode', 'server:revokeDevice', 'server:setDeviceRole', 'permission:revoke'].map((ch) => [ch, () => fail(`${ch} failed`)])
       )
     )
     for (const [run, text] of [
@@ -140,7 +193,8 @@ describe('settings store', () => {
       [() => s().configureServer({}), 'server:configure failed'],
       [() => s().createPairing(), 'server:createPairingCode failed'],
       [() => s().revokeDevice('x'), 'server:revokeDevice failed'],
-      [() => s().revokeGrant('a', 't'), 'permission:revoke failed']
+      [() => s().setDeviceRole('x', 'admin'), 'server:setDeviceRole failed'],
+      [() => s().revokeGrant({ agentId: 'a', toolName: 't', createdAt: '' }), 'permission:revoke failed']
     ] as const) {
       await run()
       expect(s()).toMatchObject({ error: text, busy: false })
@@ -168,6 +222,47 @@ describe('SettingsView', () => {
     await act(settle)
     expect(detect).toHaveBeenCalledTimes(2)
     expect(screen.queryByText('Codex')).toBeNull()
+  })
+
+  it('the composer\'s send key and pushes to the phone (with a Mindeck account)', async () => {
+    const setPush = vi.fn(({ enabled }: { enabled: boolean }) => ({ enabled, signedIn: true }))
+    installBridge(settingsCore({ 'agents:pushSettings': () => ({ enabled: true, signedIn: true }), 'agents:setPushSettings': setPush }))
+    render(<SettingsView />)
+    await act(settle)
+    const push = screen.getByRole('switch', { name: 'Notifications on your phone' })
+    expect(push).toBeChecked()
+    fireEvent.click(push)
+    await act(settle)
+    expect(setPush).toHaveBeenCalledWith({ enabled: false })
+    expect(push).not.toBeChecked()
+    const mod = screen.getByRole('switch', { name: '⌘/Ctrl+Enter sends' })
+    fireEvent.click(mod)
+    expect(useComposerPrefs.getState().sendKey).toBe('mod-enter')
+    fireEvent.click(mod)
+    expect(useComposerPrefs.getState().sendKey).toBe('enter')
+  })
+
+  it('pushes need a Mindeck account; a failing core changes nothing', async () => {
+    installBridge(settingsCore({ 'agents:pushSettings': () => ({ enabled: true, signedIn: false }) }))
+    const { unmount } = render(<SettingsView />)
+    await act(settle)
+    expect(screen.getByRole('switch', { name: 'Notifications on your phone' })).toBeDisabled()
+    expect(screen.getByRole('switch', { name: 'Notifications on your phone' })).not.toBeChecked()
+    expect(screen.getByText(/Sign in to your Mindeck account to get them/)).toBeInTheDocument()
+    unmount()
+
+    installBridge(settingsCore({ 'agents:pushSettings': () => ({ enabled: true, signedIn: true }), 'agents:setPushSettings': () => fail('core down') }))
+    const second = render(<SettingsView />)
+    await act(settle)
+    fireEvent.click(screen.getByRole('switch', { name: 'Notifications on your phone' }))
+    await act(settle)
+    expect(screen.getByRole('switch', { name: 'Notifications on your phone' })).toBeChecked()
+    second.unmount()
+
+    installBridge(settingsCore({ 'agents:pushSettings': () => fail('core down') }))
+    render(<SettingsView />)
+    await act(settle)
+    expect(screen.queryByRole('switch', { name: 'Notifications on your phone' })).toBeNull()
   })
 
   it('pairing without the LAN explains itself; switching the LAN on brings the QR code (same code)', async () => {
@@ -202,6 +297,53 @@ describe('SettingsView', () => {
     fireEvent.click(screen.getByLabelText('Allow remote shells'))
     await act(settle)
     expect(useSettings.getState().pairing).toBeUndefined()
+  })
+
+  it('HTTPS on the network: the switch, the certificate, a warning without it; the pairing names the certificate', async () => {
+    const tls = { fingerprint: FP, spkiFingerprint: PK, expiresAt: '2028-10-14T12:00:00.000Z', selfSigned: true }
+    const status = (config: ServerStatus['config']) =>
+      server({ config, urls: ['http://127.0.0.1:7420', `${config.tls ? 'https' : 'http'}://192.168.1.9:7420`], ...(config.tls ? { tls } : {}) })
+    installBridge(
+      settingsCore({
+        'server:status': () => status({ ...server().config, lan: true }),
+        'server:createPairingCode': () => ({ code: 'WXYZ-2345', expiresAt: '', urls: ['http://127.0.0.1:7420', 'https://192.168.1.9:7420'], fingerprint: FP, spkiFingerprint: PK }),
+        'server:configure': (patch: Record<string, unknown>) => status({ ...server().config, lan: true, ...patch })
+      })
+    )
+    render(<SettingsView />)
+    await act(settle)
+    expect(screen.getByText('Certificate (SHA-256)')).toBeInTheDocument()
+    expect(screen.getByText(FP)).toBeInTheDocument()
+    expect(screen.getByText(/Self-signed by this core · valid until/)).toBeInTheDocument()
+    expect(screen.getByRole('switch', { name: 'Encrypted (HTTPS)' })).toBeEnabled()
+    expect(screen.queryByText(/Unencrypted:/)).toBeNull()
+
+    fireEvent.click(screen.getByText('Pair a device'))
+    await act(settle)
+    expect(screen.getByText(`https://192.168.1.9:7420/#pair=WXYZ-2345&fp=${HEX.toLowerCase()}&pk=${PK_HEX.toLowerCase()}`)).toBeInTheDocument()
+    expect(screen.getByText(/Continue only if the certificate’s SHA-256 fingerprint is this one/)).toBeInTheDocument()
+    expect(screen.getAllByText(FP)).toHaveLength(2)
+
+    // Off: plain HTTP, a warning, and the open pairing follows (no certificate to name).
+    fireEvent.click(screen.getByRole('switch', { name: 'Encrypted (HTTPS)' }))
+    await act(settle)
+    expect(window.mindeck!.invoke).toHaveBeenLastCalledWith('server:configure', { tls: false })
+    expect(screen.getByText(/Unencrypted: pairing codes and device tokens cross the network in the clear/)).toBeInTheDocument()
+    expect(screen.queryByText('Certificate (SHA-256)')).toBeNull()
+    expect(screen.getByText('http://192.168.1.9:7420/#pair=WXYZ-2345')).toBeInTheDocument()
+    expect(screen.queryByText(/Continue only if/)).toBeNull()
+
+    // And on again: the link names the certificate (and its key) once more.
+    fireEvent.click(screen.getByRole('switch', { name: 'Encrypted (HTTPS)' }))
+    await act(settle)
+    expect(screen.getByText(`https://192.168.1.9:7420/#pair=WXYZ-2345&fp=${HEX.toLowerCase()}&pk=${PK_HEX.toLowerCase()}`)).toBeInTheDocument()
+  })
+
+  it('an own certificate from the environment is named as such', async () => {
+    installRemote(settingsCore({ 'server:status': () => server({ configurable: false, tls: { fingerprint: FP, spkiFingerprint: PK, expiresAt: '2027-01-01T00:00:00.000Z', selfSigned: false } }) }))
+    render(<SettingsView />)
+    await act(settle)
+    expect(screen.getByText(/Own certificate · valid until/)).toBeInTheDocument()
   })
 
   it('AI through the Mindeck account: credit, its model (Sonnet costs more), a key of one’s own wins; suggestions need one', async () => {
@@ -252,6 +394,10 @@ describe('SettingsView', () => {
     expect(screen.getByRole('meter', { name: 'AI credit' }).firstElementChild).toHaveClass('bg-cyan')
     expect(screen.getByText('Your own API key is set: the assistant uses it instead of this credit.')).toBeInTheDocument()
     expect(screen.getByLabelText('Suggestions while typing')).toBeEnabled()
+    expect(screen.queryByText(/switched off for your account/)).not.toBeInTheDocument()
+    // An admin switched the cloud AI off for this account.
+    act(() => useAssistant.setState({ status: cloudStatus({ cloud: { ...cloudStatus().cloud, blocked: true } }) as never }))
+    expect(screen.getByRole('status')).toHaveTextContent('The AI through Mindeck Cloud is switched off for your account')
     // No credit included at all (a cloud set to 0 €): the meter is full.
     act(() => useAssistant.setState({ status: cloudStatus({ cloud: { ...cloudStatus().cloud, credit: credit({ allowanceCents: 0, usedCents: 0 }) } }) as never }))
     expect(screen.getByRole('meter', { name: 'AI credit' })).toHaveAttribute('aria-valuenow', '100')
@@ -260,6 +406,19 @@ describe('SettingsView', () => {
     expect(screen.getByText('Through your Mindeck account · claude-old-1')).toBeInTheDocument()
     act(() => useAssistant.setState({ status: cloudStatus({ cloud: null }) as never }))
     expect(screen.getByText('Through your Mindeck account · claude-haiku-5-5')).toBeInTheDocument()
+  })
+
+  it('a key that isn\'t taken stays in the field; a credit that can\'t be read keeps the last one', async () => {
+    installBridge(settingsCore({ 'ai:status': () => fail('offline'), 'ai:setKey': () => fail('invalid key') }))
+    useAssistant.setState({ status: { configured: true, model: 'claude-opus-5-5', cloud: null, source: 'stored', keyHint: 'ABCD', settings: { model: 'claude-opus-5-5', effort: 'high', inline: false, inlineModel: 'claude-opus-5-5', cloudModel: 'claude-haiku-5-5' } } })
+    useSession.setState({ info: { mode: 'desktop', version: '1.2.3', platform: 'darwin', hostname: 'mac', remoteTerminal: false } })
+    render(<SettingsView />)
+    await act(settle)
+    expect(screen.getByText('Anthropic key stored · …ABCD')).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('New API key'), { target: { value: 'sk-bad' } })
+    fireEvent.click(screen.getByText('Save'))
+    await act(settle)
+    expect(screen.getByLabelText('New API key')).toHaveValue('sk-bad')
   })
 
   it('desktop: AI key + model, server toggles, pairing, devices, grants, vault, about', async () => {
@@ -309,11 +468,16 @@ describe('SettingsView', () => {
     fireEvent.blur(port)
     await act(settle)
 
-    // pairing + devices
+    // pairing (as admin) + devices and their roles
     act(() => useSettings.setState({ server: server() }))
+    fireEvent.click(screen.getByLabelText('Pair as admin'))
     fireEvent.click(screen.getByText('Pair a device'))
     await act(settle)
+    expect(window.mindeck!.invoke).toHaveBeenCalledWith('server:createPairingCode', { role: 'admin' })
     expect(screen.getByText('ABCD-EFGH')).toBeInTheDocument()
+    expect(screen.queryByText('For an admin device')).toBeNull() // the fake core answered a member code
+    act(() => useSettings.setState({ pairing: { ...useSettings.getState().pairing!, role: 'admin' } }))
+    expect(screen.getByText('For an admin device')).toBeInTheDocument()
     expect(screen.getByLabelText('Pairing QR code').innerHTML).toContain('<svg')
     fireEvent.click(screen.getByLabelText('Close pairing'))
     expect(screen.queryByText('ABCD-EFGH')).toBeNull()
@@ -322,12 +486,12 @@ describe('SettingsView', () => {
     fireEvent.click(screen.getByLabelText('Revoke Pixel Phone'))
     await act(settle)
     expect(screen.queryByText('Pixel Phone')).toBeNull()
+    choose('Role of Chrome · macOS', 'Admin')
+    await act(settle)
+    expect(useSettings.getState().devices[0].role).toBe('admin')
 
     // grants
     expect(screen.getByText('assistant → memory_create_note')).toBeInTheDocument()
-    fireEvent.click(screen.getByLabelText('Revoke assistant memory_create_note'))
-    await act(settle)
-    expect(screen.getByText('No standing permissions')).toBeInTheDocument()
 
     // vault (desktop: native picker)
     expect(screen.getByText('/v')).toBeInTheDocument()
@@ -343,10 +507,92 @@ describe('SettingsView', () => {
     useSession.setState({ info: undefined })
   })
 
+  it('desktop: shared folders for paired devices', async () => {
+    installBridge(settingsCore())
+    render(<SettingsView />)
+    await act(settle)
+    // shared folders: added through the folder browser, removed with a click (a core from before has none)
+    act(() => useSettings.setState({ server: server({ config: { ...server().config, remoteRoots: undefined as never } }) }))
+    expect(screen.getByText('None — only the projects added here')).toBeInTheDocument()
+    fireEvent.click(screen.getByText('Add folder…'))
+    fireEvent.click(await screen.findByText('Share'))
+    await act(settle)
+    expect(useSettings.getState().server?.config.remoteRoots).toEqual(['/srv/notes'])
+    fireEvent.click(screen.getByText('Add folder…'))
+    fireEvent.click(await screen.findByText('Share')) // already shared: nothing changes
+    await act(settle)
+    fireEvent.click(screen.getByText('Add folder…'))
+    fireEvent.click(await screen.findByLabelText('Close'))
+    fireEvent.click(screen.getByLabelText('Stop sharing /srv/notes'))
+    await act(settle)
+    expect(useSettings.getState().server?.config.remoteRoots).toEqual([])
+
+  })
+
+  it('desktop: what each grant holds for, revoked one by one', async () => {
+    installBridge(settingsCore())
+    render(<SettingsView />)
+    await act(settle)
+    act(() =>
+      useSettings.setState({
+        projects: [{ id: 'p1', name: 'Shop', path: '/p', addedAt: '', lastSeenAt: '' }],
+        grants: [
+          { agentId: 'assistant', toolName: 'memory_create_note', createdAt: '' },
+          { agentId: 'claude-code', toolName: 'Write', projectId: 'p1', createdAt: '' },
+          { agentId: 'claude-code', toolName: 'Edit', projectId: 'gone', createdAt: '' },
+          { agentId: 'claude-code', toolName: 'Bash', projectId: '*', createdAt: '' }
+        ]
+      })
+    )
+    expect(screen.getByText('assistant → memory_create_note')).toBeInTheDocument()
+    expect(screen.getByText('Outside projects')).toBeInTheDocument()
+    expect(screen.getByText('Shop')).toBeInTheDocument()
+    expect(screen.getByText('A removed project')).toBeInTheDocument()
+    expect(screen.getByText('All projects (from before grants were per project)')).toHaveClass('text-amber')
+    for (const label of ['assistant memory_create_note · Outside projects', 'claude-code Write · Shop', 'claude-code Edit · A removed project', 'claude-code Bash · All projects (from before grants were per project)']) {
+      fireEvent.click(screen.getByLabelText(`Revoke ${label}`))
+      await act(settle)
+    }
+    expect(screen.getByText('No standing permissions')).toBeInTheDocument()
+
+  })
+
+  it('in a browser: an admin device manages devices; a member removes only itself and sees the grants', async () => {
+    const devices = (meRole: 'admin' | 'member') => [
+      { id: 'me', name: 'This laptop', role: meRole, createdAt: new Date().toISOString() },
+      { id: 'phone', name: 'Pixel Phone', role: 'member' as const, createdAt: new Date().toISOString() }
+    ]
+    localStorage.setItem('mindeck.deviceId', 'me')
+    const remote = installRemote(settingsCore({ 'server:devices': () => devices('admin') }))
+    useSession.setState({ info: { mode: 'server', version: '1', platform: 'linux', hostname: 'nas', remoteTerminal: false } })
+    const { unmount } = render(<SettingsView />)
+    await act(settle)
+    expect(screen.getByText('Pair a device')).toBeInTheDocument()
+    expect(screen.getByLabelText('Pair as admin')).toBeInTheDocument()
+    expect(screen.getByRole('combobox', { name: 'Role of Pixel Phone' })).toBeInTheDocument()
+    expect(screen.getByLabelText('Revoke Pixel Phone')).toBeInTheDocument()
+    expect(screen.getByLabelText('Revoke assistant memory_create_note · Outside projects')).toBeInTheDocument()
+    unmount()
+
+    remote.routes['server:devices'] = () => devices('member')
+    render(<SettingsView />)
+    await act(settle)
+    expect(screen.queryByText('Pair a device')).toBeNull()
+    expect(screen.queryByLabelText('Pair as admin')).toBeNull()
+    expect(screen.queryByRole('combobox', { name: 'Role of Pixel Phone' })).toBeNull()
+    expect(screen.getAllByText('Member')).toHaveLength(2)
+    expect(screen.queryByLabelText('Revoke Pixel Phone')).toBeNull()
+    expect(screen.getByLabelText('Revoke This laptop')).toBeInTheDocument() // unpairing itself
+    expect(screen.getByText('assistant → memory_create_note')).toBeInTheDocument()
+    expect(screen.queryByLabelText(/Revoke assistant/)).toBeNull()
+    localStorage.removeItem('mindeck.deviceId')
+    useSession.setState({ info: undefined })
+  })
+
   it('in a browser: server settings are read-only, vault via folder browser, errors show', async () => {
     installRemote(
       settingsCore({
-        'server:status': () => server({ configurable: false, running: false, error: 'EADDRINUSE', config: { enabled: true, lan: true, port: 7420, remoteTerminal: true } }),
+        'server:status': () => server({ configurable: false, running: false, error: 'EADDRINUSE', config: { enabled: true, lan: true, tls: true, port: 7420, remoteTerminal: true, remoteRoots: [] } }),
         'server:devices': () => [],
         'memory:setVault': () => fail('That folder does not exist')
       })
@@ -363,7 +609,7 @@ describe('SettingsView', () => {
     expect(screen.getByText(/Remote shells: allowed/)).toBeInTheDocument()
     expect(screen.queryByLabelText('Port')).toBeNull()
     expect(screen.getByText('No devices paired')).toBeInTheDocument()
-    expect(screen.getByText('Pair a device').closest('button')).toBeDisabled()
+    expect(screen.queryByText('Pair a device')).toBeNull() // not an admin device
     expect(screen.getByText('Server')).toBeInTheDocument()
     expect(screen.getByText('Browser (paired)')).toBeInTheDocument()
 
@@ -498,6 +744,9 @@ describe('ContextSection', () => {
     fireEvent.click(screen.getByText('Show fewer'))
     fireEvent.click(screen.getByText('f0.ts:1'))
     expect(bridge.invoke).toHaveBeenCalledWith('projects:openFile', { id: 'p1', file: 'f0.ts', line: 1 })
+    bridge.invoke.mockRejectedValueOnce(new Error('gone')) // a file that went away: nothing to show
+    fireEvent.click(screen.getByText('f0.ts:1'))
+    await act(settle)
     expect(screen.getByText('Reindex')).toBeInTheDocument()
   })
 
@@ -528,12 +777,61 @@ describe('ContextSection', () => {
 describe('pairing link from the QR code', () => {
   it('prefills the code from #pair= and removes it from the URL', () => {
     history.replaceState(null, '', '/#pair=abcd-efgh')
-    expect(codeFromHash()).toBe('ABCD-EFGH')
+    expect(linkFromHash()).toEqual({ code: 'ABCD-EFGH', fingerprint: null })
     expect(location.hash).toBe('')
-    expect(codeFromHash()).toBe('')
+    expect(linkFromHash()).toEqual({ code: '', fingerprint: null })
     history.replaceState(null, '', '/#pair=wxyz2345')
     render(<PairScreen />)
     expect(screen.getByLabelText('Pairing code')).toHaveValue('WXYZ-2345')
+    expect(screen.queryByText('Check the certificate')).toBeNull()
+  })
+
+  it('a broken link (bad percent-encoding) shows an empty form instead of crashing — and is gone from the URL', () => {
+    history.replaceState(null, '', '/#pair=%E0%A4%A')
+    expect(linkFromHash()).toEqual({ code: '', fingerprint: null })
+    expect(location.hash).toBe('')
+    history.replaceState(null, '', '/#pair=%E0%A4%A')
+    render(<PairScreen />)
+    expect(screen.getByLabelText('Pairing code')).toHaveValue('')
+  })
+
+  it('asks to compare the certificate the browser warned about with the fingerprint from the QR code', () => {
+    history.replaceState(null, '', `/#pair=wxyz2345&fp=${HEX.toLowerCase()}`)
+    render(<PairScreen />)
+    expect(location.hash).toBe('')
+    expect(screen.getByLabelText('Pairing code')).toHaveValue('WXYZ-2345')
+    expect(screen.getByText('Check the certificate')).toBeInTheDocument()
+    expect(screen.getByLabelText('Check the certificate')).toHaveTextContent(FP)
+    expect(screen.getByText(/compare its SHA-256 fingerprint/)).toBeInTheDocument()
+    // A damaged fingerprint is none.
+    history.replaceState(null, '', '/#pair=wxyz2345&fp=1234')
+    expect(linkFromHash()).toEqual({ code: 'WXYZ-2345', fingerprint: null })
+  })
+
+  it('links name the core, the code and the certificate — and can be taken apart again (native clients)', () => {
+    expect(normalizeFingerprint(FP)).toBe(HEX)
+    expect(normalizeFingerprint(HEX.toLowerCase().replace(/(..)/g, '$1 '))).toBe(HEX)
+    expect(normalizeFingerprint('AB:CD')).toBeNull()
+    expect(formatFingerprint(HEX.toLowerCase())).toBe(FP)
+    expect(FP).toMatch(/^([0-9A-F]{2}:){31}[0-9A-F]{2}$/)
+    expect(formatFingerprint('nope')).toBe('')
+
+    expect(pairingLink('https://10.0.0.2:7420/', 'ABCD-EFGH', FP)).toBe(`https://10.0.0.2:7420/#pair=ABCD-EFGH&fp=${HEX.toLowerCase()}`)
+    expect(pairingLink('http://10.0.0.2:7420', 'ABCD-EFGH')).toBe('http://10.0.0.2:7420/#pair=ABCD-EFGH')
+    expect(pairingLink('http://10.0.0.2:7420', 'X', 'not a fingerprint')).toBe('http://10.0.0.2:7420/#pair=X')
+    expect(pairingLink('https://10.0.0.2:7420', 'X', FP, PK)).toBe(`https://10.0.0.2:7420/#pair=X&fp=${HEX.toLowerCase()}&pk=${PK_HEX.toLowerCase()}`)
+    // The key only alongside the certificate (an older client reads `fp` alone), never a broken one.
+    expect(pairingLink('https://10.0.0.2:7420', 'X', undefined, PK)).toBe('https://10.0.0.2:7420/#pair=X')
+    expect(pairingLink('https://10.0.0.2:7420', 'X', FP, 'nope')).toBe(`https://10.0.0.2:7420/#pair=X&fp=${HEX.toLowerCase()}`)
+
+    expect(parsePairingLink(` https://10.0.0.2:7420/#pair=ABCD-EFGH&fp=${HEX.toLowerCase()} `)).toEqual({ baseUrl: 'https://10.0.0.2:7420', code: 'ABCD-EFGH', fingerprint: FP })
+    expect(parsePairingLink('http://nas.local:7420#pair=AB%20CD')).toEqual({ baseUrl: 'http://nas.local:7420', code: 'AB CD' })
+    expect(parsePairingLink(`https://10.0.0.2:7420/#pair=X&fp=${HEX}&pk=${PK_HEX.toLowerCase()}`)).toEqual({ baseUrl: 'https://10.0.0.2:7420', code: 'X', fingerprint: FP, spkiFingerprint: PK })
+    expect(parsePairingLink(`https://10.0.0.2:7420/#pair=X&pk=${PK_HEX}`)).toEqual({ baseUrl: 'https://10.0.0.2:7420', code: 'X' })
+    expect(parsePairingLink('http://nas.local:7420/#pair=X&fp=zz')).toEqual({ baseUrl: 'http://nas.local:7420', code: 'X' })
+    expect(parsePairingLink('http://nas.local:7420/')).toBeNull()
+    expect(parsePairingLink('http://nas.local:7420/#fp=00')).toBeNull()
+    expect(parsePairingLink('ftp://x/#pair=X')).toBeNull()
   })
 })
 
@@ -562,5 +860,48 @@ describe('Appearance', () => {
 
     fireEvent.click(reset)
     expect({ ...root.dataset }).toEqual({ theme: 'dark', accent: 'cyan', surface: 'cyber' })
+  })
+})
+
+describe('BrowserCard', () => {
+  it('shows nothing outside the desktop app, or before the core answered', async () => {
+    const { container } = render(<BrowserCard />)
+    expect(container).toBeEmptyDOMElement()
+    installBridge({ 'browser:settings': () => fail('no core') })
+    render(<BrowserCard />)
+    await act(settle)
+    expect(container).toBeEmptyDOMElement()
+  })
+
+  it('picks the search engine and where links open, and clears the history', async () => {
+    let current = { searchEngine: 'google', openLinksInMindeck: true }
+    const configure = vi.fn((patch: Partial<typeof current>) => (current = { ...current, ...patch }))
+    let clearFails = true
+    installBridge({
+      'browser:settings': () => current,
+      'browser:configure': configure,
+      'browser:clearHistory': () => (clearFails ? fail('busy') : undefined)
+    })
+    render(<BrowserCard />)
+    await act(settle)
+    expect(screen.getByRole('combobox', { name: 'Search engine' })).toHaveTextContent('Google')
+    choose('Search engine', 'DuckDuckGo')
+    await act(settle)
+    expect(configure).toHaveBeenLastCalledWith({ searchEngine: 'duckduckgo' })
+    expect(screen.getByRole('combobox', { name: 'Search engine' })).toHaveTextContent('DuckDuckGo')
+    fireEvent.click(screen.getByRole('switch', { name: 'Open links in Mindeck' }))
+    await act(settle)
+    expect(configure).toHaveBeenLastCalledWith({ openLinksInMindeck: false })
+    expect(screen.getByRole('switch', { name: 'Open links in Mindeck' })).not.toBeChecked()
+    fireEvent.click(screen.getByRole('button', { name: 'Clear history' })) // fails: stays as it was
+    await act(settle)
+    clearFails = false
+    fireEvent.click(screen.getByRole('button', { name: 'Clear history' }))
+    await act(settle)
+    expect(screen.getByRole('button', { name: 'History cleared' })).toBeInTheDocument()
+    configure.mockImplementation(() => fail('bad engine'))
+    choose('Search engine', 'Kagi') // a refused change keeps the old value
+    await act(settle)
+    expect(screen.getByRole('combobox', { name: 'Search engine' })).toHaveTextContent('DuckDuckGo')
   })
 })

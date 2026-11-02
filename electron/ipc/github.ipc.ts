@@ -12,4 +12,6 @@ export function registerGitHubIpc(router: Router, service: GitHubService): void 
   router.register('github:merge', ({ projectId, number, method, deleteBranch }) => service.merge(projectId, number, method, deleteBranch))
   router.register('github:comment', ({ projectId, number, body }) => service.comment(projectId, number, body))
   router.register('github:review', ({ projectId, number, action, body }) => service.review(projectId, number, action, body))
+  router.register('github:owners', ({ projectId }) => service.owners(projectId))
+  router.register('github:publish', ({ projectId, ...repo }) => service.publish(projectId, repo))
 }

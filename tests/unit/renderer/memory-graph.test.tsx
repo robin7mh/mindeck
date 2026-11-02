@@ -66,7 +66,8 @@ const graph: MemoryGraph = {
   edges: [
     { source: 'A.md', target: 'B.md' },
     { source: 'A.md', target: 'ghost:G' },
-    { source: 'A.md', target: 'missing' } // dangling edge (no node) is dropped from links
+    { source: 'A.md', target: 'missing' }, // dangling edge (no node) is dropped from links
+    { source: 'missing', target: 'B.md' } // and one into a note linked already
   ]
 }
 const colorful: GraphStyle = { mode: 'colorful', color: 'cyan' }
@@ -100,7 +101,7 @@ describe('GraphView', () => {
     ])
     render(<GraphView graph={graph} style={colorful} folderSlots={slots} activeId="B.md" onOpen={onOpen} onOpenGhost={onOpenGhost} />)
     await nextFrame()
-    expect(screen.getByText('3 notes · 3 links')).toBeInTheDocument()
+    expect(screen.getByText('3 notes · 4 links')).toBeInTheDocument()
     expect(screen.getByText('Ideen')).toBeInTheDocument()
     expect(screen.getByText('Vault root')).toBeInTheDocument()
     expect(screen.queryByText('Empty')).toBeNull()
@@ -122,6 +123,13 @@ describe('GraphView', () => {
       canvas.dispatchEvent(pointer('pointerup', {}))
     })
     expect(onOpenGhost).toHaveBeenCalledWith('G')
+    // a hand that shakes a little (3 px) still clicks
+    act(() => {
+      canvas.dispatchEvent(pointer('pointerdown', { clientX: a.x, clientY: a.y }))
+      canvas.dispatchEvent(pointer('pointermove', { clientX: a.x + 2, clientY: a.y + 2 }))
+      canvas.dispatchEvent(pointer('pointerup', {}))
+    })
+    expect(onOpen).toHaveBeenCalledTimes(2)
 
     // dragging a node moves it instead of opening
     act(() => {
@@ -129,7 +137,7 @@ describe('GraphView', () => {
       canvas.dispatchEvent(pointer('pointermove', { clientX: a.x + 40, clientY: a.y + 40 }))
       canvas.dispatchEvent(pointer('pointercancel', {}))
     })
-    expect(onOpen).toHaveBeenCalledTimes(1)
+    expect(onOpen).toHaveBeenCalledTimes(2)
     act(() => canvas.dispatchEvent(pointer('pointerup', {}))) // no drag in progress → ignored
   })
 

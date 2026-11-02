@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { errorMessage, ipc } from '@shared/ipc/client'
 import type {
+  DailyNotesSettings,
   GraphStyle,
   MemoryChanged,
   MemoryGraph,
@@ -9,13 +10,48 @@ import type {
   SearchHit,
   VaultStatus
 } from '@shared/types/memory'
+import { findNote } from './links'
 
 const AUTOSAVE_MS = 700
+const SOURCE_KEY = 'mindeck.memory.source'
 
 /** Inline "new note / new folder" input in the sidebar. `parent` '' = vault root. */
 export interface Creating {
   kind: 'note' | 'folder'
   parent: string
+  /** A new note starts from this template note. */
+  template?: string
+}
+
+/** The UI's wall-clock time without a zone ("2026-10-15T09:30:00") — daily notes and templates use the user's date. */
+export function localNow(d = new Date()): string {
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
+}
+
+/** Pasted pictures are named like Obsidian names them: "Pasted image 20261015093000.png". */
+export function pictureName(file: File, d = new Date()): string {
+  if (file.name && file.name !== 'image.png') return file.name
+  const ext = file.type.split('/')[1]?.replace('jpeg', 'jpg').replace('svg+xml', 'svg') || 'png'
+  return `Pasted image ${localNow(d).replace(/\D/g, '')}.${ext}`
+}
+
+/** A file's bytes as base64 (what `memory:attach` carries). */
+function base64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result).replace(/^data:[^,]*,/, ''))
+    reader.onerror = () => reject(reader.error ?? new Error('Could not read the picture'))
+    reader.readAsDataURL(file)
+  })
+}
+
+function loadSource(): boolean {
+  try {
+    return localStorage.getItem(SOURCE_KEY) === '1'
+  } catch {
+    return false
+  }
 }
 
 interface MemoryState {
@@ -26,6 +62,8 @@ interface MemoryState {
   graph?: MemoryGraph
   view: 'note' | 'graph'
   mode: 'edit' | 'preview'
+  /** Editing shows plain Markdown instead of Live Preview (remembered per device). */
+  source: boolean
 
   /** Open note as last loaded from disk. */
   note?: Note
@@ -52,10 +90,10 @@ interface MemoryState {
   openOrCreate: (title: string) => Promise<void>
   setDraft: (body: string) => void
   save: () => Promise<void>
-  startCreate: (kind: Creating['kind'], parent?: string) => void
+  startCreate: (kind: Creating['kind'], parent?: string, template?: string) => void
   cancelCreate: () => void
   submitCreate: (name: string) => Promise<void>
-  createNote: (title: string, folder?: string) => Promise<void>
+  createNote: (title: string, folder?: string, template?: string) => Promise<void>
   rename: (title: string) => Promise<void>
   moveNote: (path: string, folder: string) => Promise<void>
   moveFolder: (folder: string, into: string) => Promise<void>
@@ -64,8 +102,18 @@ interface MemoryState {
   trash: (path: string) => Promise<void>
   setView: (view: 'note' | 'graph') => void
   setMode: (mode: 'edit' | 'preview') => void
+  setSource: (source: boolean) => void
   search: (query: string) => Promise<void>
   setGraphStyle: (style: GraphStyle) => Promise<void>
+  /** Today's daily note — created from its template the first time. */
+  openDaily: () => Promise<void>
+  setDailyNotes: (daily: DailyNotesSettings) => Promise<void>
+  /** A template filled in for the open note — for "Insert template". */
+  renderTemplate: (path: string) => Promise<string | null>
+  /** Save a pasted or dropped picture; returns what goes into `![[…]]`. */
+  attach: (file: File) => Promise<string | null>
+  /** A picture the open note shows, as a data: URL (null when it is not in the vault). */
+  loadImage: (target: string) => Promise<string | null>
   clearError: () => void
 }
 
@@ -74,6 +122,8 @@ let saveTimer: number | undefined
 let searchSeq = 0
 let openSeq = 0
 let indexSeq = 0
+/** Pictures by note + target; dropped on every vault change (a picture may have come or gone). */
+let images = new Map<string, Promise<string | null>>()
 
 export const useMemory = create<MemoryState>((set, get) => {
   const reloadIndex = async () => {
@@ -105,6 +155,7 @@ export const useMemory = create<MemoryState>((set, get) => {
     folders: [],
     view: 'graph',
     mode: 'preview',
+    source: loadSource(),
     draft: '',
     saving: false,
     creating: null,
@@ -129,6 +180,7 @@ export const useMemory = create<MemoryState>((set, get) => {
     },
 
     onChanged: async (change) => {
+      images = new Map()
       try {
         await reloadIndex()
         const { note, query } = get()
@@ -194,11 +246,11 @@ export const useMemory = create<MemoryState>((set, get) => {
     },
 
     open: async (path, mode) => {
+      // Two quick clicks: the note clicked last wins, not the one answered last.
       const seq = ++openSeq
       try {
         await get().save()
         const note = await ipc('memory:read', { path })
-        // Clicked on to another note meanwhile: that one wins.
         if (seq !== openSeq) return
         set({ note, draft: note.body, view: 'note', mode: mode ?? get().mode, error: undefined })
       } catch (err) {
@@ -207,13 +259,11 @@ export const useMemory = create<MemoryState>((set, get) => {
     },
 
     openOrCreate: async (title) => {
-      const key = title.replace(/\.md$/i, '').toLowerCase()
-      const match = get()
-        .notes.filter((n) => n.title.toLowerCase() === key || n.path.replace(/\.md$/i, '').toLowerCase() === key)
-        .sort((a, b) => a.path.length - b.path.length)[0]
+      const match = findNote(title, get().notes)
       if (match) return get().open(match.path)
-      const slash = title.lastIndexOf('/')
-      return get().createNote(title.slice(slash + 1), slash > 0 ? title.slice(0, slash) : '')
+      const name = title.replace(/[#^].*$/, '').replace(/\.md$/i, '').trim()
+      const slash = name.lastIndexOf('/')
+      return get().createNote(name.slice(slash + 1), slash > 0 ? name.slice(0, slash) : '')
     },
 
     setDraft: (body) => {
@@ -230,24 +280,22 @@ export const useMemory = create<MemoryState>((set, get) => {
       try {
         await ipc('memory:writeBody', { path: note.path, body: draft })
         const fresh = await ipc('memory:read', { path: note.path })
-        // Keep typing that happened while the write was in flight — unless another
-        // note opened meanwhile (its draft must never land on this one).
-        set((s) =>
-          s.note?.path === note.path ? { note: fresh, draft: s.draft === draft ? fresh.body : s.draft, saving: false } : { saving: false }
-        )
+        // Another note was opened meanwhile: its draft must not land in this one.
+        // Else keep typing that happened while the write was in flight.
+        set((s) => (s.note?.path !== note.path ? { saving: false } : { note: fresh, draft: s.draft === draft ? fresh.body : s.draft, saving: false }))
       } catch (err) {
         fail(err)
       }
     },
 
-    startCreate: (kind, parent = '') => set({ creating: { kind, parent } }),
+    startCreate: (kind, parent = '', template) => set({ creating: { kind, parent, ...(template ? { template } : {}) } }),
     cancelCreate: () => set({ creating: null }),
 
     submitCreate: async (name) => {
       const creating = get().creating
       set({ creating: null })
       if (!creating || !name.trim()) return
-      if (creating.kind === 'note') return get().createNote(name.trim(), creating.parent)
+      if (creating.kind === 'note') return get().createNote(name.trim(), creating.parent, creating.template)
       try {
         await ipc('memory:createFolder', { parent: creating.parent, name: name.trim() })
         await reloadIndex()
@@ -256,10 +304,10 @@ export const useMemory = create<MemoryState>((set, get) => {
       }
     },
 
-    createNote: async (title, folder = '') => {
+    createNote: async (title, folder = '', template) => {
       try {
         await get().save()
-        const meta = await ipc('memory:create', { title, folder })
+        const meta = await ipc('memory:create', { title, folder, ...(template ? { template, now: localNow() } : {}) })
         await reloadIndex()
         await get().open(meta.path, 'edit')
       } catch (err) {
@@ -348,6 +396,15 @@ export const useMemory = create<MemoryState>((set, get) => {
       set({ mode })
     },
 
+    setSource: (source) => {
+      try {
+        localStorage.setItem(SOURCE_KEY, source ? '1' : '0')
+      } catch {
+        // storage unavailable — the choice lasts until reload
+      }
+      set({ source, mode: 'edit' })
+    },
+
     search: async (query) => {
       const seq = ++searchSeq
       set({ query })
@@ -371,6 +428,73 @@ export const useMemory = create<MemoryState>((set, get) => {
         if (prev) set({ status: prev })
         fail(err)
       }
+    },
+
+    openDaily: async () => {
+      try {
+        await get().save()
+        const meta = await ipc('memory:daily', { now: localNow() })
+        await reloadIndex()
+        await get().open(meta.path, 'edit')
+      } catch (err) {
+        fail(err)
+      }
+    },
+
+    setDailyNotes: async (daily) => {
+      try {
+        const saved = await ipc('memory:setDailyNotes', daily)
+        const cur = get().status
+        if (cur) set({ status: { ...cur, dailyNotes: saved } })
+      } catch (err) {
+        fail(err)
+      }
+    },
+
+    renderTemplate: async (path) => {
+      const { note } = get()
+      if (!note) return null
+      try {
+        return await ipc('memory:renderTemplate', { path, title: note.title, now: localNow() })
+      } catch (err) {
+        fail(err)
+        return null
+      }
+    },
+
+    attach: async (file) => {
+      try {
+        const { link } = await ipc('memory:attach', { name: pictureName(file), data: await base64(file) })
+        return link
+      } catch (err) {
+        fail(err)
+        return null
+      }
+    },
+
+    loadImage: (target) => {
+      const from = get().note?.path
+      const clean = target.trim()
+      // Inline data: pictures are safe as they are; anything with a scheme (http:, file:) never loads.
+      if (/^data:image\//i.test(clean)) return Promise.resolve(clean)
+      if (/^[a-z][a-z0-9+.-]*:/i.test(clean)) return Promise.resolve(null)
+      let decoded = clean
+      try {
+        decoded = decodeURI(clean)
+      } catch {
+        // a literal % in the name
+      }
+      const key = `${from ?? ''}|${decoded}`
+      if (!images.has(key)) {
+        images.set(
+          key,
+          ipc('memory:attachment', { target: decoded, ...(from ? { from } : {}) }).then(
+            (a) => a.dataUrl,
+            () => null
+          )
+        )
+      }
+      return images.get(key)!
     },
 
     clearError: () => set({ error: undefined })

@@ -2,7 +2,7 @@ import { defineConfig } from '@playwright/test'
 
 /**
  * End-to-end tests (`npm run test:e2e` builds everything first):
- * - electron: the real, built Electron app against the Docker database
+ * - electron: the real, built Electron app (its data in files under MINDECK_HOME — no database)
  * - web: the built web UI in Chromium against the real standalone core
  * Each test gets its own throwaway MINDECK_HOME, so real data is never touched.
  * PW_CHROMIUM may point at a preinstalled Chromium (sandboxes without
@@ -19,7 +19,7 @@ export default defineConfig({
   reporter: process.env.CI ? [['list'], ['html', { open: 'never' }]] : [['list']],
   use: { trace: 'retain-on-failure', screenshot: 'only-on-failure' },
   projects: [
-    { name: 'electron', testMatch: 'app.spec.ts' },
+    { name: 'electron', testMatch: 'app*.spec.ts' },
     {
       name: 'web',
       testMatch: 'web.spec.ts',

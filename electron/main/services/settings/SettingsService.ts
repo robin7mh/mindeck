@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises'
+import { readJson } from '../../lib/jsonFile'
 import { writeAtomic } from '../../lib/writeAtomic'
 import type { AppSettings } from '@shared/types/settings'
 
@@ -15,13 +15,9 @@ export class SettingsService {
 
   async init(): Promise<void> {
     if (this.loaded) return
-    try {
-      const raw = await readFile(this.file, 'utf8')
-      const parsed = JSON.parse(raw)
-      this.settings = parsed && typeof parsed.settings === 'object' ? parsed.settings : {}
-    } catch {
-      this.settings = {} // missing/corrupt file → defaults
-    }
+    // Missing/damaged file → defaults (a damaged one is set aside, see readJson).
+    const parsed = await readJson<{ settings?: AppSettings }>(this.file)
+    this.settings = parsed && typeof parsed.settings === 'object' && parsed.settings ? parsed.settings : {}
     this.loaded = true
   }
 

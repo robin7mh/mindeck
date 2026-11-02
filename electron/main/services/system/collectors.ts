@@ -1,14 +1,42 @@
 import { execFile } from 'node:child_process'
-import { userInfo } from 'node:os'
+import { statfs } from 'node:fs/promises'
+import { freemem, totalmem, userInfo } from 'node:os'
 import { promisify } from 'node:util'
 import si from 'systeminformation'
 import type { ProcessInfo, SystemSnapshot } from '@shared/types/system'
+import { TOP_N, WinSampler } from './winSampler'
 
 const run = promisify(execFile)
 const isMac = process.platform === 'darwin'
+// On Windows systeminformation spawns a PowerShell per call — keep it off the tick.
+const isWin = process.platform === 'win32'
+const winSampler = new WinSampler()
 
 const r1 = (n: number) => Math.round(n * 10) / 10
 const clampPct = (n: number) => Math.max(0, Math.min(100, n))
+
+/** Disk usage and battery change slowly; sampling them every tick only costs CPU. */
+const DISK_TTL_MS = 30_000
+const BATTERY_TTL_MS = 60_000
+
+function cached<T>(ttlMs: number, load: () => Promise<T>): () => Promise<T> {
+  let hit: { value: T; at: number } | undefined
+  return async () => {
+    if (hit && Date.now() - hit.at < ttlMs) return hit.value
+    const value = await load()
+    hit = { value, at: Date.now() }
+    return value
+  }
+}
+
+/** Start the background sampler (Windows) — idempotent, restarts it if it died. */
+export function startSampling(): void {
+  if (isWin) winSampler.start()
+}
+
+export function stopSampling(): void {
+  if (isWin) winSampler.stop()
+}
 
 async function cpu(): Promise<SystemSnapshot['cpu']> {
   const load = await si.currentLoad()
@@ -19,6 +47,12 @@ async function cpu(): Promise<SystemSnapshot['cpu']> {
 }
 
 async function mem(): Promise<SystemSnapshot['mem']> {
+  if (isWin) {
+    // Free physical memory = Task Manager's "available".
+    const total = totalmem()
+    const used = total - freemem()
+    return { usedPct: clampPct(r1((used / total) * 100)), usedGb: r1(used / 1e9), totalGb: r1(total / 1e9) }
+  }
   const m = await si.mem()
   // `active` excludes cache/buffers → closest to what Activity Monitor shows.
   const used = m.active || m.used
@@ -36,20 +70,22 @@ const MAC_DISK_JXA =
   'ObjC.import("Foundation");const u=$.NSURL.fileURLWithPath("/");' +
   'const v=k=>{const r=Ref();u.getResourceValueForKeyError(r,$(k),null);return ObjC.unwrap(r[0])};' +
   'JSON.stringify([v("NSURLVolumeTotalCapacityKey"),v("NSURLVolumeAvailableCapacityForImportantUsageKey")])'
-const MAC_DISK_TTL_MS = 30_000
-let macDiskCache: { usedPct: number; at: number } | undefined
-
 async function macDiskUsedPct(): Promise<number> {
-  if (macDiskCache && Date.now() - macDiskCache.at < MAC_DISK_TTL_MS) return macDiskCache.usedPct
   const { stdout } = await run('osascript', ['-l', 'JavaScript', '-e', MAC_DISK_JXA], { timeout: 5000 })
   const [total, avail] = JSON.parse(stdout) as [number, number]
   if (!(total > 0) || !(avail >= 0)) throw new Error('volume capacity unavailable')
-  const usedPct = clampPct(r1(((total - avail) / total) * 100))
-  macDiskCache = { usedPct, at: Date.now() }
-  return usedPct
+  return clampPct(r1(((total - avail) / total) * 100))
 }
 
-async function disk(): Promise<SystemSnapshot['disk']> {
+/** The system drive, like Explorer: used = total − free. */
+async function winDisk(): Promise<SystemSnapshot['disk']> {
+  const mount = process.env.SystemDrive || 'C:'
+  const s = await statfs(`${mount}\\`)
+  return { usedPct: s.blocks > 0 ? clampPct(r1(((s.blocks - s.bfree) / s.blocks) * 100)) : 0, mount }
+}
+
+const disk = cached(DISK_TTL_MS, async (): Promise<SystemSnapshot['disk']> => {
+  if (isWin) return winDisk()
   if (isMac) {
     try {
       return { usedPct: await macDiskUsedPct(), mount: '/' }
@@ -64,9 +100,10 @@ async function disk(): Promise<SystemSnapshot['disk']> {
     ? list.reduce((a, b) => ((b.used ?? 0) > (a.used ?? 0) ? b : a))
     : undefined
   return { usedPct: clampPct(r1(primary?.use ?? 0)), mount: primary?.mount ?? '/' }
-}
+})
 
 async function net(): Promise<SystemSnapshot['net']> {
+  if (isWin) return winSampler.net
   const stats = await si.networkStats()
   const agg = stats.reduce(
     (a, n) => ({ rx: a.rx + (n.rx_sec || 0), tx: a.tx + (n.tx_sec || 0) }),
@@ -75,10 +112,10 @@ async function net(): Promise<SystemSnapshot['net']> {
   return { rxMbps: r1(agg.rx / 1e6), txMbps: r1(agg.tx / 1e6) }
 }
 
-async function battery(): Promise<SystemSnapshot['battery']> {
+const battery = cached(BATTERY_TTL_MS, async (): Promise<SystemSnapshot['battery']> => {
   const b = await si.battery()
   return { pct: clampPct(b.percent ?? 0), charging: !!b.isCharging, hasBattery: !!b.hasBattery }
-}
+})
 
 /** The OS account's display name (macOS full name, Linux GECOS), else the login. */
 export async function currentUser(): Promise<{ name: string; firstName: string }> {
@@ -98,7 +135,6 @@ export async function currentUser(): Promise<{ name: string; firstName: string }
   return { name, firstName: first.charAt(0).toUpperCase() + first.slice(1) }
 }
 
-const TOP_N = 6
 const MB_PER_UNIT: Record<string, number> = { B: 1 / 1048576, K: 1 / 1024, M: 1, G: 1024, T: 1048576 }
 
 /** top's MEM column, e.g. "686M+", "1824K", "1.2G" → MB. */
@@ -162,6 +198,8 @@ async function genericProcesses(): Promise<ProcessInfo[]> {
 
 /** Top processes by CPU. Slow on macOS (~1 s, two top samples) — run off the tick. */
 export async function collectProcesses(): Promise<ProcessInfo[]> {
+  // The sampler's list is free; one-off calls without it (AI tool) scan once.
+  if (isWin && winSampler.running) return winSampler.procs
   if (isMac) {
     try {
       return await macProcesses()

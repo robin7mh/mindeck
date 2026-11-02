@@ -31,14 +31,14 @@ function Source({ source }: { source: MigrationSource }) {
   }
 
   return (
-    <li className="rounded border border-hud/40 p-2.5">
+    <li className="rounded-sm border border-hud/40 p-2.5">
       <div className="flex flex-wrap items-center gap-2">
         <p className="mr-auto font-sans text-[13px] font-medium text-text-primary">{source.name}</p>
         <button
           type="button"
           disabled={busy}
           onClick={() => void apply()}
-          className="flex items-center gap-1.5 rounded-md border border-cyan/40 bg-cyan/[0.06] px-2.5 py-1 font-sans text-[12px] text-cyan hover:bg-cyan/[0.12] disabled:opacity-50"
+          className="flex items-center gap-1.5 rounded-md border border-cyan/40 bg-cyan/6 px-2.5 py-1 font-sans text-[12px] text-cyan hover:bg-cyan/12 disabled:opacity-50"
         >
           {busy ? <Loader2 size={12} className="animate-spin" /> : <ArrowRightLeft size={12} />} {m.apply}
         </button>
@@ -90,13 +90,13 @@ export function MigrateCard() {
   }, [desktop])
 
   return (
-    <Card icon={ArrowRightLeft} title={m.title} className="lg:col-span-2">
+    <Card icon={ArrowRightLeft} title={m.title} className="pane-lg:col-span-2">
       <p className="mb-2 font-sans text-[12px] text-text-secondary">{m.intro}</p>
       {!desktop && <p className="font-sans text-[12px] text-text-muted">{m.desktopOnly}</p>}
       {error && <p className="font-sans text-[12px] text-danger">{error}</p>}
       {desktop && !sources && !error && <Loader2 size={14} aria-label={t.common.loading} className="animate-spin text-text-muted" />}
       {sources && !sources.length && <p className="font-sans text-[12px] text-text-muted">{m.none}</p>}
-      <ul className="grid gap-2 lg:grid-cols-2">
+      <ul className="grid gap-2 pane-lg:grid-cols-2">
         {sources?.map((s) => (
           <Source key={s.app} source={s} />
         ))}

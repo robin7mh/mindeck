@@ -6,7 +6,6 @@ import {
   GitCommitHorizontal,
   ArrowUp,
   ArrowDown,
-  Code2,
   RefreshCw,
   Trash2,
   FileText,
@@ -37,7 +36,7 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
 
 export function ProjectDetailPanel({ project, onNavigate }: { project: Project; onNavigate: (module: ModuleId) => void }) {
   const t = useT()
-  const { refresh, pull, remove, openEditor, openInGitHubDesktop, githubDesktop, busyId } = useProjects()
+  const { refresh, pull, remove, openInGitHubDesktop, githubDesktop, busyId } = useProjects()
   const busy = busyId === project.id
   const g = project.git
   const s = project.stack
@@ -121,7 +120,7 @@ export function ProjectDetailPanel({ project, onNavigate }: { project: Project; 
                 {s.frameworks.map((f) => (
                   <span
                     key={f}
-                    className="rounded border border-hud/60 bg-elevated/40 px-1.5 py-0.5 text-[10px] text-text-secondary"
+                    className="rounded-sm border border-hud/60 bg-elevated/40 px-1.5 py-0.5 text-[10px] text-text-secondary"
                   >
                     {f}
                   </span>
@@ -142,7 +141,7 @@ export function ProjectDetailPanel({ project, onNavigate }: { project: Project; 
                 {s.packageJson.scripts.slice(0, 8).map((sc) => (
                   <span
                     key={sc}
-                    className="inline-flex items-center gap-1 rounded border border-hud/60 bg-elevated/40 px-1.5 py-0.5 text-[10px] text-text-secondary"
+                    className="inline-flex items-center gap-1 rounded-sm border border-hud/60 bg-elevated/40 px-1.5 py-0.5 text-[10px] text-text-secondary"
                   >
                     <Package size={10} className="text-text-muted" />
                     {sc}
@@ -158,8 +157,6 @@ export function ProjectDetailPanel({ project, onNavigate }: { project: Project; 
 
       {/* actions */}
       <div className="flex flex-wrap gap-2 border-t border-hud/50 px-4 py-3">
-        {/* Opening apps on the host only makes sense in the desktop window. */}
-        {desktop && <ActionButton icon={Code2} label="VS Code" onClick={() => openEditor(project.id)} />}
         {shells && <ProjectTerminalMenu projectId={project.id} onShow={() => onNavigate('terminal')} />}
         {repo && <ActionButton icon={repo.Icon} label={repo.label} title={t.projects.openRepo(g!.webUrl!)} href={g!.webUrl} />}
         {desktop && githubDesktop && g?.isRepo && (

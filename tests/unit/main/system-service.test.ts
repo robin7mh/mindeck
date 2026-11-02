@@ -3,7 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const c = vi.hoisted(() => ({
   collect: vi.fn(),
   collectProcesses: vi.fn(),
-  currentUser: vi.fn()
+  currentUser: vi.fn(),
+  startSampling: vi.fn(),
+  stopSampling: vi.fn()
 }))
 vi.mock('../../../electron/main/services/system/collectors', () => c)
 
@@ -31,8 +33,12 @@ describe('SystemService', () => {
 
     await vi.advanceTimersByTimeAsync(2000)
     expect(send).toHaveBeenCalledTimes(3)
+    // The Windows sampler runs exactly while the timer does.
+    expect(c.startSampling).toHaveBeenCalledTimes(3)
+    expect(c.stopSampling).not.toHaveBeenCalled()
 
     s.setPaused(true)
+    expect(c.stopSampling).toHaveBeenCalledTimes(1)
     await vi.advanceTimersByTimeAsync(5000)
     expect(send).toHaveBeenCalledTimes(3)
 

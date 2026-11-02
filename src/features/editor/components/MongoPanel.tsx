@@ -4,9 +4,9 @@ import { cn } from '@/lib/cn'
 import { useT } from '@/lib/i18n'
 import { useMongo } from '../mongo'
 
-const row = 'flex w-full min-w-0 items-center gap-1.5 rounded py-[3px] pr-2 text-left font-sans text-[12.5px] text-text-secondary transition-colors hover:bg-elevated/60 hover:text-text-primary'
-const tool = 'flex h-6 w-6 shrink-0 items-center justify-center rounded text-text-muted transition-colors hover:bg-elevated hover:text-text-primary disabled:opacity-40'
-const field = 'w-full rounded-md border border-hud/60 bg-void/40 px-2 py-1 font-sans text-[12.5px] text-text-primary outline-none placeholder:text-text-muted focus:border-cyan/60'
+const row = 'flex w-full min-w-0 items-center gap-1.5 rounded-sm py-[3px] pr-2 text-left font-sans text-[12.5px] text-text-secondary transition-colors hover:bg-elevated/60 hover:text-text-primary'
+const tool = 'flex h-6 w-6 shrink-0 items-center justify-center rounded-sm text-text-muted transition-colors hover:bg-elevated hover:text-text-primary disabled:opacity-40'
+const field = 'w-full rounded-md border border-hud/60 bg-void/40 px-2 py-1 font-sans text-[12.5px] text-text-primary outline-hidden placeholder:text-text-muted focus:border-cyan/60'
 const size = (bytes: number) => (bytes < 1024 * 1024 ? `${Math.round(bytes / 1024)} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`)
 
 function AddConnection() {
@@ -26,11 +26,11 @@ function AddConnection() {
       <input aria-label={t.mongo.name} placeholder={t.mongo.name} value={name} onChange={(e) => setName(e.target.value)} className={field} />
       <input aria-label={t.mongo.uri} placeholder={t.mongo.uriHint} value={uri} onChange={(e) => setUri(e.target.value)} type="password" autoComplete="off" className={cn(field, 'font-mono')} />
       <div className="flex gap-1.5">
-        <button type="submit" disabled={!uri.trim() || busy} className="flex items-center gap-1 rounded border border-cyan/50 px-2 py-0.5 font-sans text-[12px] text-cyan hover:bg-cyan/10 disabled:opacity-40">
+        <button type="submit" disabled={!uri.trim() || busy} className="flex items-center gap-1 rounded-sm border border-cyan/50 px-2 py-0.5 font-sans text-[12px] text-cyan hover:bg-cyan/10 disabled:opacity-40">
           {busy && <Loader2 size={11} className="animate-spin" />}
           {t.mongo.connect}
         </button>
-        <button type="button" onClick={() => useMongo.getState().setAdding(false)} className="rounded border border-hud/60 px-2 py-0.5 font-sans text-[12px] text-text-secondary">
+        <button type="button" onClick={() => useMongo.getState().setAdding(false)} className="rounded-sm border border-hud/60 px-2 py-0.5 font-sans text-[12px] text-text-secondary">
           {t.mongo.cancel}
         </button>
       </div>
@@ -74,7 +74,7 @@ function DatabaseRow({ id, db, info }: { id: string; db: string; info: string })
           }}
         >
           <input autoFocus aria-label={t.mongo.collectionName} placeholder={t.mongo.collectionName} value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === 'Escape' && setNaming(false)} className={cn(field, 'py-0.5 font-mono text-[12px]')} />
-          <button type="submit" className="rounded border border-cyan/50 px-1.5 font-sans text-[11.5px] text-cyan">
+          <button type="submit" className="rounded-sm border border-cyan/50 px-1.5 font-sans text-[11.5px] text-cyan">
             {t.mongo.create}
           </button>
         </form>
@@ -86,7 +86,7 @@ function DatabaseRow({ id, db, info }: { id: string; db: string; info: string })
           return (
             <div key={c.name}>
               <div className="group flex items-center">
-                <button type="button" role="treeitem" aria-current={active || undefined} onClick={() => void mongo.openCollection({ id, db, collection: c.name })} className={cn(row, 'pl-12', active && 'bg-cyan/[0.08] text-text-primary')}>
+                <button type="button" role="treeitem" aria-current={active || undefined} onClick={() => void mongo.openCollection({ id, db, collection: c.name })} className={cn(row, 'pl-12', active && 'bg-cyan/8 text-text-primary')}>
                   <Table2 size={12} className="shrink-0 text-text-muted" />
                   <span className="truncate">{c.name}</span>
                   {c.type !== 'collection' && <span className="ml-auto shrink-0 font-mono text-[10px] text-text-muted">{c.type}</span>}
@@ -96,7 +96,7 @@ function DatabaseRow({ id, db, info }: { id: string; db: string; info: string })
                 </button>
               </div>
               {dropping === c.name && (
-                <div role="alertdialog" aria-label={t.mongo.drop(c.name)} className="mx-2 my-1 space-y-1.5 rounded-md border border-danger/40 bg-danger/[0.06] p-2">
+                <div role="alertdialog" aria-label={t.mongo.drop(c.name)} className="mx-2 my-1 space-y-1.5 rounded-md border border-danger/40 bg-danger/6 p-2">
                   <p className="font-sans text-[12px] text-text-primary">{t.mongo.confirmDrop(c.name)}</p>
                   <div className="flex gap-1.5">
                     <button
@@ -105,11 +105,11 @@ function DatabaseRow({ id, db, info }: { id: string; db: string; info: string })
                         setDropping(undefined)
                         void mongo.dropCollection({ id, db, collection: c.name })
                       }}
-                      className="rounded border border-danger/50 px-2 py-0.5 font-sans text-[12px] text-danger hover:bg-danger/10"
+                      className="rounded-sm border border-danger/50 px-2 py-0.5 font-sans text-[12px] text-danger hover:bg-danger/10"
                     >
                       {t.mongo.delete}
                     </button>
-                    <button type="button" onClick={() => setDropping(undefined)} className="rounded border border-hud/60 px-2 py-0.5 font-sans text-[12px] text-text-secondary">
+                    <button type="button" onClick={() => setDropping(undefined)} className="rounded-sm border border-hud/60 px-2 py-0.5 font-sans text-[12px] text-text-secondary">
                       {t.mongo.cancel}
                     </button>
                   </div>

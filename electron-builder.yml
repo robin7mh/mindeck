@@ -1,12 +1,16 @@
 # Packaging the desktop app:
 #   npm run dist:mac     DMG + ZIP for Apple silicon and Intel (on a Mac)
-#   npm run dist:win     NSIS installer for x64 and arm64 (on Windows — .github/workflows/desktop.yml)
+#   npm run dist:win     one NSIS installer for x64 and arm64 (on Windows)
 #   npm run dist:linux   AppImage + .deb for the machine's architecture (on Linux — node-pty is compiled there)
-# Release builds need, as environment variables:
+# Releases are built by .github/workflows/release.yml on a tag v* — see docs/RELEASE.md for its secrets:
 #   MINDECK_CLOUD_URL / MINDECK_CLOUD_KEY  where Mindeck Cloud lives (baked in by electron-vite)
 #   CSC_LINK / CSC_KEY_PASSWORD      "Developer ID Application" certificate (.p12, base64 or path)
-#   APPLE_API_KEY / APPLE_API_KEY_ID / APPLE_API_ISSUER   notarization (or APPLE_ID + APPLE_APP_SPECIFIC_PASSWORD + APPLE_TEAM_ID)
-#   GH_TOKEN                         publishing to GitHub Releases (auto-update feed)
+#   APPLE_ID / APPLE_APP_SPECIFIC_PASSWORD / APPLE_TEAM_ID   notarization (or APPLE_API_KEY / _ID / _ISSUER)
+#   WIN_CSC_LINK / WIN_CSC_KEY_PASSWORD   Windows code signing certificate (or Azure Trusted Signing)
+#
+# Artifact names never change between releases, so the website links
+# releases/latest/download/<name>: Mindeck-mac-arm64.dmg, Mindeck-mac-x64.dmg, Mindeck-Setup.exe,
+# Mindeck.AppImage, Mindeck.deb (Linux arm64: Mindeck-arm64.AppImage, Mindeck-arm64.deb).
 appId: de.mindeck.desktop
 productName: Mindeck
 copyright: © 2026 Robin Hinkelmann
@@ -28,11 +32,32 @@ files:
   # The editor's TypeScript service needs its standard library declarations.
   - node_modules/typescript/lib/*.d.ts
 
+# Electron's fuses, flipped in the binary before signing. Mindeck's main process can't be
+# started as plain Node with NODE_OPTIONS or --inspect, its code only comes from app.asar
+# and only as signed (the integrity is checked at start on macOS and Windows), and the
+# browser's cookies are encrypted with the OS keychain like Chrome's (a one-way switch).
+# RunAsNode off: ELECTRON_RUN_AS_NODE=1 can't turn the signed binary into a Node that inherits
+# Mindeck's macOS permissions (camera, microphone, folders). Mindeck's own Node programs —
+# tsserver, the lint worker, the PHP debug adapter, the Dev Containers CLI — run in Electron
+# utility processes, which only the main process can start (electron/main/lib/nodeProcess.ts).
+electronFuses:
+  runAsNode: false
+  enableCookieEncryption: true
+  enableNodeOptionsEnvironmentVariable: false
+  enableNodeCliInspectArguments: false
+  enableEmbeddedAsarIntegrityValidation: true
+  onlyLoadAppFromAsar: true
+
 # node-pty ships N-API prebuilds for macOS and Windows (stable across Electron versions): nothing
 # to compile. Linux has none: `npm ci` builds it there (node-gyp), and N-API keeps that build valid
 # for Electron. Each platform keeps only its own prebuilds (build/afterPack.cjs).
 npmRebuild: false
 afterPack: build/afterPack.cjs
+# The tray icon while Mindeck runs in the background (Windows/Linux): resources/tray.png.
+# Every icon is rendered from build/brand/ (node build/brand/render.mjs).
+extraResources:
+  - from: build/tray.png
+    to: tray.png
 asarUnpack:
   - node_modules/node-pty/**
   # tsserver runs as its own Node process and reads its lib files from disk.
@@ -53,14 +78,22 @@ mac:
   hardenedRuntime: true
   gatekeeperAssess: false
   entitlements: build/entitlements.mac.plist
-  entitlementsInherit: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.inherit.plist
+  # As electron-builder signs, but the plugin helper (utility processes that load the project's native
+  # addons) gets build/entitlements.mac.plugin.plist.
+  sign: build/sign.cjs
   minimumSystemVersion: '13.0'
+  # The ZIPs the auto-updater downloads (latest-mac.yml lists both architectures).
+  artifactName: ${productName}-mac-${arch}.${ext}
   extendInfo:
     NSHumanReadableCopyright: © 2026 Robin Hinkelmann
+    # Asked once, when a website in Mindeck's browser wants them (and the user allowed that site).
+    NSCameraUsageDescription: A website open in Mindeck's browser wants to use the camera.
+    NSMicrophoneUsageDescription: A website open in Mindeck's browser wants to use the microphone.
 
 dmg:
-  # Same name in every release: the website links releases/latest/download/Mindeck-<arch>.dmg
-  artifactName: ${productName}-${arch}.${ext}
+  # Same name in every release: the website links releases/latest/download/Mindeck-mac-<arch>.dmg
+  artifactName: ${productName}-mac-${arch}.${ext}
   title: ${productName} ${version}
   background: build/background.png
   iconSize: 96
@@ -79,12 +112,14 @@ win:
   target:
     - target: nsis
       arch: [x64, arm64]
-  icon: build/icon.png
+  # Its own sizes: the bolder small mark up to 48 px (taskbar, Explorer lists).
+  icon: build/icon.ico
   executableName: Mindeck
 
 nsis:
-  # Same name in every release, like the DMG: releases/latest/download/Mindeck-Setup-<arch>.exe
-  artifactName: ${productName}-Setup-${arch}.${ext}
+  # One installer for x64 and arm64 (it installs the machine's), same name in every release:
+  # releases/latest/download/Mindeck-Setup.exe
+  artifactName: ${productName}-Setup.${ext}
   oneClick: false
   perMachine: false
   allowToChangeInstallationDirectory: true
@@ -96,7 +131,8 @@ linux:
   target:
     - target: AppImage
     - target: deb
-  icon: build/icon.png
+  # One PNG per size (16x16.png … 512x512.png), the small ones with the bolder mark.
+  icon: build/icons
   category: Development
   executableName: mindeck
   # The window belongs to mindeck.desktop (package.json desktopName): docks group and pin it right.
@@ -108,11 +144,13 @@ linux:
     entry:
       StartupWMClass: Mindeck
 
+# x64 names; the arm64 build adds its architecture (-c.appImage.artifactName / -c.deb.artifactName,
+# see release.yml). The .deb can't update itself: the app offers the download (UpdateService).
 appImage:
-  artifactName: ${productName}-${arch}.${ext}
+  artifactName: ${productName}.${ext}
 
 deb:
-  artifactName: ${productName}-${arch}.${ext}
+  artifactName: ${productName}.${ext}
 
 publish:
   provider: github

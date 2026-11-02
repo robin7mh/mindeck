@@ -13,6 +13,8 @@ import { EditorView } from '@/features/editor/components/EditorView'
 import { tabKey, useEditor } from '@/features/editor/store'
 import { useDebug } from '@/features/editor/debug'
 import { useScm } from '@/features/editor/scm'
+import { allCommands } from '@/features/palette/registry'
+import { en } from '@/lib/i18n/en'
 import { useProjects } from '@/features/projects/store'
 
 const initial = useTests.getState()
@@ -283,8 +285,8 @@ describe('the Testing pane in the editor', () => {
 
     act(() => useScm.getState().setPane('files'))
     const palette = async (label: string) => {
-      fireEvent.keyDown(window, { key: 'P', metaKey: true, shiftKey: true })
-      fireEvent.click(screen.getAllByRole('option').find((o) => o.textContent!.startsWith(label))!)
+      // The editor's commands, as the palette (⇧⌘P) lists and runs them.
+      await act(async () => void (await allCommands(en).find((c) => c.label.startsWith(label))!.run()))
       await act(settle)
     }
     await palette('Test: Run all tests')

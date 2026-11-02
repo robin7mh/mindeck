@@ -1,7 +1,10 @@
-import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { Project } from '@shared/types/project'
+import { readJson } from '../../lib/jsonFile'
 import { writeAtomic } from '../../lib/writeAtomic'
+
+/** projects.json's format: 2 knows workspace trust (Project.trusted). */
+const VERSION = 2
 
 /**
  * Persistent project list backed by a single JSON file. Electron-agnostic: the
@@ -19,14 +22,17 @@ export class ProjectRegistry {
 
   async load(): Promise<void> {
     if (this.loaded) return
-    try {
-      const raw = await readFile(this.file, 'utf8')
-      const parsed = JSON.parse(raw)
-      this.projects = Array.isArray(parsed?.projects) ? parsed.projects : []
-    } catch {
-      this.projects = [] // missing/corrupt file → start empty
-    }
+    // Missing/damaged file → start empty (a damaged one is set aside, see readJson).
+    const parsed = await readJson<{ version?: number; projects?: Project[] }>(this.file)
+    this.projects = Array.isArray(parsed?.projects) ? parsed.projects : []
     this.loaded = true
+    // From before workspace trust: the projects the user already works in stay
+    // as they were (trusted) — restricting them all would break the upgrade.
+    // One set to `false` since (an older Mindeck keeps the field) stays restricted.
+    if ((parsed?.version ?? 1) < VERSION && this.projects.length) {
+      this.projects = this.projects.map((p) => ({ ...p, trusted: p.trusted ?? true }))
+      await this.persist()
+    }
   }
 
   all(): Project[] {
@@ -55,6 +61,6 @@ export class ProjectRegistry {
   }
 
   private persist(): Promise<void> {
-    return writeAtomic(this.file, JSON.stringify({ version: 1, projects: this.projects }, null, 2))
+    return writeAtomic(this.file, JSON.stringify({ version: VERSION, projects: this.projects }, null, 2))
   }
 }

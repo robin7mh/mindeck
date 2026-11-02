@@ -69,6 +69,8 @@ export interface InlineEditRequest {
 export interface InlineDelta {
   requestId: string
   text: string
+  /** The paired device that asked: only it hears the edit (none: the desktop's, for no device). */
+  device?: string
 }
 
 /** The AI credit through Mindeck Cloud (euro cents). */
@@ -90,8 +92,11 @@ export interface AiStatus {
   keyHint?: string
   /** The model in use right now. */
   model: string
-  /** Mindeck Cloud's AI (signed in): credit and models; null when signed out or the cloud offers none. */
-  cloud: { credit: AiCredit; models: { id: string; label: string; costFactor: number }[] } | null
+  /**
+   * Mindeck Cloud's AI (signed in): credit and models; null when signed out or
+   * the cloud offers none. `blocked`: an admin switched it off for this account.
+   */
+  cloud: { credit: AiCredit; models: { id: string; label: string; costFactor: number }[]; blocked?: true } | null
   settings: AiSettings
 }
 
@@ -140,12 +145,19 @@ export type ChatPart = { type: 'text'; text: string } | ToolCallPart
 export type ChatRole = 'user' | 'assistant'
 export type ChatStatus = 'streaming' | 'done' | 'error' | 'cancelled'
 
+/** What a user message carried besides its text (agent sessions): shown as chips. */
+export interface MessageAttachment {
+  kind: 'file' | 'folder' | 'note' | 'tab' | 'image'
+  label: string
+}
+
 export interface ChatMessage {
   id: string
   role: ChatRole
   parts: ChatPart[]
   createdAt: string
   status: ChatStatus
+  attachments?: MessageAttachment[]
   error?: string
   /** Why it failed, for the app to say in its own words (`ai-credit-exhausted`, `license-required` …). */
   errorCode?: string
@@ -202,14 +214,26 @@ export interface PermissionRequest {
   /** Why the agent wants it (from the agent). */
   reason: string
   input: unknown
-  /** "Always allow" is offered for write tools only, never for execute. */
+  /** "Always allow" is offered for write tools only, never for execute (and never to a paired device). */
   allowAlways: boolean
+  /** The project the tool acts in — an "Always allow" holds there only. */
+  projectId?: string
   createdAt: string
 }
 
+/** A grant's `projectId` for every project: grants kept from before grants were per project. */
+export const ALL_PROJECTS = '*'
+
+/**
+ * "Always allow": one agent, one tool, one project. `toolName` is the tool's
+ * stable key — its name, or a tool kind (`edit`, `read` …) for agents whose
+ * tool titles change with every call. Without `projectId` it holds in chats
+ * outside any project; `ALL_PROJECTS` everywhere.
+ */
 export interface PermissionGrant {
   agentId: string
   toolName: string
+  projectId?: string
   createdAt: string
 }
 

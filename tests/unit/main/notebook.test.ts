@@ -1,4 +1,4 @@
-import { EventEmitter } from 'node:events'
+import { EventEmitter, once } from 'node:events'
 import { mkdir, realpath, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
@@ -29,24 +29,30 @@ class FakeProc extends EventEmitter {
 }
 
 const tick = () => new Promise((r) => setTimeout(r, 5))
-/** The n-th Python started (file system work comes first, beyond fake timers). */
+/** Says when a harness started another Python. */
+const spawned = new EventEmitter()
+/**
+ * The n-th Python started. File system work comes first (beyond fake timers, and as slow as the
+ * machine is busy): wait for the start itself, not a number of turns.
+ */
 async function proc(procs: FakeProc[], n: number): Promise<FakeProc> {
-  // A deadline, not a count of turns: on a busy machine the spawn takes more turns of the loop.
-  for (const end = Date.now() + 5000; !procs[n] && Date.now() < end; ) await new Promise((r) => setImmediate(r))
+  while (!procs[n]) await once(spawned, 'spawn')
   return procs[n]
 }
 
-function harness(root: string | undefined, behave: (command: string, args: string[], proc: FakeProc) => void = () => {}) {
+function harness(root: string | undefined, behave: (command: string, args: string[], proc: FakeProc) => void = () => {}, trusted = true) {
   const events: NotebookEvent[] = []
   const calls: { command: string; args: string[]; cwd: string }[] = []
   const procs: FakeProc[] = []
   const opts: NotebookOptions = {
     resolveRoot: () => root,
+    trusted: () => trusted,
     publish: (e) => events.push(e),
     start: (command, args, cwd) => {
       calls.push({ command, args, cwd })
       const proc = new FakeProc()
       procs.push(proc)
+      spawned.emit('spawn')
       setTimeout(() => behave(command, args, proc))
       return proc as never
     }
@@ -158,6 +164,20 @@ describe('NotebookService', () => {
     expect(h.procs[2].told).toEqual([{ op: 'shutdown' }])
   })
 
+  it('a kernel that closed its stdin: nothing is written to it (no write after end), it is ended all the same', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const root = await realpath(await tempDir())
+    const h = harness(root)
+    const first = h.service.start('p', 'a.ipynb', 'python3')
+    ;(await proc(h.procs, 0)).say({ type: 'ready' })
+    await first
+    h.procs[0].stdin.end()
+    h.service.shutdown('p', 'a.ipynb')
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(h.procs[0].told).toEqual([])
+    expect(h.procs[0].killed).toBe(1)
+  })
+
   it('a kernel that can’t start says why: Jupyter missing, the kernel failing, Python not there, too slow', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     const root = await realpath(await tempDir())
@@ -202,9 +222,19 @@ describe('NotebookService', () => {
 
   it('without a stand-in, the user’s Python runs the bridge through their shell', { timeout: 30_000 }, async () => {
     const root = await realpath(await tempDir())
-    const info = await new NotebookService({ resolveRoot: () => root, publish: () => {} }).kernels('p')
+    const info = await new NotebookService({ resolveRoot: () => root, trusted: () => true, publish: () => {} }).kernels('p')
     // Whatever this machine has: Jupyter or not, an answer.
     expect(info).toMatchObject({ python: 'python3', venv: false, ready: expect.any(Boolean) })
+  })
+
+  it('a project that isn’t trusted: no Python starts in it (its .venv, a json.py next to it), not even to list the kernels', async () => {
+    const root = await realpath(await tempDir())
+    const h = harness(root, (_c, _a, p) => p.say({ type: 'ready' }), false)
+    await expect(h.service.kernels('p')).rejects.toMatchObject({ code: 'untrusted' })
+    await expect(h.service.setup('p')).rejects.toMatchObject({ code: 'untrusted' })
+    await expect(h.service.start('p', 'x.ipynb', 'python3')).rejects.toMatchObject({ code: 'untrusted' })
+    await expect(new NotebookService({ resolveRoot: () => root, publish: () => {} }).kernels('p')).rejects.toMatchObject({ code: 'untrusted' })
+    expect(h.calls).toEqual([])
   })
 
   it('notebooks only inside the project; a folder that isn’t there runs in the project', async () => {

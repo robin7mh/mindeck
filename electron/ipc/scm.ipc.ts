@@ -1,7 +1,7 @@
 import type { Router } from './router'
 import type { ScmService } from '../main/services/scm/ScmService'
 
-/** Binds the scm:* contract channels (the editor's source control, quick open and search) to ScmService. */
+/** Binds the scm:* contract channels (the editor's source control and quick open) to ScmService. */
 export function registerScmIpc(router: Router, service: ScmService): void {
   router.register('scm:status', ({ projectId }) => service.status(projectId))
   router.register('scm:init', ({ projectId }) => service.init(projectId))
@@ -20,5 +20,12 @@ export function registerScmIpc(router: Router, service: ScmService): void {
   router.register('scm:diff', ({ projectId, path, target }) => service.diff(projectId, path, target))
   router.register('scm:original', ({ projectId, path }) => service.original(projectId, path))
   router.register('scm:files', ({ projectId }) => service.files(projectId))
-  router.register('scm:search', ({ projectId, query, regex, caseSensitive }) => service.search(projectId, { query, regex, caseSensitive }))
+  router.register('scm:abort', ({ projectId }) => service.abort(projectId))
+  router.register('scm:continue', ({ projectId }) => service.continue(projectId))
+  router.register('scm:stashes', ({ projectId }) => service.stashes(projectId))
+  router.register('scm:stash', ({ projectId, message, untracked }) => service.stash(projectId, { message, untracked }))
+  router.register('scm:applyStash', ({ projectId, hash, pop }) => service.applyStash(projectId, hash, pop))
+  router.register('scm:dropStash', ({ projectId, hash }) => service.dropStash(projectId, hash))
+  router.register('scm:stashFiles', ({ projectId, hash }) => service.stashFiles(projectId, hash))
+  router.register('scm:blame', ({ projectId, path, text }) => service.blame(projectId, path, text))
 }

@@ -31,7 +31,7 @@ const tools: ToolDefinition<never>[] = [
     title: 'Write X',
     description: 'writes',
     risk: 'write',
-    schema: z.object({ v: z.string(), reason: z.string() }),
+    schema: z.object({ v: z.string(), reason: z.string(), projectId: z.string().optional() }),
     summarize: (i: { v: string }) => `write ${i.v}`,
     run: async (i: { v: string }) => `wrote:${i.v}`
   },
@@ -63,6 +63,16 @@ const tools: ToolDefinition<never>[] = [
     schema: z.object({}),
     summarize: () => 'tag',
     run: async () => 'tagged'
+  },
+  {
+    name: 'term_x',
+    title: 'Term X',
+    description: 'reads a terminal',
+    risk: 'read',
+    shell: true,
+    schema: z.object({}),
+    summarize: () => 'term',
+    run: async (_i: unknown, ctx: { conversationId?: string }) => `printed for ${ctx.conversationId}`
   },
   {
     name: 'other_agent_tool',
@@ -110,7 +120,9 @@ const call = (name: string, input: unknown, id = `tu_${name}`, text?: string, st
 const hang: Step = (req) =>
   new Promise((_, reject) => req.signal!.addEventListener('abort', () => reject(aiError('cancelled', 'Cancelled'))))
 
-async function harness(opts: { script?: Step[]; agents?: AgentDefinition[]; remoteShell?: boolean; noKey?: boolean } = {}) {
+async function harness(
+  opts: { script?: Step[]; agents?: AgentDefinition[]; remoteShell?: boolean; noKey?: boolean; remoteAccess?: { tool(input: unknown, projectId?: string): Promise<void> } } = {}
+) {
   const dir = await tempDir()
   const script = [...(opts.script ?? [])]
   const requests: LlmRequest[] = []
@@ -146,6 +158,7 @@ async function harness(opts: { script?: Step[]; agents?: AgentDefinition[]; remo
     context: { build: async (_t: string, p?: string) => `<context>${p ?? ''}</context>` } as never,
     publish: (channel, payload) => pushed.push({ channel, payload }),
     remoteShell: () => !!opts.remoteShell,
+    remoteAccess: opts.remoteAccess,
     agents: opts.agents ?? [agentDef()]
   })
   const reply = async (conversationId: string): Promise<ChatMessage> => (await svc.conversation(conversationId)).messages.at(-1)!
@@ -284,6 +297,11 @@ describe('AssistantService — tools and the permission gate', () => {
       const [req] = h.permissions.list()
       const live = h.pushed.filter((p) => p.channel === 'ai:message').at(-1)!.payload as { message: ChatMessage }
       expect(toolParts(live.message).at(-1)).toMatchObject({ status: 'awaiting-approval', requestId: expect.any(String) })
+      // A client that missed the push (reconnecting) reads the same from the conversation, not the last saved copy.
+      const now = await h.svc.conversation(conversationId)
+      expect(now.running).toBe(true)
+      expect(toolParts(now.messages.at(-1)!).at(-1)).toMatchObject({ status: 'awaiting-approval', requestId: req.id })
+      expect(toolParts((await h.store.get(conversationId))!.messages.at(-1)!).at(-1)?.requestId).not.toBe(req.id)
       expect(req).toMatchObject({ agentName: 'Tester', toolTitle: 'Write X', risk: 'write', allowAlways: true })
       await h.permissions.respond(req.id, decision)
       return req
@@ -321,7 +339,7 @@ describe('AssistantService — tools and the permission gate', () => {
     await h.svc.idle()
     expect(toolParts(await h.reply(conversationId))[0]).toMatchObject({
       status: 'denied',
-      output: 'Running commands is disabled for remote devices on this Mindeck core.'
+      output: 'Changing files and running commands is disabled for remote devices on this Mindeck core.'
     })
 
     const allowed = await harness({ remoteShell: true, script: [call('exec_x', { cmd: 'ls', reason: 'r' }), say('ok')] })
@@ -330,6 +348,56 @@ describe('AssistantService — tools and the permission gate', () => {
     await allowed.permissions.respond(allowed.permissions.list()[0].id, 'once')
     await allowed.svc.idle()
     expect(toolParts(await allowed.reply(c.conversationId))[0].status).toBe('done')
+  })
+
+  it('reading a terminal needs remote shells for a remote device; a tool learns its conversation', async () => {
+    const agents = [agentDef({ tools: ['term_x'] })]
+    const h = await harness({ agents, script: [call('term_x', {}), say('ok'), call('term_x', {}), say('no')] })
+    const { conversationId } = await h.svc.send({ text: 'look' }, ipc)
+    await h.svc.idle()
+    expect(toolParts(await h.reply(conversationId))[0]).toMatchObject({ status: 'done', output: `printed for ${conversationId}` })
+    await h.svc.send({ conversationId, text: 'again' }, remote)
+    await h.svc.idle()
+    expect(toolParts(await h.reply(conversationId))[0]).toMatchObject({ status: 'denied', output: 'Reading terminals is disabled for remote devices on this Mindeck core.' })
+
+    const allowed = await harness({ agents, remoteShell: true, script: [call('term_x', {}), say('ok')] })
+    const c = await allowed.svc.send({ text: 'x' }, remote)
+    await allowed.svc.idle()
+    expect(toolParts(await allowed.reply(c.conversationId))[0].status).toBe('done')
+  })
+
+  it('a remote run writes nothing without remote shells, and stays out of what devices may not reach', async () => {
+    const tool = vi.fn(async (input: unknown) => {
+      if ((input as { q?: string }).q === 'secret') throw Object.assign(new Error('.env is off-limits for paired devices'), { code: 'remote-forbidden' })
+    })
+    const h = await harness({ remoteAccess: { tool }, script: [call('write_x', { v: '1', reason: 'r' }, 'w1'), call('read_x', { q: 'ok' }, 'r1'), call('read_x', { q: 'secret' }, 'r2'), say('done')] })
+    const { conversationId } = await h.svc.send({ text: 'x', projectId: 'p1' }, remote)
+    await h.svc.idle()
+    const parts = toolParts(await h.reply(conversationId))
+    expect(parts.map((p) => p.status)).toEqual(['denied', 'done', 'denied'])
+    expect(parts[2].output).toBe('.env is off-limits for paired devices')
+    expect(tool).toHaveBeenCalledWith({ q: 'ok' }, 'p1')
+    expect(h.permissions.list()).toEqual([])
+    // The desktop's runs are never checked.
+    const d = await harness({ remoteAccess: { tool }, script: [call('read_x', { q: 'secret' }), say('ok')] })
+    await d.svc.send({ text: 'x' }, ipc)
+    await d.svc.idle()
+    expect(tool).toHaveBeenCalledTimes(2)
+  })
+
+  it('"always" holds in the tool’s project only', async () => {
+    const h = await harness({
+      script: [call('write_x', { v: '1', reason: 'r' }, 'w1'), call('write_x', { v: '2', reason: 'r' }, 'w2'), call('write_x', { v: '3', reason: 'r', projectId: 'p2' }, 'w3'), say('ok')]
+    })
+    await h.svc.send({ text: 'x', projectId: 'p1' }, ipc)
+    await h.waitFor(() => h.permissions.list().length === 1)
+    expect(h.permissions.list()[0].projectId).toBe('p1')
+    await h.permissions.respond(h.permissions.list()[0].id, 'always')
+    await h.waitFor(() => h.permissions.list().length === 1) // w2 ran unasked; w3 names another project
+    expect(h.permissions.list()[0].projectId).toBe('p2')
+    await h.permissions.respond(h.permissions.list()[0].id, 'once')
+    await h.svc.idle()
+    expect(await h.permissions.grants()).toEqual([expect.objectContaining({ agentId: 'tester', toolName: 'write_x', projectId: 'p1' })])
   })
 
   it('rejects unknown and not-allowlisted tools, invalid input and failing tools', async () => {
@@ -470,6 +538,22 @@ describe('AssistantService — limits, stop reasons, cancellation', () => {
     expect(await f.reply(e.conversationId)).toMatchObject({ status: 'error', error: 'plain failure' })
     expect((await f.svc.runs())[0]).toMatchObject({ status: 'failed' })
     expect(f.events.at(-1)).toMatchObject({ type: 'agent.failed', payload: { error: 'plain failure' } })
+  })
+
+  it('a conversation that can’t be saved at the end (disk full): a warning, and the run still finishes', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const h = await harness()
+    h.script.push(async (req, onText) => {
+      vi.spyOn(h.store, 'save').mockRejectedValue(new Error('disk full'))
+      return say('done')(req, onText)
+    })
+    const a = await h.svc.send({ text: 'x' }, ipc)
+    await h.svc.idle()
+    expect(warn).toHaveBeenCalledWith(`[assistant] could not save conversation ${a.conversationId}: disk full`)
+    expect((await h.svc.runs())[0]).toMatchObject({ status: 'completed' })
+    expect(h.events.at(-1)?.type).toBe('agent.completed')
+    expect(h.pushed).toContainEqual({ channel: 'ai:message', payload: { conversationId: a.conversationId, message: expect.objectContaining({ status: 'done' }), running: false } })
+    expect((await h.svc.conversations())[0].running).toBe(false)
   })
 
   it('removes conversations (stopping a running one) and disposes cleanly', async () => {

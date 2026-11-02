@@ -14,7 +14,15 @@ const h = vi.hoisted(() => ({
     processes: vi.fn(),
     time: vi.fn()
   },
-  username: 'robin'
+  username: 'robin',
+  statfs: vi.fn(),
+  sampler: {
+    start: vi.fn(),
+    stop: vi.fn(),
+    running: false,
+    net: { rxMbps: 1.5, txMbps: 0.2 },
+    procs: [{ pid: 7, name: 'Code', cpu: 3, mem: 300 }]
+  }
 }))
 
 vi.mock('node:child_process', () => {
@@ -30,8 +38,30 @@ vi.mock('node:child_process', () => {
   }
   return { execFile }
 })
-vi.mock('node:os', async (orig) => ({ ...(await orig<typeof import('node:os')>()), userInfo: () => ({ username: h.username }) }))
+vi.mock('node:os', async (orig) => ({
+  ...(await orig<typeof import('node:os')>()),
+  userInfo: () => ({ username: h.username }),
+  totalmem: () => 16e9,
+  freemem: () => 4e9
+}))
+vi.mock('node:fs/promises', async (orig) => ({ ...(await orig<typeof import('node:fs/promises')>()), statfs: h.statfs }))
 vi.mock('systeminformation', () => ({ default: h.si }))
+vi.mock('../../../electron/main/services/system/winSampler', () => ({
+  TOP_N: 6,
+  WinSampler: class {
+    start = h.sampler.start
+    stop = h.sampler.stop
+    get running() {
+      return h.sampler.running
+    }
+    get net() {
+      return h.sampler.net
+    }
+    get procs() {
+      return h.sampler.procs
+    }
+  }
+}))
 
 type Collectors = typeof import('../../../electron/main/services/system/collectors')
 const realPlatform = process.platform
@@ -96,6 +126,7 @@ describe('collect (generic platforms)', () => {
 
   it('falls back sensibly on sparse data', async () => {
     const c = await load('linux')
+    vi.useFakeTimers({ toFake: ['Date'] })
     h.si.mem.mockResolvedValue({ total: 10e9, active: 0, used: 5e9 })
     h.si.fsSize.mockResolvedValue([])
     h.si.battery.mockResolvedValue({ percent: undefined, isCharging: undefined, hasBattery: undefined })
@@ -107,7 +138,32 @@ describe('collect (generic platforms)', () => {
     expect(snap.uptimeSec).toBe(0)
 
     h.si.fsSize.mockResolvedValue([{ mount: '/a', use: 5, used: undefined }, { mount: '/b', use: 9, used: 2 }])
+    vi.advanceTimersByTime(31_000) // disk usage is cached for 30 s
     expect((await c.collect([])).disk).toEqual({ usedPct: 9, mount: '/b' })
+  })
+
+  it('reads disk every 30 s and battery every 60 s, not every tick', async () => {
+    const c = await load('linux')
+    vi.useFakeTimers({ toFake: ['Date'] })
+    await c.collect([])
+    await c.collect([])
+    expect(h.si.fsSize).toHaveBeenCalledTimes(1)
+    expect(h.si.battery).toHaveBeenCalledTimes(1)
+    vi.advanceTimersByTime(31_000)
+    await c.collect([])
+    expect(h.si.fsSize).toHaveBeenCalledTimes(2)
+    expect(h.si.battery).toHaveBeenCalledTimes(1)
+    vi.advanceTimersByTime(31_000)
+    await c.collect([])
+    expect(h.si.battery).toHaveBeenCalledTimes(2)
+  })
+
+  it('has no background sampler to start or stop', async () => {
+    const c = await load('linux')
+    c.startSampling()
+    c.stopSampling()
+    expect(h.sampler.start).not.toHaveBeenCalled()
+    expect(h.sampler.stop).not.toHaveBeenCalled()
   })
 
   it('lists the top processes by CPU via systeminformation', async () => {
@@ -135,6 +191,7 @@ describe('macOS specifics', () => {
     vi.advanceTimersByTime(31_000)
     h.replies.set('osascript', JSON.stringify([0, 5]))
     expect((await c.collect([])).disk).toEqual({ usedPct: 87.1, mount: '/System/Volumes/Data' })
+    vi.advanceTimersByTime(31_000)
     h.replies.set('osascript', JSON.stringify([10, -1]))
     expect((await c.collect([])).disk.mount).toBe('/System/Volumes/Data')
   })
@@ -166,6 +223,51 @@ describe('macOS specifics', () => {
     expect((await c.collectProcesses())[0].pid).toBe(2)
     h.replies.set('top', new Error('top missing'))
     expect((await c.collectProcesses())[0].pid).toBe(2)
+  })
+})
+
+describe('Windows specifics', () => {
+  const systemDrive = process.env.SystemDrive
+  afterEach(() => {
+    h.sampler.running = false
+    if (systemDrive === undefined) delete process.env.SystemDrive
+    else process.env.SystemDrive = systemDrive
+  })
+
+  it('reads memory and disk without PowerShell, network from the sampler', async () => {
+    const c = await load('win32')
+    process.env.SystemDrive = 'D:'
+    h.statfs.mockResolvedValue({ blocks: 1000, bfree: 250 })
+    const snap = await c.collect([])
+    expect(h.statfs).toHaveBeenCalledWith('D:\\')
+    expect(snap).toMatchObject({
+      mem: { usedPct: 75, usedGb: 12, totalGb: 16 },
+      disk: { usedPct: 75, mount: 'D:' },
+      net: { rxMbps: 1.5, txMbps: 0.2 },
+      battery: { pct: 95 }
+    })
+    expect(h.si.mem).not.toHaveBeenCalled()
+    expect(h.si.fsSize).not.toHaveBeenCalled()
+    expect(h.si.networkStats).not.toHaveBeenCalled()
+  })
+
+  it('defaults to C: and survives an empty volume', async () => {
+    const c = await load('win32')
+    delete process.env.SystemDrive
+    h.statfs.mockResolvedValue({ blocks: 0, bfree: 0 })
+    expect((await c.collect([])).disk).toEqual({ usedPct: 0, mount: 'C:' })
+  })
+
+  it('starts and stops the sampler, and takes its process list while it runs', async () => {
+    const c = await load('win32')
+    c.startSampling()
+    expect(h.sampler.start).toHaveBeenCalledTimes(1)
+    c.stopSampling()
+    expect(h.sampler.stop).toHaveBeenCalledTimes(1)
+
+    expect((await c.collectProcesses())[0].pid).toBe(2) // not running → one systeminformation scan
+    h.sampler.running = true
+    expect(await c.collectProcesses()).toEqual([{ pid: 7, name: 'Code', cpu: 3, mem: 300 }])
   })
 })
 

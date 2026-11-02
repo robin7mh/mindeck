@@ -5,4 +5,5 @@ import type { ToolsService } from '../main/services/tools/ToolsService'
 export function registerToolsIpc(router: Router, service: ToolsService): void {
   router.register('tools:status', () => service.status())
   router.register('tools:install', ({ id, part }) => service.install(id, part))
+  router.register('tools:runtimes', () => service.runtimes())
 }

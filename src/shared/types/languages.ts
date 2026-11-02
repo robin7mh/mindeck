@@ -78,3 +78,11 @@ export interface ToolProgress {
   part: 'server' | 'debugger'
   line: string
 }
+
+/** A program the onboarding looks for besides the coding agents. */
+export interface RuntimeInfo {
+  name: 'node' | 'npm' | 'git'
+  found: boolean
+  path?: string
+  version?: string
+}

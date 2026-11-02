@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Plus, TerminalSquare, Trash2 } from 'lucide-react'
+import { PanelRightOpen, Plus, TerminalSquare, Trash2 } from 'lucide-react'
 import type { AgentSession } from '@shared/types/agents'
 import { Panel } from '@/components/ui/Panel'
 import { TechLabel } from '@/components/ui/TechLabel'
@@ -14,7 +14,7 @@ import { ActivityTimeline } from './ActivityTimeline'
 import { AssistantPane, iconFor } from './AssistantPane'
 import { NewChatDialog } from './NewChatDialog'
 import { AGENT_NAMES, SessionPane } from './SessionPane'
-import { DiffModal, SessionSide } from './SessionSide'
+import { DiffModal, HideSideButton, SessionSide } from './SessionSide'
 
 type Entry =
   | { kind: 'session'; id: string; title: string; sub: string; updatedAt: string; session: AgentSession }
@@ -30,11 +30,31 @@ const DOT: Record<AgentSession['status'], { tone: 'cyan' | 'warn' | 'ok' | 'mute
   error: { tone: 'error', pulse: false }
 }
 
+const SIDE_KEY = 'mindeck.agents.side'
+
+/** Whether the column beside the chat shows — a per-device choice; storage can be unavailable, so never throw. */
+function readSide(): boolean {
+  try {
+    return localStorage.getItem(SIDE_KEY) !== '0'
+  } catch {
+    return true
+  }
+}
+
+function writeSide(open: boolean): void {
+  try {
+    localStorage.setItem(SIDE_KEY, open ? '1' : '0')
+  } catch {
+    /* the choice just won't be remembered */
+  }
+}
+
 /**
  * The Agents module — a cockpit for the coding agents the user already has
  * (Claude Code runs on their own plan) next to Mindeck's own assistant: one
  * list of chats, the open one in the middle, its changes, plan and memory
- * beside it. Everything starts with "New chat".
+ * (or the activity) beside it — a column that folds away. Everything starts
+ * with "New chat".
  */
 export function AgentsView({ onOpenNote, onOpenSettings }: { onOpenNote: (path: string) => void; onOpenSettings: () => void }) {
   const t = useT()
@@ -43,6 +63,11 @@ export function AgentsView({ onOpenNote, onOpenSettings }: { onOpenNote: (path: 
   const { session, messages } = useActiveSession()
   const loadProjects = useProjects((s) => s.load)
   const [confirm, setConfirm] = useState<string>()
+  const [side, setSide] = useState(readSide)
+  const toggleSide = () => {
+    writeSide(!side)
+    setSide(!side)
+  }
 
   useEffect(() => {
     void loadProjects()
@@ -85,7 +110,7 @@ export function AgentsView({ onOpenNote, onOpenSettings }: { onOpenNote: (path: 
           <button
             type="button"
             onClick={() => ag.openDialog()}
-            className="flex w-full items-center justify-center gap-1.5 rounded-md border border-cyan/40 bg-cyan/[0.06] px-2.5 py-1.5 font-sans text-[12px] font-medium text-cyan hover:bg-cyan/[0.12]"
+            className="flex w-full items-center justify-center gap-1.5 rounded-md border border-cyan/40 bg-cyan/6 px-2.5 py-1.5 font-sans text-[12px] font-medium text-cyan hover:bg-cyan/12"
           >
             <Plus size={14} /> {t.agents.newChat}
           </button>
@@ -97,7 +122,7 @@ export function AgentsView({ onOpenNote, onOpenSettings }: { onOpenNote: (path: 
             const active = isActive(e)
             const dot = e.kind === 'session' ? DOT[e.session.status] : e.running ? DOT.working : undefined
             return (
-              <div key={`${e.kind}:${e.id}`} className={cn('group flex items-center gap-2 rounded-md px-2 py-1.5', active ? 'bg-cyan/[0.08]' : 'hover:bg-elevated/50')}>
+              <div key={`${e.kind}:${e.id}`} className={cn('group flex items-center gap-2 rounded-md px-2 py-1.5', active ? 'bg-cyan/8' : 'hover:bg-elevated/50')}>
                 <button type="button" onClick={() => openEntry(e)} className="flex min-w-0 flex-1 items-center gap-2 text-left">
                   <Icon size={13} className={cn('shrink-0', active ? 'text-cyan' : 'text-text-muted')} />
                   <span className="min-w-0 flex-1">
@@ -109,7 +134,7 @@ export function AgentsView({ onOpenNote, onOpenSettings }: { onOpenNote: (path: 
                   {dot && <StatusDot tone={dot.tone} pulse={dot.pulse} />}
                 </button>
                 {confirm === e.id ? (
-                  <button type="button" onClick={() => removeEntry(e)} className="shrink-0 rounded border border-danger/50 px-1.5 font-sans text-[10.5px] text-danger">
+                  <button type="button" onClick={() => removeEntry(e)} className="shrink-0 rounded-sm border border-danger/50 px-1.5 font-sans text-[10.5px] text-danger">
                     {t.agents.delete}
                   </button>
                 ) : (
@@ -144,20 +169,33 @@ export function AgentsView({ onOpenNote, onOpenSettings }: { onOpenNote: (path: 
           <button
             type="button"
             onClick={() => ag.openDialog()}
-            className="flex items-center gap-1.5 rounded-md border border-cyan/50 bg-cyan/[0.1] px-3 py-1.5 font-sans text-[12px] font-medium text-cyan hover:bg-cyan/[0.16]"
+            className="flex items-center gap-1.5 rounded-md border border-cyan/50 bg-cyan/[0.1] px-3 py-1.5 font-sans text-[12px] font-medium text-cyan hover:bg-cyan/16"
           >
             <Plus size={14} /> {t.agents.newChat}
           </button>
         </section>
       )}
 
-      {/* right */}
-      {ag.view === 'session' && session ? (
-        <SessionSide session={session} onOpenNote={onOpenNote} />
+      {/* right: folded away, a narrow strip to bring it back */}
+      {!side ? (
+        <aside className="hidden w-10 shrink-0 flex-col items-center border-l border-hud/50 pt-2 pane-xl:flex">
+          <button
+            type="button"
+            aria-label={t.agents.showSide}
+            title={t.agents.showSide}
+            onClick={toggleSide}
+            className="rounded-sm p-1.5 text-text-muted hover:bg-elevated hover:text-text-primary"
+          >
+            <PanelRightOpen size={15} />
+          </button>
+        </aside>
+      ) : ag.view === 'session' && session ? (
+        <SessionSide session={session} onOpenNote={onOpenNote} onHide={toggleSide} />
       ) : (
-        <aside className="hidden w-72 shrink-0 flex-col border-l border-hud/50 xl:flex">
-          <div className="flex h-10 items-center border-b border-hud/50 px-3">
+        <aside className="hidden w-72 shrink-0 flex-col border-l border-hud/50 pane-xl:flex">
+          <div className="flex h-10 items-center border-b border-hud/50 pl-3 pr-2">
             <TechLabel className="text-text-secondary">{ag.view === 'assistant' && a.activeId ? t.agents.runActivity : t.agents.allActivity}</TechLabel>
+            <HideSideButton onHide={toggleSide} />
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto p-1.5">
             <ActivityTimeline events={ag.view === 'assistant' ? activity : a.activity} empty={t.agents.nothingYet} />

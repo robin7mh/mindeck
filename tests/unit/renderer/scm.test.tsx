@@ -14,7 +14,6 @@ import { useScm } from '@/features/editor/scm'
 import { useEditor } from '@/features/editor/store'
 import { useProjects } from '@/features/projects/store'
 import { DiffHeader, ScmPanel } from '@/features/editor/components/ScmPanel'
-import { SearchPanel } from '@/features/editor/components/SearchPanel'
 import { fuzzyScore, QuickOpen } from '@/features/editor/components/QuickOpen'
 import { GitGraph, layoutGraph } from '@/features/editor/components/GitGraph'
 import { EditorView } from '@/features/editor/components/EditorView'
@@ -69,7 +68,7 @@ describe('scm store', () => {
     await s().checkout('main')
     await s().createBranch('x')
     await s().init()
-    const calls = bridge.invoke.mock.calls.map(([c]) => c).filter((c) => !['scm:status', 'scm:branches'].includes(c))
+    const calls = bridge.invoke.mock.calls.map(([c]) => c).filter((c) => !['scm:status', 'scm:branches', 'scm:stashes'].includes(c))
     expect(calls).toEqual(['scm:stage', 'scm:unstage', 'scm:discard', 'scm:fetch', 'scm:pull', 'scm:checkout', 'scm:createBranch', 'scm:init'])
 
     await s().push()
@@ -88,6 +87,12 @@ describe('scm store', () => {
     s().setMessage('only staged')
     await s().commit()
     expect(bridge.invoke).toHaveBeenCalledWith('scm:commit', { projectId: 'p', message: 'only staged', amend: false, all: false })
+    // a commit that fails keeps the message for another try
+    s().setMessage('again')
+    bridge.invoke.mockRejectedValueOnce(new Error('hook failed'))
+    await s().commit()
+    expect(s()).toMatchObject({ message: 'again', error: 'hook failed' })
+    s().clearError()
 
     await s().sync()
     expect(bridge.invoke).toHaveBeenCalledWith('scm:pull', { projectId: 'p' })
@@ -106,7 +111,6 @@ describe('scm store', () => {
     await s().loadLog()
     await s().select('abcd')
     s().setQuickOpen(true)
-    await s().runSearch()
     expect(bridge.invoke).not.toHaveBeenCalledWith(expect.stringMatching(/^scm:/), expect.anything())
   })
 
@@ -120,7 +124,7 @@ describe('scm store', () => {
     expect(s().branches).toEqual([])
   })
 
-  it('diffs, the log (selecting the newest), commit details, quick open files and search', async () => {
+  it('diffs, the log (selecting the newest), commit details, quick open files', async () => {
     let failing = false
     const bridge = installBridge({
       'scm:status': () => status(),
@@ -128,8 +132,7 @@ describe('scm store', () => {
       'scm:diff': ({ path }: { path: string }) => (failing ? fail('no diff') : { path, original: 'a', modified: 'b' }),
       'scm:log': () => (failing ? fail('no log') : [commit('c2', ['c1']), commit('c1', [])]),
       'scm:show': ({ hash }: { hash: string }) => (failing ? fail('no commit') : { hash, author: 'Ada', email: 'a@a', date: 0, message: 'm', files: [] }),
-      'scm:files': () => (failing ? fail('no files') : ['src/a.ts']),
-      'scm:search': () => (failing ? fail('bad regex') : { matches: [{ path: 'a.ts', line: 1, text: 'x' }], truncated: false })
+      'scm:files': () => (failing ? fail('no files') : ['src/a.ts'])
     })
     await s().openDiff({ path: 'new.ts', from: 'old.ts' }, { kind: 'commit', hash: 'abcd' }, 'new.ts (abcd)')
     expect(bridge.invoke).toHaveBeenCalledWith('scm:diff', { projectId: 'p', path: 'new.ts', target: { kind: 'commit', hash: 'abcd', from: 'old.ts' } })
@@ -153,13 +156,6 @@ describe('scm store', () => {
     expect(s()).toMatchObject({ quickOpen: true, files: ['src/a.ts'] })
     s().setQuickOpen(false)
 
-    await s().runSearch() // empty query: no search
-    expect(bridge.invoke).not.toHaveBeenCalledWith('scm:search', expect.anything())
-    s().setSearch({ query: 'x', regex: true })
-    await s().runSearch()
-    expect(bridge.invoke).toHaveBeenCalledWith('scm:search', { projectId: 'p', query: 'x', regex: true, caseSensitive: false })
-    expect(s().search.result?.matches).toHaveLength(1)
-
     failing = true
     await s().openDiff({ path: 'a' }, { kind: 'unstaged' }, 'a')
     expect(s().error).toBe('no diff')
@@ -170,8 +166,6 @@ describe('scm store', () => {
     s().setQuickOpen(true)
     await act(settle)
     expect(s().error).toBe('no files')
-    await s().runSearch()
-    expect(s()).toMatchObject({ error: 'bad regex', search: { searching: false } })
   })
 
   it('switching projects starts over; opening at a line remembers where to scroll', async () => {
@@ -219,8 +213,8 @@ describe('ScmPanel', () => {
       { path: 'clash.ts', unstaged: 'conflicted' as const }
     ]
     installBridge({ 'files:read': () => ({ path: 'src/new.ts', content: 'x', mtimeMs: 1, size: 1 }) })
-    panel(status({ files, merging: true }), { stage, unstage, discard, openDiff, diff: { path: 'x', original: '', modified: '', title: 'x' } })
-    expect(screen.getByText(/Merge in progress/)).toBeInTheDocument()
+    panel(status({ files, merging: true, operation: { kind: 'merge' } }), { stage, unstage, discard, openDiff, diff: { path: 'x', original: '', modified: '', title: 'x' } })
+    expect(screen.getByText('Merging')).toBeInTheDocument()
     expect(screen.getByText('Merge conflicts')).toBeInTheDocument()
     expect(screen.getAllByText(/^[MAU!]$/).map((n) => n.textContent)).toEqual(['!', 'M', 'A', 'M', 'U'])
 
@@ -328,7 +322,7 @@ describe('ScmPanel', () => {
   })
 })
 
-describe('search and quick open', () => {
+describe('quick open', () => {
   it('fuzzy scores: in order, file names first, misses', () => {
     expect(fuzzyScore('src/app.ts', '')).toBe(0)
     expect(fuzzyScore('src/app.ts', 'zz')).toBeNull()
@@ -336,53 +330,10 @@ describe('search and quick open', () => {
     expect(fuzzyScore('src/app.ts', 's a')).not.toBeNull()
   })
 
-  it('searches as you type, groups results by file and opens a line', async () => {
-    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
-    const runSearch = vi.fn(async () => {})
-    useScm.setState({ runSearch })
-    const { rerender, unmount } = render(<SearchPanel />)
-    await act(() => vi.advanceTimersByTimeAsync(300))
-    expect(runSearch).toHaveBeenCalledTimes(1)
-    fireEvent.change(screen.getByLabelText('Search in project'), { target: { value: 'needle' } })
-    fireEvent.click(screen.getByLabelText('Match case'))
-    fireEvent.click(screen.getByLabelText('Use regular expression'))
-    await act(() => vi.advanceTimersByTimeAsync(300))
-    expect(runSearch).toHaveBeenCalledTimes(2) // debounced into one
-    expect(useScm.getState().search).toMatchObject({ query: 'needle', caseSensitive: true, regex: true })
-    fireEvent.keyDown(screen.getByLabelText('Search in project'), { key: 'Enter' })
-    fireEvent.keyDown(screen.getByLabelText('Search in project'), { key: 'a' })
-    expect(runSearch).toHaveBeenCalledTimes(3)
-    vi.useRealTimers()
-
-    installBridge({ 'files:read': () => ({ path: 'src/a.ts', content: 'x\ny', mtimeMs: 1, size: 3 }) })
-    act(() =>
-      useScm.setState({
-        search: {
-          ...useScm.getState().search,
-          searching: true,
-          result: { truncated: true, matches: [{ path: 'src/a.ts', line: 2, text: 'y needle' }, { path: 'src/a.ts', line: 9, text: 'z' }, { path: 'top.md', line: 1, text: 'needle' }] }
-        }
-      })
-    )
-    rerender(<SearchPanel />)
-    expect(screen.getByText('3 results in 2 files')).toBeInTheDocument()
-    expect(screen.getByText(/More results than shown/)).toBeInTheDocument()
-    fireEvent.click(screen.getByText('y needle'))
-    await act(settle)
-    expect(useEditor.getState()).toMatchObject({ activeId: 'p:src/a.ts', reveal: { line: 2 } })
-    unmount()
-
-    // coming back with results: no immediate re-search; none found
-    render(<SearchPanel />)
-    expect(runSearch).toHaveBeenCalledTimes(3)
-    act(() => useScm.setState({ search: { ...useScm.getState().search, searching: false, result: { truncated: false, matches: [] } } }))
-    expect(screen.getByText('No results.')).toBeInTheDocument()
-  })
-
   it('⌘P: type, move, open with Enter or a click; Escape and outside clicks close', async () => {
     installBridge({ 'scm:files': () => ['src/app.ts', 'src/util/apply.ts', 'README.md'], 'files:read': () => ({ path: 'x', content: 'x', mtimeMs: 1, size: 1 }) })
     useScm.setState({ files: ['src/app.ts', 'src/util/apply.ts', 'README.md'], quickOpen: true })
-    const { rerender } = render(<QuickOpen commands={[]} />)
+    const { rerender } = render(<QuickOpen />)
     const input = screen.getByLabelText('Go to file by name…', { selector: 'input' })
     fireEvent.change(input, { target: { value: 'ap' } })
     expect(screen.getAllByRole('option').map((o) => o.textContent)).toEqual(['app.tssrc/', 'apply.tssrc/util/'])
@@ -396,7 +347,7 @@ describe('search and quick open', () => {
     expect(useEditor.getState().activeId).toBe('p:src/util/apply.ts')
     expect(useScm.getState().quickOpen).toBe(false)
 
-    rerender(<QuickOpen commands={[]} />)
+    rerender(<QuickOpen />)
     fireEvent.change(screen.getByLabelText('Go to file by name…', { selector: 'input' }), { target: { value: '' } })
     fireEvent.mouseEnter(screen.getAllByRole('option')[2])
     fireEvent.click(screen.getAllByRole('option')[2])
@@ -404,7 +355,7 @@ describe('search and quick open', () => {
     expect(useEditor.getState().activeId).toBe('p:README.md')
 
     act(() => useScm.setState({ quickOpen: true }))
-    rerender(<QuickOpen commands={[]} />)
+    rerender(<QuickOpen />)
     fireEvent.change(screen.getByLabelText('Go to file by name…', { selector: 'input' }), { target: { value: 'zzz' } })
     expect(screen.getByText('No matching files')).toBeInTheDocument()
     fireEvent.keyDown(screen.getByLabelText('Go to file by name…', { selector: 'input' }), { key: 'Enter' }) // nothing to open
@@ -466,6 +417,10 @@ describe('git graph', () => {
     expect(openDiff).toHaveBeenCalledWith({ path: 'y.ts', from: 'old.ts', change: 'renamed' }, { kind: 'commit', hash: 'm'.repeat(40) }, 'y.ts (mmmmmmm)')
     fireEvent.click(screen.getByTitle('src/x.ts'))
     expect(openDiff).toHaveBeenCalledTimes(2)
+    // a lane that ended between two that go on leaves a gap, drawn as none
+    act(() => useScm.setState({ log: [commit('x1', ['p1']), commit('x2', ['p2']), commit('x3', ['p3']), commit('p2', []), commit('p1', [])], detail: undefined }))
+    rerender(<GitGraph />)
+    expect(screen.getAllByRole('option')).toHaveLength(5)
   })
 })
 
@@ -475,11 +430,12 @@ describe('EditorView with source control', () => {
       'projects:list': () => [{ id: 'p', name: 'Demo', path: '/x/p', addedAt: '', lastSeenAt: '' }],
       'files:list': () => [],
       'files:stat': () => [],
-      'scm:status': () => status({ ahead: 1, behind: 2, files: Array.from({ length: 120 }, (_, i) => ({ path: `f${i}.ts`, unstaged: 'modified' as const })) }),
+      'scm:status': () => status({ ahead: 1, behind: 2, files: Array.from({ length: 100 }, (_, i) => ({ path: `f${i}.ts`, unstaged: 'modified' as const })) }),
       'scm:branches': () => [],
       'scm:log': () => [commit('c1', [])],
       'scm:show': () => ({ hash: 'c1', author: 'Ada', email: 'a@a', date: 0, message: 'first', files: [] }),
       'scm:files': () => ['a.ts'],
+      'scm:stashes': () => [],
       ...over
     })
 
@@ -496,7 +452,7 @@ describe('EditorView with source control', () => {
     expect(screen.getByRole('dialog', { name: 'Go to file by name…' })).toBeInTheDocument()
     fireEvent.keyDown(screen.getByLabelText('Go to file by name…', { selector: 'input' }), { key: 'Escape' })
     fireEvent.keyDown(window, { key: 'F', metaKey: true, shiftKey: true })
-    expect(screen.getByLabelText('Search in project')).toBeInTheDocument()
+    expect(screen.getByRole('textbox', { name: 'Search' })).toBeInTheDocument()
     fireEvent.keyDown(window, { key: 'g', ctrlKey: true, shiftKey: true })
     expect(screen.getByRole('button', { name: 'Source Control' })).toHaveAttribute('aria-pressed', 'true')
     fireEvent.keyDown(window, { key: 'x', metaKey: true }) // not ours

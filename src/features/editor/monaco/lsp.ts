@@ -1,5 +1,5 @@
 import { ipc, onEvent } from '@shared/ipc/client'
-import type { LspDiagnostic, LspFileEdits, LspRange, LspTextEdit } from '@shared/types/lsp'
+import type { LspDiagnostic, LspFileEdits, LspRange, LspSymbol, LspTextEdit } from '@shared/types/lsp'
 import { LANGUAGES as SERVED_LANGUAGES } from '@shared/types/languages'
 import { monaco } from './setup'
 import { fileOf } from './uri'
@@ -221,6 +221,11 @@ const KINDS: Record<string, monaco.languages.CompletionItemKind> = {
   snippet: K.Snippet
 }
 
+/** A language server's symbol for Monaco (whose kinds count from 0, LSP's from 1). */
+function documentSymbol(s: LspSymbol): monaco.languages.DocumentSymbol {
+  return { name: s.name, detail: s.detail ?? '', kind: s.kind - 1, tags: [], range: toRange(s.range), selectionRange: toRange(s.selection), children: s.children.map(documentSymbol) }
+}
+
 /** What resolving a completion needs back (kept per suggestion object). */
 const completionData = new WeakMap<monaco.languages.CompletionItem, { file: File; line: number; offset: number; name: string; source?: string; data?: unknown }>()
 
@@ -252,6 +257,18 @@ export function setupLsp(): void {
       return true
     }
   })
+
+  // Symbols (outline, breadcrumbs, ⇧⌘O) from the language servers — TypeScript's built-in service has its own.
+  for (const language of SERVED_LANGUAGES.flatMap((l) => l.monaco)) {
+    monaco.languages.registerDocumentSymbolProvider(language, {
+      async provideDocumentSymbols(model) {
+        const file = await ready(model)
+        if (!file) return []
+        const found = await ipc('lsp:symbols', file).catch(() => [])
+        return found.map(documentSymbol)
+      }
+    })
+  }
 
   for (const language of LANGUAGES) {
     monaco.languages.registerHoverProvider(language, {

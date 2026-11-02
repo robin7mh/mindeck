@@ -1,8 +1,10 @@
 import { create } from 'zustand'
 import QRCode from 'qrcode'
 import { errorMessage, ipc, isDesktop } from '@shared/ipc/client'
-import type { Device, PairingCode, ServerConfig, ServerStatus } from '@shared/types/server'
+import { pairingLink } from '@shared/ipc/transport'
+import type { Device, DeviceRole, PairingCode, ServerConfig, ServerStatus } from '@shared/types/server'
 import type { PermissionGrant } from '@shared/types/ai'
+import type { Project } from '@shared/types/project'
 
 /** An address only this computer can open — never a phone. */
 export const isLoopback = (url: string): boolean => /\/\/(127\.0\.0\.1|localhost|\[::1\])(?=[:/]|$)/.test(url)
@@ -17,10 +19,14 @@ function phoneOrigin(origin: string | undefined, desktop: boolean): string | und
   return !desktop && origin && !/^file:|^app:/.test(origin) && !isLoopback(origin) ? origin : undefined
 }
 
-/** The URL a phone should open: a reachable page address, else the core's LAN address. */
-export function pairingUrl(code: string, urls: string[], origin?: string, desktop = false): string {
+/**
+ * The URL a phone should open: a reachable page address, else the core's LAN
+ * address — over HTTPS with the certificate's fingerprint (`&fp=`), so the
+ * person can check the certificate the browser warns about.
+ */
+export function pairingUrl(code: string, urls: string[], origin?: string, desktop = false, fingerprint?: string, spkiFingerprint?: string): string {
   const base = phoneOrigin(origin, desktop) ?? urls.find((u) => !isLoopback(u)) ?? urls[0]
-  return `${base.replace(/\/$/, '')}/#pair=${encodeURIComponent(code)}`
+  return base.startsWith('https:') ? pairingLink(base, code, fingerprint, spkiFingerprint) : pairingLink(base, code)
 }
 
 /** Whether any address a phone could open exists (else the core listens on this computer only). */
@@ -30,27 +36,45 @@ export function pairingReachable(urls: string[], origin?: string, desktop = fals
 
 type Pairing = PairingCode & { url: string; qr: string; reachable: boolean }
 
-/** QR code and link for a pairing code, from the core's current addresses. */
-async function pairingView(code: PairingCode, urls: string[]): Promise<Pairing> {
+/** QR code and link for a pairing code, from the core's current addresses and certificate. */
+async function pairingView(code: PairingCode, urls: string[], tls: { fingerprint?: string; spkiFingerprint?: string } | undefined): Promise<Pairing> {
   const desktop = isDesktop()
-  const url = pairingUrl(code.code, urls, location.origin, desktop)
+  const { fingerprint, spkiFingerprint } = tls ?? {}
+  const url = pairingUrl(code.code, urls, location.origin, desktop, fingerprint, spkiFingerprint)
   const qr = await QRCode.toString(url, { type: 'svg', margin: 1, errorCorrectionLevel: 'M' })
-  return { ...code, urls, url, qr, reachable: pairingReachable(urls, location.origin, desktop) }
+  return { ...code, fingerprint, spkiFingerprint, urls, url, qr, reachable: pairingReachable(urls, location.origin, desktop) }
+}
+
+/** This browser's device id (saved when it paired), or null in the desktop window. */
+export function myDeviceId(): string | null {
+  try {
+    return localStorage.getItem('mindeck.deviceId')
+  } catch {
+    return null
+  }
+}
+
+/** Whether this client may manage devices, keys and grants: the desktop window, or an admin device. */
+export function canManage(devices: Device[], desktop = isDesktop(), me = myDeviceId()): boolean {
+  return desktop || devices.some((d) => d.id === me && d.role === 'admin')
 }
 
 interface SettingsState {
   server?: ServerStatus
   devices: Device[]
   grants: PermissionGrant[]
+  /** For the grants' project names. */
+  projects: Project[]
   pairing?: Pairing
   busy: boolean
   error?: string
   load: () => Promise<void>
   configureServer: (patch: Partial<ServerConfig>) => Promise<void>
-  createPairing: () => Promise<void>
+  createPairing: (role?: DeviceRole) => Promise<void>
   closePairing: () => void
   revokeDevice: (id: string) => Promise<void>
-  revokeGrant: (agentId: string, toolName: string) => Promise<void>
+  setDeviceRole: (id: string, role: DeviceRole) => Promise<void>
+  revokeGrant: (grant: PermissionGrant) => Promise<void>
   clearError: () => void
 }
 
@@ -59,12 +83,18 @@ export const useSettings = create<SettingsState>((set, get) => {
   return {
     devices: [],
     grants: [],
+    projects: [],
     busy: false,
 
     load: async () => {
       try {
-        const [server, devices, grants] = await Promise.all([ipc('server:status'), ipc('server:devices'), ipc('permission:grants')])
-        set({ server, devices, grants })
+        const [server, devices, grants, projects] = await Promise.all([
+          ipc('server:status'),
+          ipc('server:devices'),
+          ipc('permission:grants'),
+          ipc('projects:list').catch(() => [])
+        ])
+        set({ server, devices, grants, projects: projects ?? [] })
       } catch (err) {
         fail(err)
       }
@@ -80,18 +110,18 @@ export const useSettings = create<SettingsState>((set, get) => {
         set({ server, busy: false })
         // An open pairing follows the new addresses (e.g. the LAN was just switched on).
         const open = get().pairing
-        if (open) set({ pairing: await pairingView(open, server.urls) })
+        if (open) set({ pairing: await pairingView(open, server.urls, server.tls) })
       } catch (err) {
         set({ server: before })
         fail(err)
       }
     },
 
-    createPairing: async () => {
+    createPairing: async (role) => {
       set({ busy: true, error: undefined })
       try {
-        const code = await ipc('server:createPairingCode')
-        set({ pairing: await pairingView(code, code.urls), busy: false })
+        const code = await ipc('server:createPairingCode', role ? { role } : {})
+        set({ pairing: await pairingView(code, code.urls, code), busy: false })
       } catch (err) {
         fail(err)
       }
@@ -111,10 +141,19 @@ export const useSettings = create<SettingsState>((set, get) => {
       }
     },
 
-    revokeGrant: async (agentId, toolName) => {
+    setDeviceRole: async (id, role) => {
       try {
-        await ipc('permission:revoke', { agentId, toolName })
-        set({ grants: get().grants.filter((g) => !(g.agentId === agentId && g.toolName === toolName)) })
+        set({ devices: await ipc('server:setDeviceRole', { id, role }) })
+      } catch (err) {
+        fail(err)
+      }
+    },
+
+    revokeGrant: async (grant) => {
+      const { agentId, toolName, projectId } = grant
+      try {
+        await ipc('permission:revoke', { agentId, toolName, ...(projectId ? { projectId } : {}) })
+        set({ grants: get().grants.filter((g) => g !== grant) })
       } catch (err) {
         fail(err)
       }

@@ -1,18 +1,37 @@
+import { useEffect, useState } from 'react'
 import { LogOut, Wifi, WifiOff, ShieldCheck } from 'lucide-react'
 import { Clock } from './Clock'
 import { StatusIndicator } from './StatusIndicator'
 import { UpdateChip } from '@/features/update/components/UpdateChip'
+import { OfflineChip } from '@/features/cloud/components/OfflineChip'
 import { WindowControls } from './WindowControls'
 import { TechLabel } from '@/components/ui/TechLabel'
 import { StatusDot } from '@/components/ui/StatusDot'
+import { MindeckMark } from '@/components/brand/MindeckMark'
 import { formatUptime } from '@/lib/format'
 import { cn } from '@/lib/cn'
 import { isMac, useFullScreen } from '@/lib/platform'
 import { isDesktop } from '@shared/ipc/client'
 import { useSession } from '@/features/session/store'
 import { useT } from '@/lib/i18n'
+import { WorkspaceMenu } from '@/features/workspace/components/WorkspaceMenu'
+import { SplitButton } from '@/features/workspace/components/SplitButton'
+import { PaletteButton } from '@/features/palette/components/PaletteButton'
 
-export function TopStatusBar({ uptime, showClock = true }: { uptime: number; showClock?: boolean }) {
+/** Session uptime since `since` (epoch ms); ticks on its own so only this re-renders. */
+function Uptime({ since }: { since?: number }) {
+  const t = useT()
+  const [, tick] = useState(0)
+  useEffect(() => {
+    if (since === undefined) return
+    const id = window.setInterval(() => tick((n) => n + 1), 1000)
+    return () => window.clearInterval(id)
+  }, [since])
+  const secs = since === undefined ? 0 : Math.max(0, Math.floor((Date.now() - since) / 1000))
+  return <StatusIndicator label={t.topbar.uptime} value={formatUptime(secs)} tone="ok" pulse={false} />
+}
+
+export function TopStatusBar({ since, showClock = true }: { since?: number; showClock?: boolean }) {
   const t = useT()
   const fullScreen = useFullScreen()
   const desktop = isDesktop()
@@ -35,8 +54,8 @@ export function TopStatusBar({ uptime, showClock = true }: { uptime: number; sho
     >
       {/* Logo / codename */}
       <div className="flex items-center gap-2.5">
-        <div className="flex h-7 w-7 items-center justify-center rounded-md border border-cyan/40 bg-cyan/5 font-mono text-xs font-bold text-cyan text-glow-cyan">
-          MD
+        <div className="flex h-7 w-7 items-center justify-center">
+          <MindeckMark size={26} />
         </div>
         <div className="leading-none">
           <div className="font-sans text-[13px] font-semibold tracking-wide text-text-primary">
@@ -44,7 +63,7 @@ export function TopStatusBar({ uptime, showClock = true }: { uptime: number; sho
           </div>
           <TechLabel className="text-text-muted">{t.topbar.commandCenter}</TechLabel>
         </div>
-        <span className="ml-1 hidden items-center gap-1.5 rounded border border-hud/60 bg-surface/60 px-1.5 py-0.5 md:flex">
+        <span className="ml-1 hidden items-center gap-1.5 rounded-sm border border-hud/60 bg-surface/60 px-1.5 py-0.5 md:flex">
           <StatusDot tone="ok" />
           <span className="font-mono text-[10px] text-text-secondary">v{info?.version ?? '0.1.0'}</span>
         </span>
@@ -59,14 +78,18 @@ export function TopStatusBar({ uptime, showClock = true }: { uptime: number; sho
 
       {/* Right cluster */}
       <div className="ml-auto flex items-center gap-2 lg:ml-0">
+        <OfflineChip />
         <UpdateChip />
+        <PaletteButton />
+        <SplitButton />
+        <WorkspaceMenu />
         <div className="hidden items-center gap-2 xl:flex">
           <StatusIndicator
             label={t.topbar.mode}
             value={desktop ? t.topbar.local : t.topbar.remote(info?.hostname ?? 'core')}
             tone="cyan"
           />
-          <StatusIndicator label={t.topbar.uptime} value={formatUptime(uptime)} tone="ok" pulse={false} />
+          <Uptime since={since} />
         </div>
         <div className="hidden items-center gap-2 sm:flex">
           <StatusIndicator label={t.topbar.link} value={linkView.value} tone={linkView.tone} />

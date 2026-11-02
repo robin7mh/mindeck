@@ -5,7 +5,7 @@ import { cn } from '@/lib/cn'
 import { useT } from '@/lib/i18n'
 import { stateOf, summary, useTests } from '../tests'
 
-const tool = 'flex h-6 w-6 shrink-0 items-center justify-center rounded text-text-muted transition-colors hover:bg-elevated hover:text-text-primary disabled:opacity-40'
+const tool = 'flex h-6 w-6 shrink-0 items-center justify-center rounded-sm text-text-muted transition-colors hover:bg-elevated hover:text-text-primary disabled:opacity-40'
 
 function StateIcon({ state }: { state?: TestResult['state'] }) {
   const t = useT()
@@ -32,7 +32,7 @@ function Row({ item, depth }: { item: TestItem; depth: number }) {
   if (failedOnly && !failedBelow(item, results)) return null
   return (
     <li>
-      <div className="group flex items-center gap-1 rounded pr-1 hover:bg-elevated/60" style={{ paddingLeft: 4 + depth * 12 }}>
+      <div className="group flex items-center gap-1 rounded-sm pr-1 hover:bg-elevated/60" style={{ paddingLeft: 4 + depth * 12 }}>
         {item.children ? (
           <button type="button" aria-label={open ? t.tests.collapse(item.name) : t.tests.expand(item.name)} onClick={() => tests.toggle(item.id)} className="text-text-muted">
             <ChevronRight size={12} className={cn('transition-transform', open && 'rotate-90')} />
@@ -59,7 +59,7 @@ function Row({ item, depth }: { item: TestItem; depth: number }) {
         </button>
       </div>
       {showDetails && result?.message && (
-        <pre role="note" className="mx-2 my-1 max-h-48 overflow-auto whitespace-pre-wrap rounded border border-danger/30 bg-danger/[0.06] px-2 py-1 font-mono text-[11px] text-text-secondary" style={{ marginLeft: 20 + depth * 12 }}>
+        <pre role="note" className="mx-2 my-1 max-h-48 overflow-auto whitespace-pre-wrap rounded-sm border border-danger/30 bg-danger/6 px-2 py-1 font-mono text-[11px] text-text-secondary" style={{ marginLeft: 20 + depth * 12 }}>
           {result.message}
         </pre>
       )}
@@ -118,7 +118,7 @@ export function TestsPanel() {
           </p>
         )}
         {error && (
-          <p role="alert" className="flex items-start gap-1 rounded bg-danger/10 px-2 py-1 font-sans text-[11.5px] text-danger">
+          <p role="alert" className="flex items-start gap-1 rounded-sm bg-danger/10 px-2 py-1 font-sans text-[11.5px] text-danger">
             <span className="flex-1 whitespace-pre-wrap">{error}</span>
             <button type="button" aria-label={t.common.dismiss} onClick={() => tests.clearError()}>
               <X size={12} />

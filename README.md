@@ -38,7 +38,7 @@ Mindeck ist ein **Core** (alle Dienste), den du auf drei Arten startest:
 |---|---|---|
 | **Desktop-App** | `npm run dev` | Electron-Fenster (im Dev-Modus mit HMR) |
 | **Web-UI + API, ohne Docker** | `npm run web` | baut Web-UI und Core-Server und stellt beides unter `http://127.0.0.1:7420` bereit |
-| **Docker** | `npm run docker:up` | der Core als Container unter `http://127.0.0.1:7420` (Heimserver, NAS) |
+| **Docker** | `npm run docker:up` | der Core als Container unter `https://127.0.0.1:7420` (Heimserver, NAS) |
 
 **Zugriff aus dem Browser wird gekoppelt.** Öffne die Adresse und gib den Einmal-Code ein. Den
 Code bekommst du auf einem dieser Wege:
@@ -49,10 +49,24 @@ Code bekommst du auf einem dieser Wege:
 
 Jeder Browser und jedes Handy bekommt ein eigenes Token; Geräte entziehst du in den Settings.
 Remote-Shells sind aus, solange du nicht `MINDECK_REMOTE_TERMINAL=1` (Server) setzt oder Settings →
-*Allow remote shells* (Desktop) einschaltest.
+*Allow remote shells* (Desktop) einschaltest. Ohne sie erreichen gekoppelte Geräte nur freigegebene
+Ordner (Desktop: Settings → *Shared folders* und die dort hinzugefügten Projekte; Server:
+`MINDECK_REMOTE_ROOTS`, Standard `/projects`) und geben nur Lesezugriffe frei. Gekoppelte Geräte
+sind *Mitglieder*; Geräte koppeln, den KI-Key setzen und das Konto an- oder abmelden dürfen nur der
+Desktop und *Admin*-Geräte (beim Koppeln vergeben, `npm run server:pair -- --admin`; beim Server
+ist das erste Gerät Admin).
 
 **Die Desktop-App kann die Web-UI auch selbst ausliefern:** Schalte Settings → Remote access →
 *Run the API server* ein, fürs Handy zusätzlich *Reachable on the local network*.
+
+**Im Netzwerk verschlüsselt:** Sobald der Core übers Netzwerk erreichbar ist (*Reachable on the
+local network*, `MINDECK_LAN=1`, Docker), spricht er dort nur HTTPS/WSS — mit einem selbst
+ausgestellten Zertifikat (im Datenordner unter `data/tls`, rechtzeitig und bei neuer IP erneuert).
+Der Browser warnt einmal; der QR-Code und die Kopplungsseite zeigen den SHA-256-Fingerabdruck des
+Zertifikats, den du mit dem im Browser vergleichst. Der Computer selbst behält
+`http://127.0.0.1:7420`. Abschalten: *Encrypted (HTTPS)* bzw. `MINDECK_TLS=0` (etwa hinter einem
+Reverse-Proxy); ein eigenes Zertifikat: `MINDECK_TLS_CERT` + `MINDECK_TLS_KEY`. Details:
+[docs/API.md](docs/API.md#encryption-https--wss).
 
 ### Agents
 
@@ -111,7 +125,7 @@ Weitere Skripte:
 npm run build         # Electron main / preload / renderer → out/
 npm run web:build     # die Web-UI → out/web
 npm run server:build  # der eigenständige Core → out/server/index.cjs
-npm run server        # ihn starten (MINDECK_PORT, MINDECK_LAN, MINDECK_REMOTE_TERMINAL, MINDECK_HOME …)
+npm run server        # ihn starten (MINDECK_PORT, MINDECK_LAN, MINDECK_TLS, MINDECK_REMOTE_TERMINAL, MINDECK_REMOTE_ROOTS, MINDECK_HOME …)
 npm run web:dev       # Web-UI mit HMR; leitet /api an einen Core auf :7420 weiter
 npm run typecheck     # tsc für node (electron + server), web (renderer) und die Tests
 ```
@@ -143,7 +157,10 @@ npm run test:all         # Typecheck + Abdeckung + E2E: das, was CI bei einem Pu
     echte Shell, eine Vault-Notiz auf der Platte, ein Projekt, der Editor, der eingebettete
     API-Server. Dazu kommt eine Agent-Sitzung gegen einen Stellvertreter
     für Claude Code (`tests/e2e/fake-claude.mjs`, kein Konto nötig): Chat, Freigabe, Diff,
-    Umbenennen und Protokoll. Unter Linux ohne Bildschirm mit `xvfb-run -a` starten.
+    Umbenennen und Protokoll. Die Nutzerwege (`app-*.spec.ts`) gehen durch Workspace, Browser,
+    Files, Memory, Editor, Terminal, den Agent-Composer und die ganze Ersteinrichtung – einige über
+    einen echten Neustart der App (`restart()` in `fixtures.ts`). Unter Linux ohne Bildschirm mit
+    `xvfb-run -a` starten. Was die QA-Runde gefunden hat: [`docs/QA-2026-10.md`](docs/QA-2026-10.md).
   - *web*: die gebaute Web-UI in Chromium gegen den echten eigenständigen Core. Geprüft werden
     Kopplung, Live-Daten, der Ordner-Browser, die Zugriffsregeln und der Assistent von Anfang bis
     Ende (gestreamte Antwort, ein Werkzeugaufruf hinter einer Freigabe, die Notiz auf der Platte).
@@ -194,7 +211,9 @@ Jede App bekommt ihr eigenes Dockerfile, CI und CD laufen pro Workspace.
 
 - **Core**: Begrüßung, HUD-Uhr und Kacheln für Projekte, Gedächtnis und System.
 - **Editor**: Monaco (der Editor-Kern von VS Code) auf deinen Projektdateien, mit Dateibaum, Tabs
-  und ⌘S. Er folgt Änderungen, die anderswo gemacht werden.
+  und ⌘S, beliebig vielen Editor-Gruppen (⌘\\, ⌘K ⌘\\, Tabs an einen Rand ziehen, ⌘1…⌘9 — das
+  Layout merkt sich jedes Projekt), Breadcrumbs und Gliederung. Er folgt Änderungen, die anderswo
+  gemacht werden.
 - **Terminal**: echte Login-Shells (node-pty) in Tabs oder geteilt.
 - **Projects**: Git- und Stack-Erkennung plus Strukturkontext.
 - **Memory**: der Obsidian-Vault mit Editor und Graph.
@@ -297,7 +316,7 @@ Mindeck is one **core** (all services) with three ways to run it:
 |---|---|---|
 | **Desktop app** | `npm run dev` | Electron window (HMR in dev) |
 | **Web UI + API, no Docker** | `npm run web` | builds the web UI and the core server and serves both on `http://127.0.0.1:7420` |
-| **Docker** | `npm run docker:up` | the core as a container on `http://127.0.0.1:7420` (home server, NAS) |
+| **Docker** | `npm run docker:up` | the core as a container on `https://127.0.0.1:7420` (home server, NAS) |
 
 **Browser access is paired.** Open the address and enter the one-time code. You get the code in
 one of these ways:
@@ -308,10 +327,23 @@ one of these ways:
 
 Each browser or phone gets its own token, and you can revoke devices in Settings. Remote shells
 stay off unless you set `MINDECK_REMOTE_TERMINAL=1` (server) or turn on Settings → *Allow remote
-shells* (desktop).
+shells* (desktop). Without them, paired devices reach only shared folders (desktop: Settings →
+*Shared folders* plus the projects added there; server: `MINDECK_REMOTE_ROOTS`, default `/projects`)
+and approve reads only. Paired devices are *members*; pairing devices, setting the AI key and signing
+the core in or out of the account are for the desktop and *admin* devices (chosen when pairing,
+`npm run server:pair -- --admin`; a server's first device is admin).
 
 **The desktop app can serve the web UI too:** turn on Settings → Remote access → *Run the API
 server*, and also *Reachable on the local network* for your phone.
+
+**Encrypted on the network:** as soon as the core is reachable over the network (*Reachable on the
+local network*, `MINDECK_LAN=1`, Docker), it speaks HTTPS/WSS only there — with a certificate it
+makes itself (kept in the data folder under `data/tls`, renewed in time and for a new IP). The
+browser warns once; the QR code and the pairing page show the certificate's SHA-256 fingerprint
+to compare with the one in the browser. The computer itself keeps `http://127.0.0.1:7420`. To
+switch it off: *Encrypted (HTTPS)* or `MINDECK_TLS=0` (e.g. behind a reverse proxy); an own
+certificate: `MINDECK_TLS_CERT` + `MINDECK_TLS_KEY`. Details:
+[docs/API.md](docs/API.md#encryption-https--wss).
 
 ### Agents
 
@@ -365,7 +397,7 @@ Other scripts:
 npm run build         # Electron main / preload / renderer → out/
 npm run web:build     # the web UI → out/web
 npm run server:build  # the standalone core → out/server/index.cjs
-npm run server        # run it (MINDECK_PORT, MINDECK_LAN, MINDECK_REMOTE_TERMINAL, MINDECK_HOME …)
+npm run server        # run it (MINDECK_PORT, MINDECK_LAN, MINDECK_TLS, MINDECK_REMOTE_TERMINAL, MINDECK_REMOTE_ROOTS, MINDECK_HOME …)
 npm run web:dev       # web UI with HMR; proxies /api to a core on :7420
 npm run typecheck     # tsc for node (electron + server), web (renderer) and the tests
 ```
@@ -397,7 +429,9 @@ npm run test:all         # typecheck + coverage + e2e: what CI runs on a pull re
     shell, a vault note written to disk, a project, the editor, the embedded API server. It
     also runs a coding agent session against a stand-in for Claude Code
     (`tests/e2e/fake-claude.mjs`, no account needed): chat, approval, diff, rename and journal.
-    On Linux without a display, run it under `xvfb-run -a`.
+    The user journeys (`app-*.spec.ts`) go through the workspace, browser, files, memory, editor,
+    terminal, the agent composer and the whole first-start setup — some across a real restart of
+    the app (`restart()` in `fixtures.ts`). On Linux without a display, run it under `xvfb-run -a`.
   - *web*: the built web UI in Chromium against the real standalone core. It covers pairing, live
     data, the folder browser, the access rules, and the assistant end to end (streamed answer, a
     tool call behind an approval, the note on disk). The assistant talks to a local stand-in for
@@ -446,8 +480,9 @@ Each app gets its own Dockerfile, and CI and CD run per workspace.
 ### Modules
 
 - **Core**: greeting, HUD clock, and tiles for projects, brain and system.
-- **Editor**: Monaco (VS Code's editor core) on your project files, with file tree, tabs and ⌘S.
-  It follows changes made elsewhere.
+- **Editor**: Monaco (VS Code's editor core) on your project files, with file tree, tabs and ⌘S,
+  as many editor groups as you like (⌘\\, ⌘K ⌘\\, drag a tab to an edge, ⌘1…⌘9 — each project
+  remembers its layout), breadcrumbs and an outline. It follows changes made elsewhere.
 - **Terminal**: real login shells (node-pty) in tabs or splits.
 - **Projects**: git and stack detection plus structural context.
 - **Memory**: the Obsidian vault with editor and graph.

@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto'
+import { isAbsolute, resolve, sep } from 'node:path'
 import type { ChatMessage, ToolCallPart, ToolRisk } from '@shared/types/ai'
 import type { PlanItem, SessionStatus } from '@shared/types/agents'
+import { isDeniedName } from '../../server/RemoteAccess'
 
 /** A Claude Code hook event (common fields + whatever the event adds). */
 export interface HookEvent {
@@ -38,9 +40,38 @@ const WRITE = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit'])
 
 /** read: looks only · write: changes files · execute: runs things (asked every time). */
 export function toolRisk(name: string): ToolRisk {
-  if (READ.has(name) || /^mcp__mindeck__(memory_search|memory_read|memory_list|project_context)$/.test(name)) return 'read'
+  if (READ.has(name) || /^mcp__mindeck__(memory_search|memory_read|memory_list|project_context|browser_(tabs|snapshot|read|screenshot|console)|terminal_read)$/.test(name)) return 'read'
+  // Starting a command in a Mindeck terminal is running one, like the agent's own shell.
+  if (name === 'mcp__mindeck__terminal_run') return 'execute'
   if (WRITE.has(name) || /^mcp__mindeck__/.test(name)) return 'write'
   return 'execute'
+}
+
+/**
+ * A path an agent wants to look at that leaves its folder (`/etc`, `~/.ssh/…`,
+ * `../other`) or names keys and credentials. Without a folder to compare with,
+ * any absolute path does.
+ */
+export function reachesOutside(path: string, cwd?: string): boolean {
+  if (path.startsWith('~') || path.split(/[\\/]+/).some(isDeniedName)) return true
+  if (!cwd) return isAbsolute(path)
+  const root = resolve(cwd)
+  const abs = resolve(root, path)
+  return abs !== root && !abs.startsWith(root.endsWith(sep) ? root : root + sep)
+}
+
+/**
+ * The risk an approval carries: `toolRisk`, except that looking outside the
+ * project (Read/Glob/Grep/LS on `~/.ssh`) and fetching from the web (a way out
+ * for whatever was read) count as changes — a device allows them only with
+ * remote shells, like any change.
+ */
+export function approvalRisk(name: string, input: Record<string, unknown> = {}, cwd?: string): ToolRisk {
+  const risk = toolRisk(name)
+  if (risk !== 'read') return risk
+  if (name === 'WebFetch') return 'write'
+  const paths = ['file_path', 'notebook_path', 'path'].map((k) => input[k]).filter((v): v is string => typeof v === 'string')
+  return paths.some((p) => reachesOutside(p, cwd)) ? 'write' : 'read'
 }
 
 const TITLES: Record<string, string> = {
@@ -62,6 +93,8 @@ const TITLES: Record<string, string> = {
 
 export function toolTitle(name: string): string {
   const mcp = /^mcp__([^_]+(?:_[^_]+)*)__(.+)$/.exec(name)
+  if (mcp && mcp[1] === 'mindeck' && mcp[2].startsWith('browser_')) return `Mindeck browser · ${mcp[2].slice(8)}`
+  if (mcp && mcp[1] === 'mindeck' && mcp[2].startsWith('terminal_')) return `Mindeck terminal · ${mcp[2].slice(9)}`
   if (mcp) return mcp[1] === 'mindeck' ? `Mindeck memory · ${mcp[2].replace(/_/g, ' ')}` : `${mcp[1]} · ${mcp[2].replace(/_/g, ' ')}`
   return TITLES[name] ?? name
 }

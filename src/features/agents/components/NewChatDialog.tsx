@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { Check, FolderGit2, GitBranch, Loader2, Sparkles, TerminalSquare, X } from 'lucide-react'
+import { Check, Cpu, FolderGit2, GitBranch, Loader2, SlidersHorizontal, Sparkles, TerminalSquare, X } from 'lucide-react'
 import type { AgentAvailability, AgentKind } from '@shared/types/agents'
+import { CLAUDE_MODELS, CLAUDE_MODES } from '@shared/types/claude'
 import { TechLabel } from '@/components/ui/TechLabel'
 import { cn } from '@/lib/cn'
 import { Select } from '@/components/ui/Select'
@@ -20,7 +21,7 @@ function AgentCard({ a, chosen, onPick }: { a: AgentAvailability; chosen: boolea
       onClick={onPick}
       className={cn(
         'flex flex-col items-start gap-0.5 rounded-md border px-3 py-2 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-50',
-        chosen ? 'border-cyan/60 bg-cyan/[0.08]' : 'border-hud/60 hover:border-cyan/40'
+        chosen ? 'border-cyan/60 bg-cyan/8' : 'border-hud/60 hover:border-cyan/40'
       )}
     >
       <span className="flex items-center gap-1.5 font-sans text-[13px] font-semibold text-text-primary">
@@ -48,6 +49,8 @@ export function NewChatDialog({ prompt: initialPrompt = '', onOpenSettings }: { 
   const [projectId, setProjectId] = useState(() => useProjects.getState().selectedId ?? projects[0]?.id ?? '')
   const [isolated, setIsolated] = useState(false)
   const [prompt, setPrompt] = useState(initialPrompt)
+  const [model, setModel] = useState('default')
+  const [mode, setMode] = useState('default')
 
   // Default to the first agent that is ready (else the assistant).
   useEffect(() => {
@@ -75,11 +78,12 @@ export function NewChatDialog({ prompt: initialPrompt = '', onOpenSettings }: { 
       return
     }
     if (!choice || !projectId) return
-    await create({ kind: choice, projectId, isolated, prompt: prompt.trim() || undefined })
+    const claude = choice === 'claude-code' ? { model, mode } : {}
+    await create({ kind: choice, projectId, isolated, prompt: prompt.trim() || undefined, ...claude })
   }
 
   return (
-    <div role="dialog" aria-label={t.agents.newChat} className="fixed inset-0 z-50 flex items-center justify-center bg-void/70 p-4 backdrop-blur-sm" onKeyDown={(e) => e.key === 'Escape' && closeDialog()}>
+    <div role="dialog" aria-label={t.agents.newChat} className="fixed inset-0 z-50 flex items-center justify-center bg-void/70 p-4 backdrop-blur-xs" onKeyDown={(e) => e.key === 'Escape' && closeDialog()}>
       <form onSubmit={(e) => void submit(e)} className="panel flex w-full max-w-xl flex-col gap-4 p-4">
         <div className="flex items-center justify-between">
           <TechLabel className="text-text-secondary">{t.agents.newChat}</TechLabel>
@@ -106,7 +110,7 @@ export function NewChatDialog({ prompt: initialPrompt = '', onOpenSettings }: { 
                 onClick={() => setChoice('assistant')}
                 className={cn(
                   'flex flex-col items-start gap-0.5 rounded-md border px-3 py-2 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-50',
-                  choice === 'assistant' ? 'border-cyan/60 bg-cyan/[0.08]' : 'border-hud/60 hover:border-cyan/40'
+                  choice === 'assistant' ? 'border-cyan/60 bg-cyan/8' : 'border-hud/60 hover:border-cyan/40'
                 )}
               >
                 <span className="flex items-center gap-1.5 font-sans text-[13px] font-semibold text-text-primary">
@@ -149,13 +153,38 @@ export function NewChatDialog({ prompt: initialPrompt = '', onOpenSettings }: { 
           </label>
         )}
 
+        {choice === 'claude-code' && (
+          <div className="grid grid-cols-2 gap-2">
+            <div className="space-y-1.5">
+              <TechLabel className="text-text-muted">{t.agents.model}</TechLabel>
+              <Select
+                label={t.agents.model}
+                icon={Cpu}
+                value={model}
+                onChange={setModel}
+                options={CLAUDE_MODELS.map((o) => ({ value: o.id, label: o.id === 'default' ? t.agents.defaultModel : o.name }))}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <TechLabel className="text-text-muted">{t.agents.mode}</TechLabel>
+              <Select
+                label={t.agents.mode}
+                icon={SlidersHorizontal}
+                value={mode}
+                onChange={setMode}
+                options={CLAUDE_MODES.map((o) => ({ value: o.id, label: t.agents.claudeModes[o.id], hint: t.agents.claudeModeHints[o.id] }))}
+              />
+            </div>
+          </div>
+        )}
+
         <textarea
           aria-label={t.agents.firstMessage}
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
           rows={3}
           placeholder={t.agents.whatToDo}
-          className="w-full resize-none rounded-md border border-hud/60 bg-surface/50 px-2.5 py-2 font-sans text-[13px] text-text-primary outline-none placeholder:text-text-muted/70 focus:border-cyan/50"
+          className="w-full resize-none rounded-md border border-hud/60 bg-surface/50 px-2.5 py-2 font-sans text-[13px] text-text-primary outline-hidden placeholder:text-text-muted/70 focus:border-cyan/50"
         />
 
         {error && <p className="font-mono text-[11px] text-danger">{error}</p>}
@@ -167,7 +196,7 @@ export function NewChatDialog({ prompt: initialPrompt = '', onOpenSettings }: { 
           <button
             type="submit"
             disabled={!choice || busy || (isAgent && !projectId)}
-            className="flex items-center gap-1.5 rounded-md border border-cyan/50 bg-cyan/[0.1] px-3 py-1.5 font-sans text-[12px] font-medium text-cyan hover:bg-cyan/[0.16] disabled:opacity-40"
+            className="flex items-center gap-1.5 rounded-md border border-cyan/50 bg-cyan/[0.1] px-3 py-1.5 font-sans text-[12px] font-medium text-cyan hover:bg-cyan/16 disabled:opacity-40"
           >
             {busy && <Loader2 size={13} className="animate-spin" />} {t.agents.start}
           </button>

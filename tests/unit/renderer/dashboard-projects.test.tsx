@@ -252,7 +252,6 @@ describe('ProjectDetailPanel', () => {
     const shell = { id: 's1', title: 'a', cwd: '/a', cwdLabel: '~/a', shell: 'zsh', createdAt: '' }
     const bridge = installBridge({
       'projects:refresh': () => new Promise(() => {}),
-      'projects:openInEditor': () => undefined,
       'projects:openInGitHubDesktop': () => undefined,
       'projects:pull': () => undefined,
       'terminal:list': () => [],
@@ -283,8 +282,7 @@ describe('ProjectDetailPanel', () => {
     expect(screen.getByText('f')).toBeInTheDocument()
     expect(screen.queryByText('g')).toBeNull() // max 8 scripts
 
-    fireEvent.click(screen.getByText('VS Code'))
-    expect(bridge.invoke).toHaveBeenCalledWith('projects:openInEditor', { id: 'a' })
+    expect(screen.queryByText('VS Code')).toBeNull() // the project stays in Mindeck
 
     // Terminal, no shell in this project yet: opens one in Mindeck's own terminal — no extra Home shell.
     fireEvent.click(screen.getByText('Terminal'))

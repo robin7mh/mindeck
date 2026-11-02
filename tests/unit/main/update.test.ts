@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { UpdateService, type Updater } from '../../../electron/main/services/update/UpdateService'
+import { manualUpdateFile, UpdateService, type Updater } from '../../../electron/main/services/update/UpdateService'
 
 class FakeUpdater extends EventEmitter implements Updater {
   autoDownload = false
@@ -19,6 +19,39 @@ function setup(updater: FakeUpdater | null = new FakeUpdater()) {
 }
 
 describe('UpdateService', () => {
+  it('a .deb only checks and offers the new version’s download', async () => {
+    const updater = new FakeUpdater()
+    const onStatus = vi.fn()
+    const svc = new UpdateService({ updater, currentVersion: '0.1.0', onStatus, manualDownload: 'Mindeck.deb' })
+    svc.start()
+    expect([updater.autoDownload, updater.autoInstallOnAppQuit]).toEqual([false, false])
+    updater.emit('update-available', { version: '0.2.0' })
+    expect(svc.status()).toEqual({
+      state: 'available',
+      version: '0.2.0',
+      downloadUrl: 'https://github.com/robin7mh/mindeck/releases/download/v0.2.0/Mindeck.deb',
+      currentVersion: '0.1.0'
+    })
+    expect(() => svc.install()).toThrow(expect.objectContaining({ code: 'no-update' }))
+    await svc.check() // checking again is fine
+    expect(updater.checkForUpdates).toHaveBeenCalledTimes(1)
+    svc.dispose()
+  })
+
+  it('which installs download updates by hand: Linux .deb packages', () => {
+    const marker = (type: string) => (file: string) => {
+      expect(file).toBe('/res/package-type')
+      return `${type}\n`
+    }
+    expect(manualUpdateFile('linux', 'x64', '/res', {}, marker('deb'))).toBe('Mindeck.deb')
+    expect(manualUpdateFile('linux', 'arm64', '/res', {}, marker('deb'))).toBe('Mindeck-arm64.deb')
+    expect(manualUpdateFile('linux', 'x64', '/res', {}, marker('rpm'))).toBeUndefined()
+    expect(manualUpdateFile('linux', 'x64', '/res', { APPIMAGE: '/a/Mindeck.AppImage' }, marker('deb'))).toBeUndefined()
+    expect(manualUpdateFile('darwin', 'arm64', '/res', {}, marker('deb'))).toBeUndefined()
+    // Not packaged: no marker file.
+    expect(manualUpdateFile('linux', 'x64', '/definitely/not/here')).toBeUndefined()
+  })
+
   it('does nothing without an updater (dev runs)', async () => {
     const { svc, onStatus } = setup(null)
     svc.start()

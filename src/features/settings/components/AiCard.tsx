@@ -11,7 +11,7 @@ import { useT } from '@/lib/i18n'
 import { useAssistant } from '@/features/agents/store'
 import { Toggle } from './Toggle'
 
-const input = 'rounded-md border border-hud/70 bg-surface/70 px-2.5 py-1.5 font-mono text-[12px] text-text-primary outline-none focus:border-cyan/60'
+const input = 'rounded-md border border-hud/70 bg-surface/70 px-2.5 py-1.5 font-mono text-[12px] text-text-primary outline-hidden focus:border-cyan/60'
 const button =
   'flex items-center justify-center gap-1.5 rounded-md border border-hud/60 px-2.5 py-1.5 font-sans text-[12px] text-text-secondary transition-colors hover:border-cyan/50 hover:text-cyan disabled:opacity-40'
 const hint = 'font-sans text-[11.5px] text-text-muted'
@@ -83,6 +83,11 @@ export function AiCard() {
       {status?.cloud && (
         <div className="mt-3 space-y-2">
           <CreditMeter cloud={status.cloud} />
+          {status.cloud.blocked && (
+            <p role="status" className="font-sans text-[12px] text-amber">
+              {s.cloudBlocked}
+            </p>
+          )}
           {own && <p className={hint}>{s.ownKeyWins}</p>}
           <div className="flex min-w-0 flex-col gap-1">
             <TechLabel className="text-text-muted">{s.cloudModel}</TechLabel>

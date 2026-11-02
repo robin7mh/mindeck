@@ -37,6 +37,11 @@ export class ConversationStore {
     return [...(await this.loadIndex()).values()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
   }
 
+  /** The project a conversation belongs to (undefined: none, or no such conversation) — from the index, no file read. */
+  async projectOf(id: string): Promise<string | undefined> {
+    return (await this.loadIndex()).get(id)?.projectId
+  }
+
   async get(id: string): Promise<StoredConversation | null> {
     if (!SAFE_ID.test(id)) return null
     try {
@@ -48,7 +53,8 @@ export class ConversationStore {
 
   async save(c: StoredConversation): Promise<void> {
     if (!SAFE_ID.test(c.id)) throw Object.assign(new Error('Invalid conversation id'), { code: 'bad-id' })
-    await writeAtomic(this.file(c.id), JSON.stringify(c))
+    // Prompts, file contents and tool output: for the user's eyes only.
+    await writeAtomic(this.file(c.id), JSON.stringify(c), 0o600)
     const { messages: _m, transcript: _t, ...summary } = c
     ;(await this.loadIndex()).set(c.id, { ...summary, running: false })
   }

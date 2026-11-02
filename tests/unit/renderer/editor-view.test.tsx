@@ -31,12 +31,17 @@ vi.mock('@/features/editor/components/NotebookView', () => ({
 import { EditorView } from '@/features/editor/components/EditorView'
 import { FileTree, fileIcon } from '@/features/editor/components/FileTree'
 import { EditorTabs } from '@/features/editor/components/EditorTabs'
-import { tabKey, useEditor } from '@/features/editor/store'
+import { oneGroup, tabKey, useEditor, type EditorTab as Tab } from '@/features/editor/store'
 import { useProjects } from '@/features/projects/store'
 import { useSession } from '@/features/session/store'
 import { useDebug } from '@/features/editor/debug'
+import { PaneContext } from '@/features/workspace/pane'
+import { allCommands } from '@/features/palette/registry'
+import { en } from '@/lib/i18n/en'
 
 const initialEditor = useEditor.getState()
+/** Open files, all in one group, `active` shown. */
+const seed = (tabs: Tab[], active = tabs[0]?.id) => ({ tabs, ...oneGroup(tabs.map((t) => t.id), active) })
 const initialProjects = useProjects.getState()
 const e = () => useEditor.getState()
 
@@ -123,17 +128,19 @@ describe('EditorTabs', () => {
   const names = new Map([['p', 'Alpha']])
 
   it('labels, hints for same-named files, dirty dots and the active marker', () => {
-    useEditor.setState({
-      tabs: [
-        tab('src/index.ts', { dirty: true }),
-        tab('lib/index.ts', { deleted: true }),
-        tab('README.md'),
-        { ...tab('README.md'), id: 'q:README.md', projectId: 'q' },
-        { ...tab('README.md'), id: 'r:README.md', projectId: 'r' }
-      ],
-      activeId: 'p:lib/index.ts'
-    })
-    render(<EditorTabs projectNames={new Map([...names, ['q', 'Beta']])} />)
+    useEditor.setState(
+      seed(
+        [
+          tab('src/index.ts', { dirty: true }),
+          tab('lib/index.ts', { deleted: true }),
+          tab('README.md'),
+          { ...tab('README.md'), id: 'q:README.md', projectId: 'q' },
+          { ...tab('README.md'), id: 'r:README.md', projectId: 'r' }
+        ],
+        'p:lib/index.ts'
+      )
+    )
+    render(<EditorTabs group="g1" projectNames={new Map([...names, ['q', 'Beta']])} />)
     const tabs = screen.getAllByRole('tab')
     expect(tabs.map((t) => t.textContent)).toEqual(['index.tssrc', 'index.tslib', 'README.mdAlpha', 'README.mdBeta', 'README.md'])
     expect(tabs[4]).toHaveAttribute('title', 'r · README.md') // unknown project: its id
@@ -143,8 +150,8 @@ describe('EditorTabs', () => {
   })
 
   it('click activates; × and middle-click ask to close (dirty) or close (clean)', () => {
-    useEditor.setState({ tabs: [tab('a.ts', { dirty: true }), tab('b.ts'), tab('c.ts')], activeId: 'p:a.ts' })
-    render(<EditorTabs projectNames={names} />)
+    useEditor.setState(seed([tab('a.ts', { dirty: true }), tab('b.ts'), tab('c.ts')]))
+    render(<EditorTabs group="g1" projectNames={names} />)
     fireEvent.click(screen.getByText('b.ts'))
     expect(e().activeId).toBe('p:b.ts')
     fireEvent.click(screen.getByLabelText('Close a.ts'))
@@ -201,13 +208,12 @@ describe('EditorView', () => {
     expect(e().projectId).toBe('q')
   })
 
-  it('placeholders: welcome, loading, binary / too large (with VS Code), errors with retry', async () => {
+  it('placeholders: welcome, loading, binary / too large (no VS Code), errors with retry', async () => {
     const bridge = installBridge({
       'projects:list': () => [project('p')],
       'files:list': () => [],
       'files:stat': () => [],
-      'files:read': () => fail('EACCES'),
-      'projects:openFile': () => fail('no code')
+      'files:read': () => fail('EACCES')
     })
     useProjects.setState({ projects: [project('p')] })
     render(view())
@@ -216,31 +222,28 @@ describe('EditorView', () => {
     expect(screen.getByText(/Ctrl\+S save/)).toBeInTheDocument()
     expect(screen.getByTestId('monaco')).toHaveTextContent('none')
 
-    act(() => useEditor.setState({ tabs: [tab('a.ts', { loading: true, content: undefined })], activeId: 'p:a.ts' }))
+    act(() => useEditor.setState(seed([tab('a.ts', { loading: true, content: undefined })])))
     expect(screen.getByText('Loading…')).toBeInTheDocument()
-    act(() => useEditor.setState({ tabs: [tab('a.png', { content: undefined, unsupported: 'binary' })], activeId: 'p:a.png' }))
+    act(() => useEditor.setState(seed([tab('a.png', { content: undefined, unsupported: 'binary' })])))
     expect(screen.getByText('Binary file')).toBeInTheDocument()
-    fireEvent.click(screen.getByText('Open in VS Code'))
-    await act(settle) // its failure is swallowed
-    expect(bridge.invoke).toHaveBeenCalledWith('projects:openFile', { id: 'p', file: 'a.png', line: 4 })
-    act(() => useEditor.setState({ tabs: [tab('big.log', { content: undefined, unsupported: 'too-large' })], activeId: 'p:big.log' }))
+    expect(screen.queryByText(/VS Code/)).toBeNull()
+    act(() => useEditor.setState(seed([tab('big.log', { content: undefined, unsupported: 'too-large' })])))
     expect(screen.getByText('Larger than 5 MB')).toBeInTheDocument()
-    act(() => useEditor.setState({ tabs: [tab('bad.ts', { content: undefined, error: 'EACCES' })], activeId: 'p:bad.ts' }))
+    act(() => useEditor.setState(seed([tab('bad.ts', { content: undefined, error: 'EACCES' })])))
     expect(screen.getByText("Couldn't open this file")).toBeInTheDocument()
     fireEvent.click(screen.getByText('Try again'))
     await act(settle)
     expect(bridge.invoke).toHaveBeenCalledWith('files:read', { projectId: 'p', path: 'bad.ts' })
   })
 
-  it('on macOS the hints use ⌘; VS Code opens the project when no file is open', async () => {
+  it('on macOS the hints use ⌘; no VS Code button in the header', async () => {
     flags.mac = true
-    const bridge = installBridge({ 'projects:list': () => [project('p')], 'files:list': () => [], 'files:stat': () => [] })
+    installBridge({ 'projects:list': () => [project('p')], 'files:list': () => [], 'files:stat': () => [] })
     useProjects.setState({ projects: [project('p')] })
     render(view())
     await act(settle)
     expect(screen.getByText(/⌘S save/)).toBeInTheDocument()
-    fireEvent.click(screen.getByTitle('Open in VS Code'))
-    expect(bridge.invoke).toHaveBeenCalledWith('projects:openInEditor', { id: 'p' })
+    expect(screen.queryByText('VS Code')).toBeNull()
   })
 
   it('banners: save before closing, conflicts, deleted files, save errors; status bar states', async () => {
@@ -253,7 +256,7 @@ describe('EditorView', () => {
     await act(settle)
     useEditor.setState({ save, reload, saveAndClose })
 
-    act(() => useEditor.setState({ tabs: [tab('src/a.ts', { dirty: true }), tab('b.txt')], activeId: 'p:src/a.ts', closing: 'p:b.txt' }))
+    act(() => useEditor.setState({ ...seed([tab('src/a.ts', { dirty: true }), tab('b.txt')]), closing: 'p:b.txt' }))
     expect(screen.getByText('Save changes to b.txt before closing?')).toBeInTheDocument()
     fireEvent.click(screen.getByText('Save'))
     expect(saveAndClose).toHaveBeenCalledWith('p:b.txt')
@@ -287,7 +290,14 @@ describe('EditorView', () => {
   it('notebooks show as notebooks over their file (both sides of a split), or as JSON', async () => {
     installBridge({ 'projects:list': () => [project('p')], 'files:list': () => [], 'files:stat': () => [] })
     useProjects.setState({ projects: [project('p')] })
-    useEditor.setState({ tabs: [tab('a.ipynb'), tab('b.IPYNB'), tab('c.ipynb', { content: undefined, loading: true })], activeId: 'p:a.ipynb', splitId: 'p:b.IPYNB' })
+    useEditor.setState({
+      ...seed([tab('a.ipynb'), tab('b.IPYNB'), tab('c.ipynb', { content: undefined, loading: true })]),
+      groups: [
+        { id: 'g1', tabs: ['p:a.ipynb', 'p:c.ipynb'], activeId: 'p:a.ipynb' },
+        { id: 'g2', tabs: ['p:b.IPYNB'], activeId: 'p:b.IPYNB' }
+      ],
+      grid: { orientation: 'row', children: [{ group: 'g1' }, { group: 'g2' }], sizes: [0.5, 0.5] }
+    })
     render(view())
     await act(settle)
     expect(await screen.findByText('notebook a.ipynb')).toBeInTheDocument()
@@ -297,14 +307,15 @@ describe('EditorView', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Show as notebook' }))
     expect(await screen.findByText('notebook a.ipynb')).toBeInTheDocument()
     // Still loading: no notebook yet.
-    act(() => useEditor.setState({ activeId: 'p:c.ipynb', splitId: undefined }))
+    act(() => e().closeGroup('g2'))
+    act(() => e().setActive('p:c.ipynb'))
     expect(screen.queryByText(/^notebook/)).toBeNull()
   })
 
   it('a file without cursor info yet shows only its path and state', async () => {
     installBridge({ 'projects:list': () => [project('p')], 'files:list': () => [], 'files:stat': () => [] })
     useProjects.setState({ projects: [project('p')] })
-    useEditor.setState({ tabs: [tab('notes.txt')], activeId: 'p:notes.txt' })
+    useEditor.setState(seed([tab('notes.txt')]))
     render(view())
     await act(settle)
     expect(screen.getByText('Saved')).toBeInTheDocument()
@@ -315,7 +326,7 @@ describe('EditorView', () => {
     installBridge({ 'projects:list': () => [project('p')], 'files:list': () => [], 'files:stat': () => [] })
     useProjects.setState({ projects: [project('p')] })
     useDebug.setState({ breakpoints: {} })
-    useEditor.setState({ tabs: [tab('a.ts')], activeId: 'p:a.ts' })
+    useEditor.setState(seed([tab('a.ts')]))
     const { unmount } = render(view())
     await act(settle)
     expect(screen.getByText('Ln 4, Col 2')).toBeInTheDocument()
@@ -324,7 +335,7 @@ describe('EditorView', () => {
     unmount()
 
     // A new view on a file that reported no cursor yet: not the old line 4, the first line.
-    useEditor.setState({ tabs: [tab('notes.txt')], activeId: 'p:notes.txt' })
+    useEditor.setState(seed([tab('notes.txt')]))
     render(view())
     await act(settle)
     fireEvent.keyDown(window, { key: 'F9' })
@@ -347,8 +358,8 @@ describe('EditorView', () => {
     fireEvent.focus(window)
     expect(checkDisk).toHaveBeenCalledTimes(1)
     await act(async () => {})
-    act(() => {
-      vi.advanceTimersByTime(3000)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000)
     })
     expect(checkDisk).toHaveBeenCalledTimes(2)
     await act(async () => {})
@@ -363,14 +374,101 @@ describe('EditorView', () => {
     expect(save).toHaveBeenCalledTimes(2)
 
     rerender(view(false)) // hidden: no polling, no shortcut
-    act(() => {
-      vi.advanceTimersByTime(9000)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(9000)
     })
     fireEvent.focus(window)
     fireEvent.keyDown(window, { key: 's', metaKey: true })
     expect(checkDisk).toHaveBeenCalledTimes(3)
     expect(save).toHaveBeenCalledTimes(2)
+
+    // next to another module, without the focus: it follows the disk, the keys are the other module's
+    rerender(<PaneContext.Provider value={{ focused: false }}>{view(true)}</PaneContext.Provider>)
+    const polls = checkDisk.mock.calls.length
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000)
+    })
+    expect(checkDisk.mock.calls.length).toBeGreaterThan(polls)
+    fireEvent.keyDown(window, { key: 's', metaKey: true })
+    expect(save).toHaveBeenCalledTimes(2)
+
+    // the window hidden, Mindeck running in the background: no disk and git polling for hours
+    const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(true)
+    const idle = checkDisk.mock.calls.length
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(9000)
+    })
+    expect(checkDisk).toHaveBeenCalledTimes(idle)
+    hidden.mockReturnValue(false)
+    fireEvent.focus(window) // back on screen: it looks again
+    expect(checkDisk).toHaveBeenCalledTimes(idle + 1)
     vi.useRealTimers()
+  })
+
+  it('disk and git polling follow the window: hidden pauses, unfocused slows down, coming back looks once', async () => {
+    vi.useFakeTimers()
+    installBridge({ 'projects:list': () => [project('p')], 'files:list': () => [] })
+    useProjects.setState({ projects: [project('p')] })
+    const checkDisk = vi.fn(async () => {})
+    useEditor.setState({ checkDisk })
+    const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(true)
+    const visibility = () => fireEvent(document, new Event('visibilitychange'))
+    const { unmount } = render(view(true))
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(9000)
+    })
+    visibility() // still hidden
+    expect(checkDisk).not.toHaveBeenCalled()
+
+    hidden.mockReturnValue(false)
+    visibility() // shown again: right away…
+    fireEvent.focus(window) // …once, though the focus comes with it
+    expect(checkDisk).toHaveBeenCalledTimes(1)
+
+    fireEvent.blur(window) // on screen, without the focus: every 15 s instead of every 3 s
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(12_000)
+    })
+    expect(checkDisk).toHaveBeenCalledTimes(1)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000)
+    })
+    expect(checkDisk).toHaveBeenCalledTimes(2)
+    fireEvent.focus(window) // in front again: now, and every 3 s
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000)
+    })
+    expect(checkDisk).toHaveBeenCalledTimes(4)
+
+    unmount()
+    visibility()
+    fireEvent.focus(window)
+    expect(checkDisk).toHaveBeenCalledTimes(4)
+    vi.useRealTimers()
+  })
+
+  it('⌘W / Ctrl+W closes the editor’s tab (asking when it has edits) — without one the key is the workspace’s', async () => {
+    installBridge({ 'projects:list': () => [project('p')], 'files:list': () => [] })
+    useProjects.setState({ projects: [project('p')] })
+    const requestClose = vi.fn()
+    useEditor.setState({ ...seed([tab('a.ts')]), requestClose })
+    render(view(true))
+    await act(settle)
+    const press = (init: KeyboardEventInit) => {
+      const e = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init })
+      window.dispatchEvent(e)
+      return e.defaultPrevented
+    }
+    expect(press({ key: 'w', metaKey: true })).toBe(true)
+    expect(requestClose).toHaveBeenCalledWith('p:a.ts')
+    expect(press({ key: 'w', ctrlKey: true, altKey: true })).toBe(false)
+    act(() => useEditor.setState({ activeId: undefined }))
+    expect(press({ key: 'w', ctrlKey: true })).toBe(false) // nothing open: the pane closes
+    expect(requestClose).toHaveBeenCalledTimes(1)
+    // An empty group next to others closes itself (like VS Code).
+    act(() => e().split('right', 'p:none'))
+    expect(press({ key: 'w', metaKey: true })).toBe(true)
+    expect(e().groups).toHaveLength(1)
   })
 
   it('unsaved edits veto closing the window', async () => {
@@ -394,10 +492,7 @@ describe('EditorView', () => {
     installRemote({ 'projects:list': () => [project('p')], 'files:list': () => [], 'files:stat': () => [] })
     useSession.setState({ info: { mode: 'server', version: '1', platform: 'linux', hostname: 'nas', remoteTerminal: false } })
     useProjects.setState({ projects: [project('p')] })
-    useEditor.setState({
-      tabs: [tab('a.ts', { conflict: true, dirty: true }), tab('b.png', { content: undefined, unsupported: 'binary' })],
-      activeId: 'p:a.ts'
-    })
+    useEditor.setState(seed([tab('a.ts', { conflict: true, dirty: true }), tab('b.png', { content: undefined, unsupported: 'binary' })]))
     render(view())
     await act(settle)
     expect(screen.queryByTitle('Open in VS Code')).toBeNull()
@@ -405,17 +500,16 @@ describe('EditorView', () => {
     expect(screen.getByText('Read-only')).toBeInTheDocument()
     expect(screen.getByText('Keep mine')).toBeDisabled()
     // Read-only: the palette has nothing that writes or runs code.
-    fireEvent.keyDown(window, { key: 'P', metaKey: true, shiftKey: true })
-    const labels = screen.getAllByRole('option').map((o) => o.textContent)
-    expect(labels.some((l) => l!.startsWith('Debug:'))).toBe(false)
-    expect(labels).not.toContain('File: Save⌘S')
-    fireEvent.keyDown(screen.getByRole('dialog').querySelector('input')!, { key: 'Escape' })
-    act(() => useEditor.setState({ activeId: 'p:b.png' }))
+    const labels = allCommands(en).map((c) => c.label)
+    expect(labels.some((l) => l.startsWith('Debug:'))).toBe(false)
+    expect(labels).not.toContain('File: Save')
+    expect(labels).toContain('File: Close Editor')
+    act(() => e().setActive('p:b.png'))
     expect(screen.getByText('Binary file')).toBeInTheDocument()
     expect(screen.queryByText('Open in VS Code')).toBeNull()
 
     act(() => useSession.setState({ info: { mode: 'server', version: '1', platform: 'linux', hostname: 'nas', remoteTerminal: true } }))
-    act(() => useEditor.setState({ activeId: 'p:a.ts' }))
+    act(() => e().setActive('p:a.ts'))
     expect(screen.getByTestId('monaco')).toHaveTextContent(/^p:a\.ts$/)
   })
 })

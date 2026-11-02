@@ -11,6 +11,8 @@ import { RemoteMenu } from '@/features/remote/components/RemoteMenu'
 import { EditorView } from '@/features/editor/components/EditorView'
 import { useEditor } from '@/features/editor/store'
 import { useScm } from '@/features/editor/scm'
+import { allCommands } from '@/features/palette/registry'
+import { en } from '@/lib/i18n/en'
 import { useProjects } from '@/features/projects/store'
 import { ProjectsView } from '@/features/projects/components/ProjectsView'
 
@@ -149,8 +151,8 @@ describe('remote in the command palette', () => {
     useProjects.setState({ projects: [{ id: 'p', name: 'Demo', path: '/x/p', addedAt: '', lastSeenAt: '' }] })
     render(<EditorView active onNavigate={vi.fn()} />)
     await act(settle)
-    act(() => useScm.getState().setQuickOpen(true, '>'))
-    const pick = (label: string) => fireEvent.click(screen.getByRole('option', { name: new RegExp(label) }))
+    // The editor's commands, as the palette (⇧⌘P) lists and runs them.
+    const pick = (label: string) => void allCommands(en).find((c) => c.label.startsWith(label))!.run()
     pick('Remote: Connect to SSH host')
     await act(settle)
     const items = useScm.getState().pick!.items
@@ -160,7 +162,6 @@ describe('remote in the command palette', () => {
     await act(() => useScm.getState().pick!.onText!('robin@1.2.3.4') as Promise<void>)
     expect(bridge.invoke).toHaveBeenCalledWith('remote:ssh', { target: 'robin@1.2.3.4' })
     act(() => useScm.setState({ pick: undefined, quickOpen: false }))
-    act(() => useScm.getState().setQuickOpen(true, '>'))
     pick('Remote: Open project in Dev Container')
     await act(settle)
     expect(bridge.invoke).toHaveBeenCalledWith('remote:container', { projectId: 'p' })

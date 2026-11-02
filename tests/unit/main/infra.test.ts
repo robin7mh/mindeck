@@ -36,12 +36,13 @@ vi.mock('electron', () => ({
   ipcMain: electron.ipcMain,
   app: electron.app,
   contextBridge: electron.contextBridge,
-  ipcRenderer: electron.ipcRenderer
+  ipcRenderer: electron.ipcRenderer,
+  webUtils: { getPathForFile: (f: { name: string }) => `/dropped/${f.name}` }
 }))
 
 import { bindIpc } from '../../../electron/ipc/registry'
 import { Router } from '../../../electron/ipc/router'
-import { IPC_CHANNELS } from '../../../src/shared/ipc/contract'
+import { CHANNEL_ACCESS, IPC_CHANNELS } from '../../../src/shared/ipc/contract'
 import { registerContextIpc } from '../../../electron/ipc/context.ipc'
 import { registerProjectIpc } from '../../../electron/ipc/projects.ipc'
 import { registerSystemIpc } from '../../../electron/ipc/system.ipc'
@@ -49,6 +50,7 @@ import { registerMemoryIpc } from '../../../electron/ipc/memory.ipc'
 import { registerTerminalIpc } from '../../../electron/ipc/terminal.ipc'
 import { registerFilesIpc } from '../../../electron/ipc/files.ipc'
 import { registerScmIpc } from '../../../electron/ipc/scm.ipc'
+import { registerSearchIpc } from '../../../electron/ipc/search.ipc'
 import { registerLspIpc } from '../../../electron/ipc/lsp.ipc'
 import { registerDebugIpc } from '../../../electron/ipc/debug.ipc'
 import { registerToolsIpc } from '../../../electron/ipc/tools.ipc'
@@ -128,6 +130,115 @@ describe('ipc router', () => {
     expect(await defaults.dispatch('terminal:list', undefined, remoteCtx)).toMatchObject({ error: { code: 'remote-terminal-disabled' } })
   })
 
+  it('admin channels need the admin role remotely; the guard checks remote payloads only', async () => {
+    const guard = vi.fn((channel: string, payload: unknown) => {
+      if ((payload as { path?: string })?.path === '/etc') throw Object.assign(new Error('off-limits'), { code: 'remote-forbidden' })
+    })
+    const router = new Router({ remoteTerminal: () => false, guard })
+    router.register('server:createPairingCode', () => ({ code: 'X' }) as never)
+    router.register('projects:add', ({ path }) => ({ path }) as never)
+    expect(await router.dispatch('server:createPairingCode', undefined, ipcCtx)).toMatchObject({ ok: true })
+    expect(await router.dispatch('server:createPairingCode', undefined, remoteCtx)).toMatchObject({ ok: false, error: { code: 'admin-only' } })
+    expect(await router.dispatch('server:createPairingCode', undefined, { ...remoteCtx, role: 'member' })).toMatchObject({ error: { code: 'admin-only' } })
+    expect(await router.dispatch('server:createPairingCode', {}, { ...remoteCtx, role: 'admin' })).toEqual({ ok: true, data: { code: 'X' } })
+    expect(await router.dispatch('projects:add', { path: '/etc' }, ipcCtx)).toEqual({ ok: true, data: { path: '/etc' } })
+    expect(await router.dispatch('projects:add', { path: '/etc' }, remoteCtx)).toEqual({ ok: false, error: { code: 'remote-forbidden', message: 'off-limits' } })
+    expect(await router.dispatch('projects:add', { path: '/srv/x' }, remoteCtx)).toMatchObject({ ok: true })
+    expect(guard).toHaveBeenCalledWith('projects:add', { path: '/srv/x' }, remoteCtx)
+    expect(guard).toHaveBeenCalledTimes(3) // the admin call too, never the desktop's
+  })
+
+  it('trusted channels (data beyond the shared folders) need the admin role or remote shells (BE-SEC-08)', async () => {
+    let terminal = false
+    const router = new Router({ remoteTerminal: () => terminal })
+    router.register('mongo:connections', () => [])
+    expect(await router.dispatch('mongo:connections', undefined, ipcCtx)).toEqual({ ok: true, data: [] })
+    expect(await router.dispatch('mongo:connections', undefined, { ...remoteCtx, role: 'member' })).toMatchObject({ ok: false, error: { code: 'remote-terminal-disabled' } })
+    expect(await router.dispatch('mongo:connections', undefined, { ...remoteCtx, role: 'admin' })).toEqual({ ok: true, data: [] })
+    terminal = true
+    expect(await router.dispatch('mongo:connections', undefined, { ...remoteCtx, role: 'member' })).toEqual({ ok: true, data: [] })
+  })
+
+  it('a member device leaves the desktop’s global settings alone (BE-SEC-05, BE-SEC-18)', () => {
+    for (const channel of ['memory:setVault', 'memory:setDailyNotes', 'ai:configure', 'agents:setPushSettings', 'cloud:forgotPassword', 'cloud:syncPush', 'cloud:syncPull'] as const) {
+      expect(CHANNEL_ACCESS[channel], channel).toBe('admin')
+    }
+    for (const channel of ['ai:inlineComplete', 'ai:inlineEdit'] as const) expect(CHANNEL_ACCESS[channel], channel).toBe('terminal')
+    for (const channel of ['mongo:connections', 'mongo:databases', 'mongo:collections', 'mongo:find', 'mongo:indexes'] as const) expect(CHANNEL_ACCESS[channel], channel).toBe('trusted')
+  })
+
+  it('the OS’s own errors reach a device as a reference, the details go to the log (BE-SEC-19)', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const router = new Router({ remoteTerminal: () => false })
+    const enoent = Object.assign(new Error("ENOENT: no such file or directory, open '/Users/robin/secret/x'"), { code: 'ENOENT', syscall: 'open' })
+    const thrown: unknown[] = [enoent, Object.assign(new Error('spawn EACCES'), { code: 'EACCES' }), 'a string', null]
+    router.register('memory:status', () => {
+      throw thrown.shift()
+    })
+    expect(await router.dispatch('memory:status', undefined, ipcCtx)).toEqual({ ok: false, error: { code: 'ENOENT', message: enoent.message } }) // the desktop sees it all
+    const generic = expect.stringMatching(/^Something went wrong on the Mindeck core \(ref [0-9a-f]{8}\)$/)
+    expect(await router.dispatch('memory:status', undefined, remoteCtx)).toEqual({ ok: false, error: { code: 'EACCES', message: generic } })
+    expect(await router.dispatch('memory:status', undefined, remoteCtx)).toEqual({ ok: false, error: { code: 'error', message: generic } })
+    expect(await router.dispatch('memory:status', undefined, remoteCtx)).toEqual({ ok: false, error: { code: 'error', message: generic } })
+    expect(error).toHaveBeenCalledWith(expect.stringMatching(/^\[router\] memory:status failed \(ref [0-9a-f]{8}\):$/), 'a string')
+    // Mindeck's own errors are written for people: they reach the device as they are.
+    router.register('memory:list', () => {
+      throw Object.assign(new Error('Note not found: a.md'), { code: 'not-found' })
+    })
+    router.register('memory:graph', () => {
+      throw new Error('The vault is busy')
+    })
+    expect(await router.dispatch('memory:list', undefined, remoteCtx)).toEqual({ ok: false, error: { code: 'not-found', message: 'Note not found: a.md' } })
+    expect(await router.dispatch('memory:graph', undefined, remoteCtx)).toEqual({ ok: false, error: { code: 'error', message: 'The vault is busy' } })
+    error.mockRestore()
+  })
+
+  it('a remote call’s answer is shaped for the device (lists trimmed); the desktop’s never', async () => {
+    const shape = vi.fn(async (_channel: string, data: unknown) => (data as { id: string }[]).filter((s) => s.id !== 'private'))
+    const router = new Router({ remoteTerminal: () => false, shape })
+    router.register('agents:list', () => [{ id: 'private' }, { id: 'shared' }] as never)
+    expect(await router.dispatch('agents:list', undefined, ipcCtx)).toEqual({ ok: true, data: [{ id: 'private' }, { id: 'shared' }] })
+    expect(await router.dispatch('agents:list', undefined, remoteCtx)).toEqual({ ok: true, data: [{ id: 'shared' }] })
+    expect(shape).toHaveBeenCalledTimes(1)
+  })
+
+  it('lets an observer see each remote call that went through — never the desktop’s, refused ones or its own failure', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const seen: unknown[][] = []
+    const observe = vi.fn((...args: unknown[]) => {
+      seen.push(args)
+      if ((args[1] as { path?: unknown } | undefined)?.path === 'boom.md') throw new Error('observer broke')
+    })
+    const router = new Router({ remoteTerminal: () => false, observe })
+    router.register('memory:read', ({ path }) => ({ path }) as never)
+    router.register('agents:list', () => {
+      throw Object.assign(new Error('nope'), { code: 'x' })
+    })
+    await router.dispatch('memory:read', { path: 'a.md' }, ipcCtx)
+    expect(await router.dispatch('memory:read', { path: 'a.md' }, remoteCtx)).toEqual({ ok: true, data: { path: 'a.md' } })
+    await router.dispatch('agents:list', undefined, remoteCtx)
+    await router.dispatch('memory:read', { path: 1 }, remoteCtx)
+    expect(seen).toEqual([['memory:read', { path: 'a.md' }, { path: 'a.md' }, remoteCtx]])
+    // An observer that breaks never breaks the call.
+    expect(await router.dispatch('memory:read', { path: 'boom.md' }, remoteCtx)).toMatchObject({ ok: true })
+    expect(error).toHaveBeenCalledWith('[router] observing memory:read:', expect.any(Error))
+    error.mockRestore()
+  })
+
+  it('paired devices list only the projects they may use, and add projects as remote ones', async () => {
+    const router = new Router({ remoteTerminal: () => false })
+    const service = { list: () => [{ id: 'a' }, { id: 'b' }], add: vi.fn(async (path: string) => ({ path })) }
+    const visible = vi.fn(async (list: { id: string }[]) => list.filter((p) => p.id === 'a'))
+    registerProjectIpc(router, service as never, { visible } as never)
+    expect(await router.dispatch('projects:list', undefined, ipcCtx)).toEqual({ ok: true, data: [{ id: 'a' }, { id: 'b' }] })
+    expect(await router.dispatch('projects:list', undefined, remoteCtx)).toEqual({ ok: true, data: [{ id: 'a' }] })
+    await router.dispatch('projects:add', { path: '/srv/x' }, remoteCtx)
+    expect(service.add).toHaveBeenCalledWith('/srv/x', true)
+    const plain = new Router({ remoteTerminal: () => false })
+    registerProjectIpc(plain, service as never)
+    expect(await plain.dispatch('projects:list', undefined, remoteCtx)).toEqual({ ok: true, data: [{ id: 'a' }, { id: 'b' }] })
+  })
+
   it('binds every contract channel to the window IPC through the router', async () => {
     electron.handlers.clear()
     const router = new Router()
@@ -135,6 +246,18 @@ describe('ipc router', () => {
     bindIpc(router)
     expect([...electron.handlers.keys()].sort()).toEqual([...IPC_CHANNELS].sort())
     expect(await call('projects:list')).toEqual({ ok: true, data: ['p'] })
+  })
+
+  it('answers Mindeck’s own page only — a web page in a frame gets nothing', async () => {
+    electron.handlers.clear()
+    const router = new Router()
+    router.register('projects:list', () => ['p'] as never)
+    bindIpc(router, (url) => url.startsWith('file:///app/'))
+    const handle = electron.handlers.get('projects:list')!
+    expect(await handle({ senderFrame: { url: 'file:///app/index.html' } }, undefined)).toEqual({ ok: true, data: ['p'] })
+    const forbidden = { ok: false, error: { code: 'forbidden', message: 'Only the Mindeck window may call the core' } }
+    expect(await handle({ senderFrame: { url: 'https://evil.example/' } }, undefined)).toEqual(forbidden)
+    expect(await handle({ senderFrame: null }, undefined)).toEqual(forbidden)
   })
 })
 
@@ -153,7 +276,7 @@ describe('ipc handler modules bind every channel to its service', () => {
       [
         ['projects:list', undefined, 'list', []],
         ['projects:pickFolder', undefined, 'pickFolder', []],
-        ['projects:add', { path: '/x' }, 'add', ['/x']],
+        ['projects:add', { path: '/x' }, 'add', ['/x', false]],
         ['projects:remove', { id: 'i' }, 'remove', ['i']],
         ['projects:refresh', { id: 'i' }, 'refresh', ['i']],
         ['projects:pull', { id: 'i' }, 'pull', ['i']],
@@ -183,7 +306,8 @@ describe('ipc handler modules bind every channel to its service', () => {
         ['memory:list', undefined, 'list', []],
         ['memory:read', { path: 'a.md' }, 'read', ['a.md']],
         ['memory:write', { path: 'a.md', raw: 'r' }, 'write', ['a.md', 'r']],
-        ['memory:create', { title: 't', folder: 'f' }, 'create', ['t', 'f']],
+        ['memory:create', { title: 't', folder: 'f' }, 'create', ['t', 'f', undefined, undefined]],
+        ['memory:create', { title: 't', template: 'T/x.md', now: '2026-10-15T09:00' }, 'create', ['t', undefined, 'T/x.md', '2026-10-15T09:00']],
         ['memory:trash', { path: 'a.md' }, 'trash', ['a.md']],
         ['memory:graph', undefined, 'graph', []],
         ['memory:search', { query: 'q' }, 'search', ['q']],
@@ -197,7 +321,13 @@ describe('ipc handler modules bind every channel to its service', () => {
         ['memory:moveFolder', { folder: 'f', into: 'g' }, 'moveFolder', ['f', 'g']],
         ['memory:link', { from: 'a.md', to: 'b.md' }, 'link', ['a.md', 'b.md']],
         ['memory:unlink', { from: 'a.md', to: 'b.md' }, 'unlink', ['a.md', 'b.md']],
-        ['memory:setVault', { path: '/v' }, 'setVault', ['/v']]
+        ['memory:setVault', { path: '/v' }, 'setVault', ['/v']],
+        ['memory:daily', { now: '2026-10-15' }, 'daily', ['2026-10-15']],
+        ['memory:daily', undefined, 'daily', [undefined]],
+        ['memory:setDailyNotes', { folder: 'Daily', template: '' }, 'setDailyNotes', [{ folder: 'Daily', template: '' }]],
+        ['memory:renderTemplate', { path: 'T/x.md', title: 't', now: '2026-10-15T09:00:00' }, 'renderTemplate', ['T/x.md', 't', '2026-10-15T09:00:00']],
+        ['memory:attach', { name: ' a.png ', data: 'AAAA' }, 'attach', ['a.png', 'AAAA']],
+        ['memory:attachment', { target: 'a.png', from: 'n.md' }, 'attachment', ['a.png', 'n.md']]
       ]
     ],
     [
@@ -211,7 +341,18 @@ describe('ipc handler modules bind every channel to its service', () => {
         ['terminal:attach', { id: 'i' }, 'attach', ['i']],
         ['terminal:write', { id: 'i', data: 'ls' }, 'write', ['i', 'ls']],
         ['terminal:resize', { id: 'i', cols: 80, rows: 24 }, 'resize', ['i', 80, 24]],
-        ['terminal:kill', { id: 'i' }, 'kill', ['i']]
+        ['terminal:kill', { id: 'i' }, 'kill', ['i']],
+        ['terminal:create', { profileId: 'zsh' }, 'create', [{ profileId: 'zsh' }]],
+        ['terminal:shells', undefined, 'shells', []],
+        ['terminal:settings', undefined, 'settings', []],
+        ['terminal:configure', { fontSize: 14, profiles: [] }, 'configure', [{ fontSize: 14, profiles: [] }]],
+        [
+          'terminal:persist',
+          { layout: 'single', active: 0, tabs: [{ title: '~', cwd: '/h', scrollback: '' }], savedAt: 'now' },
+          'persist',
+          [{ layout: 'single', active: 0, tabs: [{ title: '~', cwd: '/h', scrollback: '' }], savedAt: 'now' }]
+        ],
+        ['terminal:restore', undefined, 'restore', []]
       ]
     ],
     [
@@ -250,7 +391,22 @@ describe('ipc handler modules bind every channel to its service', () => {
         ['scm:diff', { projectId: 'p', path: 'a', target: { kind: 'staged' } }, 'diff', ['p', 'a', { kind: 'staged' }]],
         ['scm:original', { projectId: 'p', path: 'a' }, 'original', ['p', 'a']],
         ['scm:files', { projectId: 'p' }, 'files', ['p']],
-        ['scm:search', { projectId: 'p', query: 'q', regex: true }, 'search', ['p', { query: 'q', regex: true, caseSensitive: undefined }]]
+        ['scm:abort', { projectId: 'p' }, 'abort', ['p']],
+        ['scm:continue', { projectId: 'p' }, 'continue', ['p']],
+        ['scm:stashes', { projectId: 'p' }, 'stashes', ['p']],
+        ['scm:stash', { projectId: 'p', message: 'm', untracked: true }, 'stash', ['p', { message: 'm', untracked: true }]],
+        ['scm:applyStash', { projectId: 'p', hash: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', pop: true }, 'applyStash', ['p', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', true]],
+        ['scm:dropStash', { projectId: 'p', hash: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' }, 'dropStash', ['p', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa']],
+        ['scm:stashFiles', { projectId: 'p', hash: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' }, 'stashFiles', ['p', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa']],
+        ['scm:blame', { projectId: 'p', path: 'a', text: 't' }, 'blame', ['p', 'a', 't']]
+      ]
+    ],
+    [
+      'search',
+      registerSearchIpc,
+      [
+        ['search:start', { id: 'i', projectId: 'p', query: { pattern: 'x', include: ['src'] } }, 'start', ['i', 'p', { pattern: 'x', include: ['src'] }, undefined]],
+        ['search:cancel', { id: 'i' }, 'cancel', ['i', undefined]]
       ]
     ],
     [
@@ -273,7 +429,8 @@ describe('ipc handler modules bind every channel to its service', () => {
           { projectId: 'p', path: 'a.ts', range: { start: { line: 1, offset: 1 }, end: { line: 1, offset: 2 } }, errorCodes: [2304] },
           'codeFixes',
           ['p', 'a.ts', { start: { line: 1, offset: 1 }, end: { line: 1, offset: 2 } }, [2304]]
-        ]
+        ],
+        ['lsp:symbols', { projectId: 'p', path: 'a.py' }, 'symbols', ['p', 'a.py']]
       ]
     ],
     [
@@ -281,7 +438,8 @@ describe('ipc handler modules bind every channel to its service', () => {
       registerToolsIpc,
       [
         ['tools:status', undefined, 'status', []],
-        ['tools:install', { id: 'python', part: 'server' }, 'install', ['python', 'server']]
+        ['tools:install', { id: 'python', part: 'server' }, 'install', ['python', 'server']],
+        ['tools:runtimes', undefined, 'runtimes', []]
       ]
     ],
     [
@@ -328,7 +486,9 @@ describe('ipc handler modules bind every channel to its service', () => {
         ['github:create', { projectId: 'p', title: 'T', body: 'B', base: 'main', draft: true }, 'create', ['p', { title: 'T', body: 'B', base: 'main', draft: true }]],
         ['github:merge', { projectId: 'p', number: 8, method: 'squash', deleteBranch: true }, 'merge', ['p', 8, 'squash', true]],
         ['github:comment', { projectId: 'p', number: 8, body: 'hi' }, 'comment', ['p', 8, 'hi']],
-        ['github:review', { projectId: 'p', number: 8, action: 'approve', body: '' }, 'review', ['p', 8, 'approve', '']]
+        ['github:review', { projectId: 'p', number: 8, action: 'approve', body: '' }, 'review', ['p', 8, 'approve', '']],
+        ['github:owners', { projectId: 'p' }, 'owners', ['p']],
+        ['github:publish', { projectId: 'p', name: 'site', owner: 'acme', private: true, description: 'Demo' }, 'publish', ['p', { name: 'site', owner: 'acme', private: true, description: 'Demo' }]]
       ]
     ],
     [
@@ -342,11 +502,11 @@ describe('ipc handler modules bind every channel to its service', () => {
         ['mongo:collections', { id: 'c', db: 'd' }, 'collections', ['c', 'd']],
         ['mongo:createCollection', { id: 'c', db: 'd', name: 'n' }, 'createCollection', ['c', 'd', 'n']],
         ['mongo:dropCollection', { id: 'c', db: 'd', name: 'n' }, 'dropCollection', ['c', 'd', 'n']],
-        ['mongo:find', { id: 'c', db: 'd', collection: 'u', query: { limit: 5 } }, 'find', ['c', 'd', 'u', { limit: 5 }]],
+        ['mongo:find', { id: 'c', db: 'd', collection: 'u', query: { limit: 5 } }, 'find', ['c', 'd', 'u', { limit: 5 }, { serverJs: true }]],
         ['mongo:insert', { id: 'c', db: 'd', collection: 'u', document: '{}' }, 'insert', ['c', 'd', 'u', '{}']],
         ['mongo:replace', { id: 'c', db: 'd', collection: 'u', docId: '1', document: '{}' }, 'replace', ['c', 'd', 'u', '1', '{}']],
         ['mongo:delete', { id: 'c', db: 'd', collection: 'u', docId: '1' }, 'delete', ['c', 'd', 'u', '1']],
-        ['mongo:aggregate', { id: 'c', db: 'd', collection: 'u', pipeline: '[]' }, 'aggregate', ['c', 'd', 'u', '[]']],
+        ['mongo:aggregate', { id: 'c', db: 'd', collection: 'u', pipeline: '[]' }, 'aggregate', ['c', 'd', 'u', '[]', { serverJs: true }]],
         ['mongo:indexes', { id: 'c', db: 'd', collection: 'u' }, 'indexes', ['c', 'd', 'u']]
       ]
     ],
@@ -417,7 +577,11 @@ describe('ipc handler modules bind every channel to its service', () => {
         ['agents:list', undefined, 'list', []],
         ['agents:get', { id: 'i' }, 'get', ['i']],
         ['agents:create', { kind: 'claude-code', projectId: 'p', isolated: true }, 'create', [{ kind: 'claude-code', projectId: 'p', isolated: true }]],
-        ['agents:send', { id: 'i', text: 'hi' }, 'send', ['i', 'hi']],
+        ['agents:send', { id: 'i', text: 'hi' }, 'send', ['i', 'hi', {}]],
+        ['agents:send', { id: 'i', text: '', refs: [{ kind: 'file', path: 'a.ts' }] }, 'send', ['i', '', { refs: [{ kind: 'file', path: 'a.ts' }] }]],
+        ['agents:configure', { id: 'i', model: 'opus' }, 'configure', ['i', { model: 'opus' }]],
+        ['agents:pushSettings', undefined, 'settings', []],
+        ['agents:setPushSettings', { enabled: false }, 'configure', [false]],
         ['agents:interrupt', { id: 'i' }, 'interrupt', ['i']],
         ['agents:stop', { id: 'i' }, 'stop', ['i']],
         ['agents:resume', { id: 'i' }, 'resume', ['i']],
@@ -426,13 +590,17 @@ describe('ipc handler modules bind every channel to its service', () => {
         ['agents:branch', { id: 'i' }, 'branch', ['i']],
         ['agents:diff', { id: 'i', path: 'a.ts' }, 'diff', ['i', 'a.ts']],
         ['agents:accept', { id: 'i' }, 'accept', ['i']],
-        ['agents:discard', { id: 'i' }, 'discard', ['i']]
+        ['agents:discard', { id: 'i' }, 'discard', ['i']],
+        ['agents:rename', { id: 'i', title: 'Fix login' }, 'rename', ['i', 'Fix login']],
+        ['agents:shell', { id: 'i' }, 'shell', ['i']],
+        ['agents:openInEditor', { id: 'i' }, 'openInEditor', ['i']]
       ]
     ]
   ] as const)('%s', async (_name, register, cases) => {
     const service = spyService()
     const router = new Router()
-    ;(register as (r: Router, s: unknown) => void)(router, service)
+    // Registrations with a second service (the agents' pushes) get the same spy.
+    ;(register as (r: Router, s: unknown, s2: unknown) => void)(router, service, service)
     for (const [channel, req, method, args] of cases) {
       expect(await router.dispatch(channel, req, { transport: 'ipc' })).toEqual({ ok: true, data: { method, args } })
     }
@@ -451,13 +619,15 @@ describe('paths', () => {
         settingsFile: join(home, 'Mindeck', 'data', 'settings.json'),
         defaultVaultRoot: join(home, 'Mindeck', 'vault'),
         devicesFile: join(home, 'Mindeck', 'data', 'devices.json'),
+        tlsDir: join(home, 'Mindeck', 'data', 'tls'),
         secretsFile: join(home, 'Mindeck', 'data', 'secrets.json'),
         cloudFile: join(home, 'Mindeck', 'data', 'cloud.json'),
         grantsFile: join(home, 'Mindeck', 'data', 'grants.json'),
         eventsFile: join(home, 'Mindeck', 'data', 'events.jsonl'),
         runsFile: join(home, 'Mindeck', 'data', 'runs.json'),
         agentsDir: join(home, 'Mindeck', 'data', 'agents'),
-        worktreesDir: join(home, 'Mindeck', 'worktrees')
+        worktreesDir: join(home, 'Mindeck', 'worktrees'),
+        logsDir: join(home, 'Mindeck', 'logs')
       })
       // Data from before the rename: used where it is.
       await mkdir(join(home, 'W-ONE'))
@@ -500,7 +670,11 @@ describe('preload bridge', () => {
     api.minimize()
     api.toggleMaximize()
     api.close()
-    expect(electron.ipcRenderer.send.mock.calls.map((c) => c[0])).toEqual(['window:minimize', 'window:toggle-maximize', 'window:close'])
+    api.toggleFullScreen()
+    expect(electron.ipcRenderer.send.mock.calls.map((c) => c[0])).toEqual(['window:minimize', 'window:toggle-maximize', 'window:close', 'window:toggle-fullscreen'])
+    api.startDrag(['/a', '/b'])
+    expect(electron.ipcRenderer.send).toHaveBeenLastCalledWith('files:start-drag', ['/a', '/b'])
+    expect(api.pathForFile({ name: 'x.png' })).toBe('/dropped/x.png')
 
     await api.isMaximized()
     await api.isFullScreen()

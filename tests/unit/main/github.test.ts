@@ -1,17 +1,23 @@
 import { chmod, writeFile } from 'node:fs/promises'
+import { execFile } from 'node:child_process'
+import { EventEmitter } from 'node:events'
 import { join } from 'node:path'
+import { PassThrough } from 'node:stream'
+import { promisify } from 'node:util'
 import { describe, expect, it, vi } from 'vitest'
 import { tempDir } from './helpers'
 import { checkState, GitHubService, loginShellGh, shellRunner, type GhResult, type GhRunner } from '../../../electron/main/services/github/GitHubService'
+import { repoName } from '@shared/types/github'
+import type { ScmStatus } from '@shared/types/scm'
 
 const ok = (stdout: unknown): GhResult => ({ code: 0, stdout: typeof stdout === 'string' ? stdout : JSON.stringify(stdout), stderr: '' })
 const err = (stderr: string, code = 1): GhResult => ({ code, stdout: '', stderr })
 
 /** A fake gh: answers by the joined arguments' first match. */
 function fake(routes: [RegExp, GhResult | ((input?: string) => GhResult)][]) {
-  const calls: { args: string[]; cwd: string; input?: string }[] = []
-  const gh: GhRunner = async (args, cwd, input) => {
-    calls.push({ args, cwd, input })
+  const calls: { args: string[]; cwd: string; input?: string; env?: Record<string, string> }[] = []
+  const gh: GhRunner = async (args, cwd, input, env) => {
+    calls.push({ args, cwd, input, env })
     const line = args.join(' ')
     const hit = routes.find(([re]) => re.test(line))
     if (!hit) return err(`unrouted: ${line}`)
@@ -20,7 +26,11 @@ function fake(routes: [RegExp, GhResult | ((input?: string) => GhResult)][]) {
   return { gh, calls }
 }
 
-const service = (gh: GhRunner, root: string | undefined = '/repo') => new GitHubService({ resolveRoot: () => root, gh })
+/** The project's git state as ScmService reports it: one commit, no remote. */
+const scmState = (over: Partial<ScmStatus> = {}): ScmStatus => ({ repo: true, branch: 'main', head: 'abc1234', remotes: [], ahead: 0, behind: 0, merging: false, files: [], ...over })
+const noScm = async () => scmState()
+
+const service = (gh: GhRunner, root: string | undefined = '/repo', scm: (projectId: string) => Promise<ScmStatus> = noScm) => new GitHubService({ resolveRoot: () => root, trusted: () => true, gh, scm })
 
 const rawPull = (over: Record<string, unknown> = {}) => ({
   number: 8,
@@ -57,7 +67,7 @@ describe('GitHub through gh', () => {
     // Other failures (network …) are errors.
     await expect(service(fake([[/api user/, err('error connecting to api.github.com\n')]]).gh).status('p')).rejects.toMatchObject({ code: 'gh', message: 'error connecting to api.github.com' })
     await expect(service(fake([[/api user/, err('', 2)]]).gh).status('p')).rejects.toMatchObject({ message: 'gh exited with 2' })
-    await expect(new GitHubService({ resolveRoot: () => undefined, gh: fake([]).gh }).status('p')).rejects.toMatchObject({ code: 'not-found' })
+    await expect(new GitHubService({ resolveRoot: () => undefined, gh: fake([]).gh, scm: noScm }).status('p')).rejects.toMatchObject({ code: 'not-found' })
   })
 
   it('lists pull requests: all, mine, to review; any state', async () => {
@@ -205,6 +215,85 @@ describe('GitHub through gh', () => {
     })
   })
 
+  it('owners: the account, then its organizations — without read:org just the account', async () => {
+    const both = fake([
+      [/api user\/orgs/, ok('acme\nlabs\n')],
+      [/api user/, ok('robin\n')]
+    ])
+    expect(await service(both.gh).owners('p')).toEqual({ user: 'robin', orgs: ['acme', 'labs'] })
+    expect(both.calls.every((c) => c.cwd === '/repo')).toBe(true)
+    const noOrgs = fake([
+      [/api user\/orgs/, err('HTTP 403: Resource not accessible (read:org)')],
+      [/api user/, ok('robin')]
+    ])
+    expect(await service(noOrgs.gh).owners('p')).toEqual({ user: 'robin', orgs: [] })
+    // Not signed in: that is the error, so the form can say how to sign in.
+    await expect(service(fake([[/api user/, err('To get started with GitHub CLI, please run:  gh auth login', 4)]]).gh).owners('p')).rejects.toMatchObject({ code: 'gh-auth' })
+  })
+
+  it('publish: creates the repository under the account or an organization, as origin, and pushes; needs a commit and no origin', async () => {
+    const made = { nameWithOwner: 'robin/test', url: 'https://github.com/robin/test' }
+    const { gh, calls } = fake([
+      [/repo create/, ok('https://github.com/robin/test\n')],
+      [/repo view/, ok(made)]
+    ])
+    expect(await service(gh).publish('p', { name: 'test', owner: 'robin', private: true })).toEqual(made)
+    expect(calls.map((c) => c.args)).toEqual([
+      ['repo', 'create', 'robin/test', '--private', '--source=.', '--remote=origin', '--push'],
+      ['repo', 'view', '--json', 'nameWithOwner,url']
+    ])
+    expect(calls[0].cwd).toBe('/repo')
+    // Public, the account gh is signed in with, a description that starts like an option stays a value.
+    await service(gh).publish('p', { name: 'site', private: false, description: '--admin tool' })
+    expect(calls[2].args).toEqual(['repo', 'create', 'site', '--public', '--source=.', '--remote=origin', '--push', '--description=--admin tool'])
+    // A core that does not list remotes yet: gh decides.
+    await service(gh, '/repo', async () => scmState({ remotes: undefined })).publish('p', { name: 'x', private: true })
+    expect(calls).toHaveLength(6)
+
+    await expect(service(gh, '/repo', async () => scmState({ head: undefined })).publish('p', { name: 'x', private: true })).rejects.toMatchObject({ code: 'no-commits' })
+    await expect(service(gh, '/repo', async () => scmState({ remotes: ['origin'] })).publish('p', { name: 'x', private: true })).rejects.toMatchObject({ code: 'has-remote' })
+    expect(calls).toHaveLength(6)
+    // gh's own failure (a name already taken) as it says it.
+    await expect(service(fake([[/repo create/, err('GraphQL: Name already exists on this account (createRepository)')]]).gh).publish('p', { name: 'x', private: true })).rejects.toMatchObject({
+      code: 'gh',
+      message: 'GraphQL: Name already exists on this account (createRepository)'
+    })
+  })
+
+  it('a folder’s name as a repository name', () => {
+    expect(repoName('test')).toBe('test')
+    expect(repoName('  Mein Projekt (alt)  ')).toBe('Mein-Projekt-alt')
+    expect(repoName('--flag')).toBe('flag')
+    expect(repoName('Über Größe')).toBe('Uber-Grosse')
+    expect(repoName('x'.repeat(120))).toHaveLength(100)
+    expect(repoName('..')).toBe('')
+    expect(repoName('日本')).toBe('')
+  })
+
+  it('in a project that isn’t trusted, the git gh runs gets Mindeck’s untrusted overrides (hooks, filters off)', async () => {
+    const repo = await tempDir('mindeck-gh-repo-')
+    await promisify(execFile)('git', ['init', '-q'], { cwd: repo })
+    await promisify(execFile)('git', ['config', 'filter.evil.clean', 'touch pwned'], { cwd: repo })
+    const { gh, calls } = fake([[/pr checkout/, ok('')]])
+    const saved = process.env.GIT_CONFIG_PARAMETERS
+    process.env.GIT_CONFIG_PARAMETERS = "'user.name=Me'"
+    try {
+      await new GitHubService({ resolveRoot: () => repo, gh, scm: noScm }).checkout('p', 8)
+    } finally {
+      if (saved === undefined) delete process.env.GIT_CONFIG_PARAMETERS
+      else process.env.GIT_CONFIG_PARAMETERS = saved
+    }
+    const params = calls[0].env!.GIT_CONFIG_PARAMETERS
+    expect(params.startsWith("'user.name=Me' ")).toBe(true)
+    expect(params).toContain("'core.fsmonitor=false'")
+    expect(params).toContain("'filter.evil.clean='")
+    expect(params).toContain("'filter.evil.required=false'")
+    // Trusted: gh's git as the user set it up.
+    const trusted = fake([[/pr checkout/, ok('')]])
+    await new GitHubService({ resolveRoot: () => repo, trusted: () => true, gh: trusted.gh, scm: noScm }).checkout('p', 8)
+    expect(trusted.calls[0].env).toBeUndefined()
+  })
+
   it('runs the real program from the login shell: arguments, stdin, output, exit code; missing folder; timeout', async () => {
     const dir = await tempDir('mindeck-gh-')
     const bin = join(dir, 'fake-gh')
@@ -216,10 +305,32 @@ describe('GitHub through gh', () => {
     await writeFile(slow, '#!/bin/sh\nsleep 5\n')
     await chmod(slow, 0o755)
     expect((await shellRunner(slow, 100)([], dir)).code).toBe(1) // killed
-    // Windows starts it directly (no login shell).
+    // Extra environment reaches it.
+    const envBin = join(dir, 'env-gh')
+    await writeFile(envBin, '#!/bin/sh\necho "$GIT_CONFIG_PARAMETERS"\n')
+    await chmod(envBin, 0o755)
+    expect((await shellRunner(envBin)([], dir, undefined, { GIT_CONFIG_PARAMETERS: "'a.b=c'" })).stdout).toBe("'a.b=c'\n")
+    // Windows starts it directly (no login shell) — a bare name from the PATH only, never the one in the project folder.
     const platform = vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
     expect((await shellRunner(bin)(['x'], dir)).stdout).toBe('args:x\n')
+    expect((await shellRunner('fake-gh')(['x'], dir)).code).toBe(127)
     platform.mockRestore()
     expect(typeof loginShellGh).toBe('function')
   }, 20_000)
+
+  it('gh leaving before it read its input (EPIPE) is no uncaught error: the exit code reports it', async () => {
+    const child = Object.assign(new EventEmitter(), { stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough(), kill: () => true })
+    vi.resetModules()
+    vi.doMock('node:child_process', async (importOriginal) => ({ ...(await importOriginal<typeof import('node:child_process')>()), spawn: () => child }))
+    try {
+      const { shellRunner: faked } = await import('../../../electron/main/services/github/GitHubService')
+      const running = faked('gh')(['pr', 'comment'], await tempDir(), 'a long comment')
+      child.stdin.emit('error', Object.assign(new Error('write EPIPE'), { code: 'EPIPE' }))
+      child.emit('close', 2)
+      expect(await running).toEqual({ code: 2, stdout: '', stderr: '' })
+    } finally {
+      vi.doUnmock('node:child_process')
+      vi.resetModules()
+    }
+  })
 })

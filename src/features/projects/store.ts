@@ -19,7 +19,8 @@ interface ProjectsState {
   refresh: (id: string) => Promise<void>
   /** `git pull --ff-only`; resolves to the error message, or undefined when it worked. */
   pull: (id: string) => Promise<string | undefined>
-  openEditor: (id: string) => Promise<void>
+  /** Trust a project (its own tools may run); resolves to the error message, or undefined when it worked. */
+  trust: (id: string) => Promise<string | undefined>
   openInGitHubDesktop: (id: string) => Promise<void>
   select: (id: string) => void
 }
@@ -114,12 +115,13 @@ export const useProjects = create<ProjectsState>((set, get) => ({
     }
   },
 
-  openEditor: async (id) => {
-    set({ error: undefined })
+  trust: async (id) => {
     try {
-      await ipc('projects:openInEditor', { id })
+      const updated = await ipc('projects:trust', { id, trusted: true })
+      set((s) => ({ projects: s.projects.map((p) => (p.id === id ? updated : p)) }))
+      return undefined
     } catch (err) {
-      set({ error: errorMessage(err) })
+      return errorMessage(err)
     }
   },
 

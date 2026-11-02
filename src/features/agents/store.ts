@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { errorMessage, ipc, onEvent } from '@shared/ipc/client'
+import { errorMessage, ipc, onEvent, onResync } from '@shared/ipc/client'
 import type {
   AgentInfo,
   AiSettings,
@@ -12,6 +12,8 @@ import type {
 import type { MindeckEvent } from '@shared/types/events'
 
 const ACTIVITY_CAP = 200
+/** Chats whose messages stay in memory (the most recently opened); others load again when opened. */
+export const CACHED_CHATS = 20
 
 /** Streamed text lands in the message's last text part (a new one after a tool) — same rule as the core. */
 export function applyDelta(list: ChatMessage[], messageId: string, text: string): ChatMessage[] {
@@ -33,10 +35,13 @@ export function upsertMessage(list: ChatMessage[], message: ChatMessage): ChatMe
   return next
 }
 
-/** Fetched history merged with what arrived live (live wins: it saw every change). */
-function merge(fetched: ChatMessage[], live: ChatMessage[] = []): ChatMessage[] {
+/**
+ * Fetched history merged with what arrived live. Live wins (it saw every
+ * change) — unless the push channel had a gap, then the fetched copy does.
+ */
+function merge(fetched: ChatMessage[], live: ChatMessage[] = [], liveWins = true): ChatMessage[] {
   const byId = new Map(live.map((m) => [m.id, m]))
-  const merged = fetched.map((m) => byId.get(m.id) ?? m)
+  const merged = fetched.map((m) => (liveWins && byId.get(m.id)) || m)
   for (const m of live) if (!fetched.some((f) => f.id === m.id)) merged.push(m)
   return merged
 }
@@ -79,6 +84,7 @@ interface AssistantState {
 
 let connections = 0
 let unsubscribe: (() => void) | null = null
+let recentChats: string[] = []
 
 export const useAssistant = create<AssistantState>((set, get) => {
   const fail = (err: unknown) => set({ error: errorMessage(err) })
@@ -91,8 +97,35 @@ export const useAssistant = create<AssistantState>((set, get) => {
     }))
   }
 
+  /** One conversation from the core, into the cache. */
+  const load = async (id: string, liveWins = true) => {
+    const conv = await ipc('ai:conversation', { id })
+    recentChats = [id, ...recentChats.filter((x) => x !== id)].slice(0, CACHED_CHATS)
+    set((s) => ({
+      messages: Object.fromEntries(
+        Object.entries({ ...s.messages, [id]: merge(conv.messages, s.messages[id], liveWins) }).filter(([key]) => key === s.activeId || recentChats.includes(key))
+      ),
+      running: { ...s.running, [id]: conv.running },
+      // A late answer for a chat that is no longer open must not scope the next message to its project.
+      ...(s.activeId === id ? { projectId: conv.projectId } : {})
+    }))
+  }
+
+  /**
+   * The push channel was down: approvals, statuses and streamed text from the
+   * gap are missing. Reload them; cached chats other than the open one are
+   * dropped and come fresh when opened again.
+   */
+  const resync = async () => {
+    const id = get().activeId
+    set((s) => ({ messages: id && s.messages[id] ? { [id]: s.messages[id] } : {} }))
+    await get().refresh()
+    if (id) await load(id, false).catch(fail)
+  }
+
   const subscribe = () => {
     const offs = [
+      onResync(() => void resync()),
       onEvent('ai:delta', ({ conversationId, messageId, text }) =>
         set((s) => {
           const list = s.messages[conversationId]
@@ -164,12 +197,7 @@ export const useAssistant = create<AssistantState>((set, get) => {
     open: async (id) => {
       set({ activeId: id, error: undefined })
       try {
-        const conv = await ipc('ai:conversation', { id })
-        set((s) => ({
-          messages: { ...s.messages, [id]: merge(conv.messages, s.messages[id]) },
-          running: { ...s.running, [id]: conv.running },
-          projectId: conv.projectId
-        }))
+        await load(id)
       } catch (err) {
         fail(err)
       }

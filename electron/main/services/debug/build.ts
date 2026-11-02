@@ -4,6 +4,7 @@ import { mkdir } from 'node:fs/promises'
 import { basename, dirname, extname, join } from 'node:path'
 import { shellCommand, shellEnv, shellQuote } from '../terminal/TerminalService'
 import { shellArgs } from '../../lib/shellArgs'
+import { psQuote } from '../../lib/executables'
 
 function coded(code: string, message: string): Error {
   return Object.assign(new Error(message), { code })
@@ -46,6 +47,8 @@ export interface BuildContext {
   command?: string
   output: (stream: 'stdout' | 'stderr' | 'info', text: string) => void
   signal: AbortSignal
+  /** Where it builds (default: this machine's platform). */
+  platform?: NodeJS.Platform
 }
 
 const HEADERS = ['.h', '.hh', '.hpp', '.hxx']
@@ -75,8 +78,10 @@ export async function buildProgram(ctx: BuildContext, run: BuildRunner = shellBu
   if (ctx.command) await step(ctx.command)
 
   const ext = extname(ctx.program).toLowerCase()
-  const out = join(ctx.root, '.mindeck', 'build', basename(ctx.program, extname(ctx.program)))
-  const q = shellQuote
+  // Windows: programs end in .exe, and the build line runs in PowerShell (its own quoting).
+  const win = (ctx.platform ?? process.platform) === 'win32'
+  const out = join(ctx.root, '.mindeck', 'build', basename(ctx.program, extname(ctx.program))) + (win ? '.exe' : '')
+  const q = win ? psQuote : shellQuote
   if (ctx.language === 'cpp') {
     if (HEADERS.includes(ext)) throw coded('debug-program', 'A header file does not run — choose a source file (.c, .cpp, …) or a built program')
     await mkdir(dirname(out), { recursive: true })

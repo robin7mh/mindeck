@@ -20,7 +20,7 @@ export function ApprovalToasts({ hideConversation }: { hideConversation?: string
         </div>
       ))}
       {visible.length > 3 && (
-        <p className="pointer-events-auto self-end rounded bg-surface/90 px-2 py-0.5 font-mono text-[10px] text-text-muted">
+        <p className="pointer-events-auto self-end rounded-sm bg-surface/90 px-2 py-0.5 font-mono text-[10px] text-text-muted">
           {t.agents.moreWaiting(visible.length - 3)}
         </p>
       )}

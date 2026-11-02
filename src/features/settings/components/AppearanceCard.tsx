@@ -30,8 +30,8 @@ function Segmented<T extends string>({ label, options, value, onChange }: { labe
           aria-checked={value === id}
           onClick={() => onChange(id)}
           className={cn(
-            'flex items-center gap-1.5 rounded px-2.5 py-1 font-sans text-[12px] transition-colors',
-            value === id ? 'bg-cyan/[0.12] text-cyan' : 'text-text-muted hover:text-text-secondary'
+            'flex items-center gap-1.5 rounded-sm px-2.5 py-1 font-sans text-[12px] transition-colors',
+            value === id ? 'bg-cyan/12 text-cyan' : 'text-text-muted hover:text-text-secondary'
           )}
         >
           <Icon size={12} />
@@ -53,7 +53,7 @@ export function AppearanceCard() {
   const isDefault = JSON.stringify(appearance) === JSON.stringify(DEFAULT_APPEARANCE)
 
   return (
-    <Card icon={Palette} title={s.appearanceCard} className="lg:col-span-2">
+    <Card icon={Palette} title={s.appearanceCard} className="pane-lg:col-span-2">
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         <Field label={s.themeMode}>
           <Segmented label={s.themeMode} value={appearance.mode} onChange={(mode) => update({ mode })} options={MODES.map((id) => ({ id, label: s.themeModes[id], icon: MODE_ICONS[id] }))} />
@@ -104,8 +104,8 @@ export function AppearanceCard() {
                     on ? 'border-cyan/60' : 'border-hud/60 enabled:hover:border-hud-strong'
                   )}
                 >
-                  <span className="block rounded p-1.5" style={{ background: `rgb(${tokens['--bg-void']})` }}>
-                    <span className="block h-4 rounded-sm border" style={{ background: `rgb(${tokens['--bg-panel']})`, borderColor: `rgb(${tokens['--border-hud-strong']})` }} />
+                  <span className="block rounded-sm p-1.5" style={{ background: `rgb(${tokens['--bg-void']})` }}>
+                    <span className="block h-4 rounded-xs border" style={{ background: `rgb(${tokens['--bg-panel']})`, borderColor: `rgb(${tokens['--border-hud-strong']})` }} />
                   </span>
                   <span className={cn('font-sans text-[11.5px]', on ? 'text-cyan' : 'text-text-secondary')}>{s.surfaces[id]}</span>
                 </button>

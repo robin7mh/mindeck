@@ -1,15 +1,32 @@
 import { spawn, type IPty } from 'node-pty'
 import { existsSync } from 'node:fs'
-import { stat } from 'node:fs/promises'
+import { rm, stat } from 'node:fs/promises'
 import { homedir, userInfo } from 'node:os'
-import { basename, sep } from 'node:path'
+import { basename, isAbsolute, join, resolve, sep } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import type { TerminalAttach, TerminalData, TerminalExit, TerminalInfo } from '@shared/types/terminal'
+import { REQUEST_SCHEMAS } from '@shared/ipc/schemas'
+import type { AppSettings } from '@shared/types/settings'
+import {
+  DEFAULT_TERMINAL_SETTINGS,
+  type TerminalAttach,
+  type TerminalData,
+  type TerminalExit,
+  type TerminalInfo,
+  type TerminalReveal,
+  type TerminalSettings,
+  type TerminalShell,
+  type TerminalSnapshot
+} from '@shared/types/terminal'
+import { readJson } from '../../lib/jsonFile'
+import { writeAtomic } from '../../lib/writeAtomic'
+import { COMMAND_END, integrate, scanCwd, shellKind, writeScripts, type ShellLaunch } from './integration'
+import { detectShells } from './shells'
 
 const MAX_SESSIONS = 12
-const BUFFER_LIMIT = 256 * 1024 // chars of scrollback kept for re-attaching views
 const FLUSH_MS = 8 // batch PTY output into ~frame-sized IPC messages
 const MAX_WRITE = 1024 * 1024
+/** Command ends kept per session (an agent's command is read up to its end). */
+const MAX_ENDS = 200
 
 interface Session {
   info: TerminalInfo
@@ -18,11 +35,21 @@ interface Session {
   timer?: NodeJS.Timeout
   buffer: string
   end: number
+  /** The start of a folder report (OSC 7) the next chunk completes. */
+  osc: string
+  /** Where commands ended (OSC 133;D), oldest first — still inside the buffer. */
+  ends: number[]
+  /** The latest end no longer kept: everything before it has left the buffer. */
+  lostEnd?: number
+  /** The last chunk's tail, for a mark split across two chunks. */
+  markTail: string
 }
 
 type Emit = {
   (channel: 'terminal:data', payload: TerminalData): void
   (channel: 'terminal:exit', payload: TerminalExit): void
+  (channel: 'terminal:info', payload: TerminalInfo): void
+  (channel: 'terminal:reveal', payload: TerminalReveal): void
 }
 
 function coded(code: string, message: string): Error {
@@ -81,34 +108,162 @@ export function shellEnv(): Record<string, string> {
   return env
 }
 
+/** A folder's tab title: `~` for Home, else its name. */
+const folderTitle = (cwd: string) => (cwd === homedir() ? '~' : basename(cwd) || cwd)
+
+/** A folder for display, Home shortened to `~`. */
+function cwdLabel(cwd: string): string {
+  const home = homedir()
+  return cwd === home ? '~' : cwd.startsWith(home + sep) ? `~${cwd.slice(home.length)}` : cwd
+}
+
+const isDir = (path: string) => stat(path).then((s) => s.isDirectory(), () => false)
+
+/** Shells a command can be typed into (a profile's own program, e.g. htop, is none). */
+const typable = (shell: string) => !!shellKind(shell) || /^(sh|dash|ksh)$/.test(shell)
+
+/** The command as typed into a shell that may be in another folder: change there first. */
+function inFolder(shell: string, cwd: string, command: string): string {
+  if (shellKind(shell) === 'pwsh') return `Set-Location -LiteralPath '${cwd.replace(/'/g, "''")}'; ${command}`
+  return `cd ${shellQuote(cwd)} && ${command}`
+}
+
 /**
  * Interactive shells for the user (phase PT). Distinct from agent command
  * execution (§8.1): the renderer can only send keystrokes and sizes — which
- * binary runs, and where, is decided here. Output is batched per frame and a
- * bounded scrollback is kept so a view can re-attach after a reload.
+ * binary runs, and where, is decided here (a detected shell, or a profile the
+ * user set up in the desktop's settings). Output is batched per frame and a
+ * bounded scrollback is kept so a view can re-attach after a reload; the
+ * folder a shell reports (OSC 7) follows along. The renderer's tabs, layout
+ * and recent output are kept in a file so they come back after a restart.
  */
 export class TerminalService {
   private readonly sessions = new Map<string, Session>()
+  /** Chars of output kept per session (Settings → Terminal). */
+  private limit: number
+  /** The integration scripts are written once per run; false: they couldn't be. */
+  private scripts?: Promise<boolean>
+  /** Saves of the tabs still being written (the window's last one arrives while Mindeck quits). */
+  private readonly writing = new Set<Promise<unknown>>()
 
   constructor(
     private readonly opts: {
       emit: Emit
       /** Project id → name/path (ProjectService); undefined if unknown. */
       resolveProject: (id: string) => { name: string; path: string } | undefined
+      /** The app settings: the Terminal's preferences live in `terminal`. */
+      settings: { get(): AppSettings; update(patch: Partial<AppSettings>): Promise<AppSettings> }
+      /** Where the integration scripts and the saved terminals go (the data folder). */
+      dir: string
     }
-  ) {}
+  ) {
+    this.limit = this.settings().bufferKb * 1024
+  }
 
-  async create(req: { projectId?: string; cols?: number; rows?: number }): Promise<TerminalInfo> {
+  /** The Terminal's preferences, defaults filled in (without the old `restore`, on by default: a clean start now). */
+  settings(): TerminalSettings {
+    const { restore: _old, ...saved } = (this.opts.settings.get().terminal ?? {}) as Partial<TerminalSettings> & { restore?: unknown }
+    return { ...DEFAULT_TERMINAL_SETTINGS, ...saved }
+  }
+
+  async configure(patch: Partial<TerminalSettings>): Promise<TerminalSettings> {
+    const next = { ...this.settings(), ...patch }
+    await this.opts.settings.update({ terminal: next })
+    this.limit = next.bufferKb * 1024
+    return next
+  }
+
+  /** The shells installed here — profiles of their own, next to the user's. */
+  shells(): TerminalShell[] {
+    return detectShells()
+  }
+
+  async create(req: { projectId?: string; cwd?: string; cols?: number; rows?: number; profileId?: string }): Promise<TerminalInfo> {
     const project = req?.projectId ? this.opts.resolveProject(req.projectId) : undefined
     if (req?.projectId && !project) throw coded('not-found', 'Project not found')
+    if (req?.cwd && !isAbsolute(req.cwd)) throw coded('bad-path', 'cwd must be an absolute folder')
+    const prefs = this.settings()
+    const profile = this.profile(req?.profileId ?? prefs.defaultProfile, !!req?.profileId)
+    // A folder asked for (a restored tab's last one) wins over the project's root.
+    const cwd = req?.cwd ? resolve(req.cwd) : (project?.path ?? profile.cwd ?? homedir())
+    const launch = prefs.shellIntegration ? await this.integrated(profile.command, profile.env) : undefined
+    const command = launch ?? profile.command
     return this.start({
-      title: project?.name ?? '~',
-      cwd: project?.path ?? homedir(),
-      command: shellCommand(),
+      title: project?.name ?? folderTitle(cwd),
+      cwd,
+      // A profile's own program starts through the login shell (the user's PATH), like an
+      // agent — unless it is a shell itself: that one sets up its PATH (and takes the integration).
+      command: profile.custom && !shellKind(profile.command.file) ? viaLoginShell(command) : command,
+      shell: basename(profile.command.file).replace(/\.exe$/i, ''),
+      env: { ...profile.env, ...launch?.env },
       projectId: project ? req.projectId : undefined,
+      profileId: profile.id,
+      integration: !!launch,
       cols: req?.cols,
       rows: req?.rows
     })
+  }
+
+  /**
+   * What a profile id starts: the user's own profile, a detected shell, or
+   * (none given) the login shell. An unknown default falls back to the login
+   * shell; an unknown id asked for is an error.
+   */
+  private profile(
+    id: string | undefined,
+    explicit: boolean
+  ): { id?: string; command: ShellLaunch; env?: Record<string, string>; cwd?: string; custom?: boolean } {
+    if (id) {
+      const own = this.settings().profiles.find((p) => p.id === id)
+      if (own) return { id, command: { file: own.command, args: own.args }, env: own.env, cwd: own.cwd, custom: true }
+      const shell = this.shells().find((s) => s.id === id)
+      if (shell) return { id, command: { file: shell.file, args: shell.args } }
+      if (explicit) throw coded('not-found', 'Terminal profile not found')
+    }
+    return { command: shellCommand() }
+  }
+
+  /** The command with shell integration, if it can take it (and the scripts are in place). */
+  private async integrated(command: ShellLaunch, env: Record<string, string> = {}): Promise<ShellLaunch | undefined> {
+    const kind = shellKind(command.file)
+    if (!kind) return undefined
+    const dir = join(this.opts.dir, 'shell-integration')
+    if (kind !== 'pwsh') {
+      this.scripts ??= writeScripts(dir).then(
+        () => true,
+        () => false
+      )
+      if (!(await this.scripts)) return undefined
+    }
+    return integrate(command, dir, { ...shellEnv(), ...env })
+  }
+
+  /**
+   * Saves the renderer's tabs for the next start (nothing — and nothing kept — when restoring is off).
+   * Scrollback holds whatever the shells printed (tokens, keys): for the user's eyes only (0600).
+   */
+  async persist(snapshot: TerminalSnapshot): Promise<void> {
+    const file = join(this.opts.dir, 'terminals.json')
+    const write = this.settings().restoreTabs ? writeAtomic(file, JSON.stringify(snapshot), 0o600) : rm(file, { force: true })
+    this.writing.add(write)
+    try {
+      await write
+    } finally {
+      this.writing.delete(write)
+    }
+  }
+
+  /** Once the saves under way are on disk (or failed — persist's caller hears of that): a quit waits for them. */
+  async saved(): Promise<void> {
+    await Promise.allSettled([...this.writing])
+  }
+
+  /** The tabs saved last time, unless restoring is off or the file is missing or damaged. */
+  async restore(): Promise<TerminalSnapshot | null> {
+    if (!this.settings().restoreTabs) return null
+    // A damaged file is set aside (readJson) rather than overwritten by the next save.
+    const parsed = REQUEST_SCHEMAS['terminal:persist'].safeParse(await readJson(join(this.opts.dir, 'terminals.json')))
+    return parsed.success ? parsed.data : null
   }
 
   /**
@@ -133,8 +288,12 @@ export class TerminalService {
     title: string
     cwd: string
     command: { file: string; args: string[] }
+    /** Display name of the program (default: the binary's). */
+    shell?: string
     env?: Record<string, string>
     projectId?: string
+    profileId?: string
+    integration?: boolean
     cols?: number
     rows?: number
     kind?: 'agent'
@@ -142,7 +301,7 @@ export class TerminalService {
   }): Promise<TerminalInfo> {
     if (this.sessions.size >= MAX_SESSIONS) throw coded('limit', `At most ${MAX_SESSIONS} terminals`)
     const { cwd, command } = req
-    if (!(await stat(cwd).then((s) => s.isDirectory(), () => false))) {
+    if (!(await isDir(cwd))) {
       throw coded('not-found', `Folder not found: ${cwd}`)
     }
 
@@ -154,27 +313,79 @@ export class TerminalService {
       env: { ...shellEnv(), ...req.env }
     })
 
-    const home = homedir()
     const info: TerminalInfo = {
       id: randomUUID(),
       title: req.title,
       cwd,
-      cwdLabel: cwd === home ? '~' : cwd.startsWith(home + sep) ? `~${cwd.slice(home.length)}` : cwd,
-      shell: basename(command.file).replace(/\.exe$/i, ''),
+      cwdLabel: cwdLabel(cwd),
+      shell: req.shell ?? basename(command.file).replace(/\.exe$/i, ''),
       projectId: req.projectId,
       createdAt: new Date().toISOString(),
-      ...(req.kind ? { kind: req.kind } : {})
+      ...(req.kind ? { kind: req.kind } : {}),
+      ...(req.profileId ? { profileId: req.profileId } : {}),
+      ...(req.integration ? { integration: true } : {})
     }
-    const session: Session = { info, pty, pending: '', buffer: '', end: 0 }
+    const session: Session = { info, pty, pending: '', buffer: '', end: 0, osc: '', ends: [], markTail: '' }
     pty.onData((data) => this.push(session, data))
+    // node-pty can call this from its native exit callback: an exception thrown here would
+    // not reach Node's handlers but end the whole app (std::terminate) — log it instead.
     pty.onExit(({ exitCode }) => {
-      this.flush(session)
-      this.sessions.delete(info.id)
-      this.opts.emit('terminal:exit', { id: info.id, exitCode })
-      req.onExit?.(exitCode)
+      try {
+        this.flush(session)
+        this.sessions.delete(info.id)
+        this.opts.emit('terminal:exit', { id: info.id, exitCode })
+        req.onExit?.(exitCode)
+      } catch (err) {
+        console.error(`[terminal] after ${info.id} ended:`, err)
+      }
     })
     this.sessions.set(info.id, session)
     return info
+  }
+
+  /**
+   * Core-internal (an agent's terminal_run): run a command where the user sees
+   * it — in the first terminal waiting at its prompt (after changing to `cwd`),
+   * else in a new one there — and show that terminal (`terminal:reveal`).
+   * `start` is the terminal's output length before the command: what it printed
+   * since is `output(id, start)`.
+   */
+  async runVisible(req: { command: string; cwd: string; projectId?: string; by: string }): Promise<{ info: TerminalInfo; opened: boolean; start: number }> {
+    if (!req.command.trim() || req.command.length > MAX_WRITE || /[\r\n]/.test(req.command)) throw coded('bad-input', 'One command line, please')
+    // Windows reports no foreground program: whether a shell there is free can't be told, so a new one.
+    const free =
+      process.platform === 'win32' ? undefined : [...this.sessions.values()].find((s) => s.info.kind !== 'agent' && typable(s.info.shell) && !this.foreground(s))
+    let session = free
+    if (!session) session = this.require((await this.create({ projectId: req.projectId, cwd: req.cwd })).id)
+    this.flush(session)
+    const start = session.end
+    const { shell } = session.info
+    // A reused shell may sit in another folder, with something half typed at its prompt (cleared first: ^E^U).
+    const line = free ? inFolder(shell, req.cwd, req.command) : req.command
+    session.pty.write(`${free && shellKind(shell) !== 'pwsh' ? '\x05\x15' : ''}${line}\r`)
+    this.opts.emit('terminal:reveal', { info: session.info, by: req.by })
+    return { info: session.info, opened: !free, start }
+  }
+
+  /** What a session printed from `from` to `to` (its output lengths then), as far as the kept output reaches back. */
+  output(id: string, from = 0, to = Infinity): string {
+    const s = this.require(id)
+    this.flush(s)
+    const first = s.end - s.buffer.length
+    return s.buffer.slice(Math.max(0, from - first), Math.max(0, to - first))
+  }
+
+  /**
+   * Where the command typed at `from` ended — the first OSC 133;D since, if
+   * its shell printed one (only after a command it ran) — and how far the
+   * output reaches now.
+   */
+  ended(id: string, from: number): { at?: number; now: number } {
+    const s = this.require(id)
+    this.flush(s)
+    // An end that left the buffer took the command's output with it: nothing after it may stand in.
+    const at = s.lostEnd !== undefined && s.lostEnd >= from ? s.lostEnd : s.ends.find((e) => e >= from)
+    return { ...(at !== undefined ? { at } : {}), now: s.end }
   }
 
   /** The Terminal module's tabs — agent PTYs live in the Agents module — with what runs in them now. */
@@ -185,6 +396,11 @@ export class TerminalService {
         const running = this.foreground(s)
         return running ? { ...s.info, running } : s.info
       })
+  }
+
+  /** A session's info (agent PTYs included), if it is still running. */
+  info(id: string): TerminalInfo | undefined {
+    return this.sessions.get(id)?.info
   }
 
   attach(id: string): TerminalAttach {
@@ -249,7 +465,29 @@ export class TerminalService {
     const data = s.pending
     s.pending = ''
     s.end += data.length
-    s.buffer = (s.buffer + data).slice(-BUFFER_LIMIT)
+    s.buffer = (s.buffer + data).slice(-this.limit)
     this.opts.emit('terminal:data', { id: s.info.id, data, end: s.end })
+    this.follow(s, data)
+    this.markEnds(s, data)
+  }
+
+  /** Notes where commands ended in this chunk (OSC 133;D) — a mark split across chunks counts once. */
+  private markEnds(s: Session, data: string): void {
+    const text = s.markTail + data
+    const base = s.end - text.length
+    for (let i = text.indexOf(COMMAND_END); i >= 0; i = text.indexOf(COMMAND_END, i + 1)) s.ends.push(base + i)
+    s.markTail = text.slice(-(COMMAND_END.length - 1))
+    const first = s.end - s.buffer.length
+    while (s.ends.length > MAX_ENDS || s.ends[0] < first) s.lostEnd = s.ends.shift()
+  }
+
+  /** The shell reported a new folder (OSC 7): a folder tab is named after it. */
+  private follow(s: Session, data: string): void {
+    const { cwd, carry } = scanCwd(s.osc + data)
+    s.osc = carry
+    if (!cwd || cwd === s.info.cwd) return
+    const title = s.info.projectId ? s.info.title : folderTitle(cwd)
+    s.info = { ...s.info, cwd, cwdLabel: cwdLabel(cwd), title }
+    this.opts.emit('terminal:info', s.info)
   }
 }

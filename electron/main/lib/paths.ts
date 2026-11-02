@@ -14,6 +14,8 @@ export interface MindeckPaths {
   defaultVaultRoot: string
   /** Paired remote devices (token hashes, never tokens) and pending pairing codes. */
   devicesFile: string
+  /** The network server's self-signed TLS certificate and key (0600). */
+  tlsDir: string
   /** Secrets such as the LLM API key — encrypted on desktop, 0600 on a server. */
   secretsFile: string
   /** The Mindeck account: last signed entitlement, install id (the session token is a secret). */
@@ -28,6 +30,8 @@ export interface MindeckPaths {
   agentsDir: string
   /** Isolated git worktrees for agents working in parallel — visible, so nothing hides. */
   worktreesDir: string
+  /** ~/Mindeck/logs — the desktop app's log files (rotated) and, under `crashes`, local crash reports. */
+  logsDir: string
 }
 
 /** The home before the app was called Mindeck — used as it is until ~/Mindeck exists (moving it over is up to the user). */
@@ -49,13 +53,15 @@ export function mindeckPaths(home = homedir()): MindeckPaths {
     settingsFile: join(dataDir, 'settings.json'),
     defaultVaultRoot: join(homeDir, 'vault'),
     devicesFile: join(dataDir, 'devices.json'),
+    tlsDir: join(dataDir, 'tls'),
     secretsFile: join(dataDir, 'secrets.json'),
     cloudFile: join(dataDir, 'cloud.json'),
     grantsFile: join(dataDir, 'grants.json'),
     eventsFile: join(dataDir, 'events.jsonl'),
     runsFile: join(dataDir, 'runs.json'),
     agentsDir: join(dataDir, 'agents'),
-    worktreesDir: join(homeDir, 'worktrees')
+    worktreesDir: join(homeDir, 'worktrees'),
+    logsDir: join(homeDir, 'logs')
   }
 }
 
@@ -63,7 +69,7 @@ export function mindeckPaths(home = homedir()): MindeckPaths {
  * One-time copy of the old hidden data folder (Electron's userData, before
  * 2026-10-02 — only the desktop app ever had one) into ~/Mindeck/data. Copy, not
  * move: the original stays untouched as a backup (with a note pointing to the
- * new place). Runs before the DB is opened, so the SQLite files are at rest.
+ * new place). Runs before any service opens its files, so they are at rest.
  */
 export function migrateLegacyData(paths: MindeckPaths, legacyDataDir: string): boolean {
   if (existsSync(paths.dataDir) || !existsSync(legacyDataDir)) return false

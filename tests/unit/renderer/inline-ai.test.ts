@@ -68,6 +68,7 @@ const mon = vi.hoisted(() => {
 })
 vi.mock('@/features/editor/monaco/setup', () => ({ monaco: mon.monaco }))
 
+import { useEditor } from '@/features/editor/store'
 import { acceptInlineEdit, addInlineEdit, inlineCompletions, rejectInlineEdit, setupInlineAi, startInlineEdit, suggesting } from '@/features/editor/monaco/inlineAi'
 import { useAssistant } from '@/features/agents/store'
 
@@ -179,7 +180,8 @@ describe('suggestions while typing', () => {
   it('the file around the cursor goes out; the answer comes back as ghost text at the cursor', async () => {
     const calls: unknown[] = []
     let answer: unknown = 'a, b)'
-    const b = installBridge({ 'ai:inlineComplete': (p: unknown) => (calls.push(p), typeof answer === 'function' ? (answer as Fn)() : answer), 'ai:inlineCancel': () => undefined })
+    // a cancel that fails is no error: the answer is ignored anyway
+    const b = installBridge({ 'ai:inlineComplete': (p: unknown) => (calls.push(p), typeof answer === 'function' ? (answer as Fn)() : answer), 'ai:inlineCancel': () => Promise.reject(new Error('gone')) })
     useAssistant.setState({ status: STATUS() })
     const model = new mon.Model('mul(a, \nrest')
     const got = await provide(model)
@@ -210,6 +212,24 @@ describe('suggestions while typing', () => {
     useAssistant.setState({ status: STATUS() })
     expect((await provide(new mon.Model('x', { scheme: 'inmemory', path: 'x' }))).items).toEqual([])
     expect(calls).toEqual([])
+  })
+
+  it('takes the status the assistant already has; a status that can\'t be read is no suggestions', async () => {
+    vi.resetModules()
+    const loaded = await import('@/features/editor/monaco/inlineAi')
+    const bridge = installBridge({ 'ai:status': () => STATUS() })
+    ;(await import('@/features/agents/store')).useAssistant.setState({ status: STATUS() })
+    loaded.setupInlineAi()
+    expect(loaded.suggesting()).toBe(true)
+    expect(bridge.invoke).not.toHaveBeenCalledWith('ai:status', undefined)
+
+    vi.resetModules()
+    const offline = await import('@/features/editor/monaco/inlineAi')
+    ;(await import('@/features/agents/store')).useAssistant.setState({ status: undefined })
+    installBridge({ 'ai:status': () => Promise.reject(new Error('offline')) })
+    offline.setupInlineAi()
+    await settle()
+    expect(offline.suggesting()).toBe(false)
   })
 })
 
@@ -264,6 +284,20 @@ describe('⌘K: edit with AI', () => {
     expect(input()).toBeNull()
     expect(model.value).toBe('var x = 1\nvar y = 2\nlog(x)\n')
     expect(e.zones).toEqual([])
+    // ⌘K ⌘\ is VS Code's “split down”: as the prompt's first key it closes the prompt and splits.
+    const split = vi.spyOn(useEditor.getState(), 'split').mockImplementation(() => {})
+    startInlineEdit(ed(e))
+    press('\\') // without ⌘: a character
+    input()!.value = 'make it \\'
+    press('\\', { metaKey: true }) // something typed already: part of the prompt
+    expect(split).not.toHaveBeenCalled()
+    input()!.value = ''
+    press('\\', { ctrlKey: true })
+    expect(input()).toBeNull()
+    expect(split).toHaveBeenCalledWith('down')
+    startInlineEdit(ed(e))
+    press('\\', { metaKey: true })
+    expect(split).toHaveBeenCalledTimes(2)
   })
 
   it('writes as asked (progress shows), then accept or reject; the edit is one step', async () => {
@@ -349,6 +383,7 @@ describe('⌘K: edit with AI', () => {
     press('Enter')
     await settle()
     const requestId = (b.invoke.mock.calls.find(([c]) => c === 'ai:inlineEdit')![1] as { requestId: string }).requestId
+    b.invoke.mockImplementationOnce(() => Promise.reject(new Error('gone'))) // a cancel that fails changes nothing
     click('Stop')
     expect(b.invoke).toHaveBeenCalledWith('ai:inlineCancel', { requestId })
     finish('function f() {}')
@@ -378,7 +413,7 @@ describe('⌘K: edit with AI', () => {
     }
     press('Enter')
     await settle()
-    expect(note()).toBe('Failed: rate limited')
+    expect(note()).toBe('Failed: Too many requests — please try again in a moment.')
     expect(buttons()).toEqual([])
     // Reject while asking just closes.
     rejectInlineEdit(ed(e))

@@ -1,7 +1,7 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { join, basename } from 'node:path'
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 import { tempDir, tick } from './helpers'
 
 type FakePty = {
@@ -14,6 +14,8 @@ type FakePty = {
   kill: ReturnType<typeof vi.fn>
   data: (d: string) => void
   exit: (code: number) => void
+  /** This PTY's foreground program, over `h.foreground` ('' = the shell itself). */
+  fg?: string
 }
 const h = vi.hoisted(() => ({
   ptys: [] as FakePty[],
@@ -41,6 +43,7 @@ vi.mock('node-pty', () => ({
     return {
       ...pty,
       get process() {
+        if (pty.fg !== undefined) return pty.fg || file.split('/').pop()
         if (h.foreground instanceof Error) throw h.foreground
         return h.foreground || file.split('/').pop()
       },
@@ -67,13 +70,35 @@ vi.mock('node:fs', async (orig) => {
 })
 
 import { TerminalService } from '../../../electron/main/services/terminal/TerminalService'
+import type { AppSettings } from '@shared/types/settings'
+import type { TerminalSettings, TerminalSnapshot } from '@shared/types/terminal'
 
 const realPlatform = process.platform
 const setPlatform = (p: NodeJS.Platform) => Object.defineProperty(process, 'platform', { value: p })
 
-let emit: ReturnType<typeof vi.fn>
+let emit: Mock
 let svc: TerminalService
 let projectDir: string
+let dataDir: string
+
+/** App settings in memory; tests without integration unless they turn it on. */
+function settingsStore(terminal: Partial<TerminalSettings> = {}) {
+  let current: AppSettings = { terminal: { shellIntegration: false, ...terminal } }
+  return {
+    get: () => current,
+    update: vi.fn(async (patch: Partial<AppSettings>) => (current = { ...current, ...patch }))
+  }
+}
+
+/** A service like the core's; `resolveProject` defaults to the one demo project. */
+function service(opts: { resolveProject?: (id: string) => { name: string; path: string } | undefined; terminal?: Partial<TerminalSettings>; dir?: string } = {}) {
+  return new TerminalService({
+    emit,
+    resolveProject: opts.resolveProject ?? ((id) => (id === 'p1' ? { name: 'demo', path: projectDir } : undefined)),
+    settings: settingsStore(opts.terminal),
+    dir: opts.dir ?? dataDir
+  })
+}
 
 beforeEach(async () => {
   h.ptys.length = 0
@@ -82,10 +107,8 @@ beforeEach(async () => {
   h.missing.clear()
   emit = vi.fn()
   projectDir = await tempDir()
-  svc = new TerminalService({
-    emit,
-    resolveProject: (id) => (id === 'p1' ? { name: 'demo', path: projectDir } : undefined)
-  })
+  dataDir = await tempDir()
+  svc = service()
 })
 afterEach(() => {
   setPlatform(realPlatform)
@@ -127,22 +150,35 @@ describe('TerminalService.create', () => {
   })
 
   it('labels folders under Home with ~', async () => {
-    const svc2 = new TerminalService({ emit, resolveProject: () => ({ name: 'h', path: join(homedir()) }) })
+    const svc2 = service({ resolveProject: () => ({ name: 'h', path: join(homedir()) }) })
     expect((await svc2.create({ projectId: 'any' })).cwdLabel).toBe('~')
     const under = await mkdtemp(join(homedir(), '.mindeck-test-'))
-    const inHome = new TerminalService({ emit, resolveProject: () => ({ name: 'u', path: under }) })
+    const inHome = service({ resolveProject: () => ({ name: 'u', path: under }) })
     expect((await inHome.create({ projectId: 'any' })).cwdLabel).toBe(`~${under.slice(homedir().length)}`)
     inHome.killAll()
     await rm(under, { recursive: true, force: true })
-    const sub = new TerminalService({ emit, resolveProject: () => ({ name: 's', path: join(homedir(), '..') }) })
+    const sub = service({ resolveProject: () => ({ name: 's', path: join(homedir(), '..') }) })
     expect((await sub.create({ projectId: 'any' })).cwdLabel).toBe(join(homedir(), '..'))
     svc2.killAll()
     sub.killAll()
   })
 
+  it('opens in any folder (from Files), named after it; the session is found by its id', async () => {
+    const folder = await tempDir()
+    const info = await svc.create({ cwd: folder })
+    expect(info).toMatchObject({ title: basename(folder), cwd: folder, projectId: undefined })
+    expect(svc.info(info.id)).toEqual(info)
+    expect(svc.info('nope')).toBeUndefined()
+    expect((await svc.create({ cwd: homedir() })).title).toBe('~')
+    expect((await svc.create({ cwd: '/' })).title).toBe('/')
+    await expect(svc.create({ cwd: 'relative/dir' })).rejects.toMatchObject({ code: 'bad-path' })
+    // a folder asked for (a restored tab's last one) wins over the project's root; the tab keeps the project's name
+    expect(await svc.create({ projectId: 'p1', cwd: folder })).toMatchObject({ cwd: folder, title: 'demo', projectId: 'p1' })
+  })
+
   it('rejects unknown projects, missing folders and too many sessions', async () => {
     await expect(svc.create({ projectId: 'nope' })).rejects.toMatchObject({ code: 'not-found' })
-    const gone = new TerminalService({ emit, resolveProject: () => ({ name: 'x', path: join(projectDir, 'missing') }) })
+    const gone = service({ resolveProject: () => ({ name: 'x', path: join(projectDir, 'missing') }) })
     await expect(gone.create({ projectId: 'x' })).rejects.toMatchObject({ code: 'not-found' })
     for (let i = 0; i < 12; i += 1) await svc.create(undefined as never)
     await expect(svc.create({})).rejects.toMatchObject({ code: 'limit' })
@@ -267,6 +303,22 @@ describe('TerminalService.spawnProgram (agents)', () => {
     expect(onExit).toHaveBeenCalledWith(2)
   })
 
+  it('an exception after a process ended is logged — it never escapes into node-pty (that would end the app)', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const info = await svc.spawnProgram({
+      title: 'x',
+      cwd: projectDir,
+      command: { file: 'claude', args: [] },
+      onExit: () => {
+        throw new Error('listener broke')
+      }
+    })
+    expect(() => pty().exit(1)).not.toThrow()
+    expect(error).toHaveBeenCalledWith(`[terminal] after ${info.id} ended:`, expect.objectContaining({ message: 'listener broke' }))
+    expect(svc.info(info.id)).toBeUndefined()
+    error.mockRestore()
+  })
+
   it('on Windows starts the program directly', async () => {
     setPlatform('win32')
     await svc.spawnProgram({ title: 'x', cwd: projectDir, command: { file: 'claude.exe', args: ['--a b'] } })
@@ -281,6 +333,97 @@ describe('TerminalService.spawnProgram (agents)', () => {
   })
 })
 
+describe('TerminalService.runVisible (an agent starts something the user sees)', () => {
+  const run = (command = 'npm run dev', cwd = projectDir) => svc.runVisible({ command, cwd, projectId: 'p1', by: 'Claude Code' })
+
+  it('without a free terminal: a new one in the folder, the command typed, the terminal revealed', async () => {
+    const res = await run()
+    expect(res).toMatchObject({ opened: true, start: 0, info: { title: 'demo', cwd: projectDir, projectId: 'p1' } })
+    expect(pty().opts.cwd).toBe(projectDir)
+    expect(pty().write).toHaveBeenCalledWith('npm run dev\r')
+    expect(emit).toHaveBeenCalledWith('terminal:reveal', { info: res.info, by: 'Claude Code' })
+    expect(svc.list().map((t) => t.id)).toEqual([res.info.id]) // a tab of the Terminal like any other
+  })
+
+  it('takes the first terminal waiting at its prompt: changes to the folder, clears what was half typed', async () => {
+    const busy = await svc.create({})
+    h.ptys[0].fg = 'node'
+    const free = await svc.create({})
+    await svc.create({}) // free as well, but later
+    pty().data('earlier output')
+    h.ptys[1].data('before')
+    const res = await run('npm start', join(projectDir, 'it\'s'))
+    expect(res).toMatchObject({ opened: false, info: { id: free.id }, start: 6 })
+    expect(h.ptys[1].write).toHaveBeenCalledWith(`\x05\x15cd '${join(projectDir, "it'\\''s")}' && npm start\r`)
+    expect(h.ptys[0].write).not.toHaveBeenCalled()
+    expect(h.ptys).toHaveLength(3)
+    expect(busy.id).not.toBe(free.id)
+
+    // What it printed since: the scrollback from `start` on.
+    h.ptys[1].data(' — ready on http://localhost:3000')
+    expect(svc.output(free.id, res.start)).toBe(' — ready on http://localhost:3000')
+    expect(svc.output(free.id)).toBe('before — ready on http://localhost:3000')
+    expect(() => svc.output('nope')).toThrow('Terminal session has ended')
+  })
+
+  it('never types into a busy shell, an agent, or a profile that runs a program of its own', async () => {
+    svc = service({ terminal: { profiles: [{ id: 'custom-top', name: 'top', command: 'htop', args: [], env: {} }] } })
+    await svc.create({ profileId: 'custom-top' }) // htop is its "shell": never free
+    await svc.spawnProgram({ title: 'Claude Code', cwd: projectDir, command: { file: 'claude', args: [] } })
+    await svc.create({})
+    pty().fg = 'vite'
+    const res = await run()
+    expect(res.opened).toBe(true)
+    expect(h.ptys).toHaveLength(4)
+    for (const p of h.ptys.slice(0, 3)) expect(p.write).not.toHaveBeenCalled()
+  })
+
+  it('PowerShell changes folder its own way; on Windows a new terminal (a busy one cannot be told)', async () => {
+    svc = service({ terminal: { profiles: [{ id: 'custom-pwsh', name: 'PowerShell', command: '/usr/local/bin/pwsh', args: [], env: {} }] } })
+    await svc.create({ profileId: 'custom-pwsh' })
+    await run('npm run dev', "/a/it's")
+    expect(pty().write).toHaveBeenCalledWith("Set-Location -LiteralPath '/a/it''s'; npm run dev\r")
+
+    setPlatform('win32')
+    expect((await run()).opened).toBe(true)
+    expect(pty().write).toHaveBeenCalledWith('npm run dev\r')
+  })
+
+  it('notes where a command ended (OSC 133;D, also split across chunks): its output reads up to there', async () => {
+    const { info, start } = await run()
+    pty().data('building\r\n\x1b]13')
+    expect(svc.ended(info.id, start)).toEqual({ now: 14 }) // half a mark is none
+    pty().data('3;D;0\x07$ cat secrets')
+    const { at, now } = svc.ended(info.id, start)
+    expect(at).toBe(10)
+    expect(now).toBe(33)
+    expect(svc.output(info.id, start, at)).toBe('building\r\n')
+    expect(svc.ended(info.id, 11)).toEqual({ now: 33 }) // the next command has not ended
+  })
+
+  it('an end that left the buffer still bounds the command (nothing after it stands in); a few hundred are kept', async () => {
+    svc = service({ terminal: { bufferKb: 64 } })
+    const { info } = await run()
+    pty().data('x\x1b]133;D;0\x07')
+    expect(svc.ended(info.id, 0).at).toBe(1)
+    pty().data(`${'y'.repeat(70 * 1024)}\x1b]133;D;0\x07`)
+    expect(svc.ended(info.id, 0).at).toBe(1) // gone from the buffer, still the end
+    expect(svc.output(info.id, 0, 1)).toBe('')
+    expect(svc.ended(info.id, 2).at).toBe(11 + 70 * 1024)
+
+    pty().fg = 'node' // busy: the next command gets a terminal of its own
+    const many = (await run()).info.id
+    pty().data('\x1b]133;D'.repeat(201))
+    expect(svc.ended(many, 0).at).toBe(0) // the first, though no longer kept
+    expect(svc.ended(many, 1).at).toBe(7)
+  })
+
+  it('takes one command line', async () => {
+    for (const command of ['', '  ', 'a\nb', 'a\rb']) await expect(run(command)).rejects.toMatchObject({ code: 'bad-input' })
+    expect(h.ptys).toHaveLength(0)
+  })
+})
+
 describe('shellQuote', () => {
   it('leaves plain words, quotes everything else', async () => {
     const { shellQuote } = await import('../../../electron/main/services/terminal/TerminalService')
@@ -289,5 +432,184 @@ describe('shellQuote', () => {
     expect(shellQuote('')).toBe("''")
     expect(shellQuote('a b')).toBe("'a b'")
     expect(shellQuote("it's $HOME")).toBe(`'it'\\''s $HOME'`)
+  })
+})
+
+describe('TerminalService settings and profiles', () => {
+  it('fills in defaults; configure saves and resizes the kept output', async () => {
+    expect(svc.settings()).toMatchObject({ fontSize: 13, bufferKb: 256, restoreTabs: false, shellIntegration: false, profiles: [] })
+    const { id } = await svc.create({})
+    expect(await svc.configure({ bufferKb: 64, fontSize: 15 })).toMatchObject({ bufferKb: 64, fontSize: 15 })
+    expect(svc.settings().fontSize).toBe(15)
+    pty().data('y'.repeat(100 * 1024))
+    expect(svc.attach(id).buffer).toHaveLength(64 * 1024)
+    expect(svc.shells().map((s) => s.id)).toEqual(expect.arrayContaining(['zsh', 'bash']))
+  })
+
+  it('starts a detected shell, a custom profile (through the login shell) or the default one', async () => {
+    const own = { id: 'custom-ssh', name: 'Server', command: 'ssh', args: ['my host'], env: { FOO: 'bar' }, cwd: projectDir }
+    svc = service({ terminal: { profiles: [own], defaultProfile: 'custom-ssh' } })
+
+    const bash = await svc.create({ profileId: 'bash' })
+    expect(pty().file).toMatch(/\/bash$/)
+    expect(pty().args).toEqual(['-l'])
+    expect(bash).toMatchObject({ profileId: 'bash', shell: 'bash', cwd: homedir() })
+    expect(bash).not.toHaveProperty('integration')
+
+    // the default profile: its folder, its environment, started via `zsh -lc exec …`
+    const ssh = await svc.create({})
+    expect(pty()).toMatchObject({ file: '/bin/zsh', args: ['-lc', "exec ssh 'my host'"] })
+    expect(pty().opts).toMatchObject({ cwd: projectDir, env: expect.objectContaining({ FOO: 'bar', TERM_PROGRAM: 'Mindeck' }) })
+    expect(ssh).toMatchObject({ profileId: 'custom-ssh', shell: 'ssh', title: basename(projectDir) })
+    h.foreground = 'ssh'
+    expect(svc.list().find((t) => t.id === ssh.id)).not.toHaveProperty('running') // ssh is the "shell" here
+
+    // a project still opens in its own folder
+    expect((await svc.create({ projectId: 'p1' })).cwd).toBe(projectDir)
+    await expect(svc.create({ profileId: 'nope' })).rejects.toMatchObject({ code: 'not-found' })
+
+    // a default that no longer exists: the login shell
+    svc = service({ terminal: { defaultProfile: 'gone' } })
+    expect(await svc.create({})).not.toHaveProperty('profileId')
+    expect(pty()).toMatchObject({ file: '/bin/zsh', args: ['-l'] })
+    // '' clears the default
+    svc = service({ terminal: { defaultProfile: '' } })
+    await svc.create({})
+    expect(pty().args).toEqual(['-l'])
+  })
+})
+
+describe('TerminalService shell integration', () => {
+  it('loads zsh through ZDOTDIR, writing the scripts once', async () => {
+    svc = service({ terminal: { shellIntegration: true } })
+    process.env.ZDOTDIR = '/home/u/.config/zsh'
+    const info = await svc.create({})
+    delete process.env.ZDOTDIR
+    expect(info.integration).toBe(true)
+    const dir = join(dataDir, 'shell-integration')
+    expect(pty().args).toEqual(['-l'])
+    expect(pty().opts.env).toMatchObject({ ZDOTDIR: join(dir, 'zsh'), MINDECK_ZDOTDIR: '/home/u/.config/zsh' })
+    expect(await readFile(join(dir, 'zsh', '.zshrc'), 'utf8')).toContain('133;C')
+    await svc.create({})
+    expect(pty().opts.env.MINDECK_ZDOTDIR).toBe('')
+  })
+
+  it('a custom profile that is a shell runs directly and takes the integration', async () => {
+    const own = { id: 'custom-b', name: 'Bash', command: '/bin/bash', args: ['-l'], env: {} }
+    svc = service({ terminal: { shellIntegration: true, profiles: [own] } })
+    expect(await svc.create({ profileId: 'custom-b' })).toMatchObject({ integration: true, shell: 'bash' })
+    expect(pty()).toMatchObject({ file: '/bin/bash', args: ['--init-file', join(dataDir, 'shell-integration', 'mindeck.bash'), '-i'] })
+    expect(pty().opts.env.MINDECK_SHELL_LOGIN).toBe('1')
+  })
+
+  it('PowerShell needs no files; shells it cannot load into start without it', async () => {
+    svc = service({ terminal: { shellIntegration: true }, dir: join(projectDir, 'file') })
+    await writeFile(join(projectDir, 'file'), 'not a folder') // the scripts can't be written here
+    expect(await svc.create({})).not.toHaveProperty('integration')
+    expect(pty().args).toEqual(['-l'])
+
+    setPlatform('win32')
+    expect((await svc.create({})).integration).toBe(true)
+    expect(pty().args.slice(0, 3)).toEqual(['-NoLogo', '-NoExit', '-EncodedCommand'])
+
+    setPlatform('linux')
+    h.userShell = '/bin/sh'
+    expect(await svc.create({})).not.toHaveProperty('integration')
+  })
+})
+
+describe('TerminalService follows the folder (OSC 7)', () => {
+  it('renames a folder tab, keeps a project tab name, and reads reports split across chunks', async () => {
+    const folder = await tempDir()
+    const { id } = await svc.create({})
+    pty().data(`a\x1b]7;file://host${folder}\x07b`)
+    await tick(20)
+    expect(emit).toHaveBeenCalledWith('terminal:info', expect.objectContaining({ id, cwd: folder, title: basename(folder), cwdLabel: folder }))
+    expect(svc.list()[0].cwd).toBe(folder)
+    emit.mockClear()
+    pty().data(`\x1b]7;file://host${folder}\x07`) // same folder: nothing new
+    await tick(20)
+    expect(emit.mock.calls.filter(([c]) => c === 'terminal:info')).toEqual([])
+
+    const p = await svc.create({ projectId: 'p1' })
+    pty().data('\x1b]7;file://host/')
+    await tick(20)
+    pty().data('tmp\x1b\\')
+    await tick(20)
+    expect(emit).toHaveBeenCalledWith('terminal:info', expect.objectContaining({ id: p.id, cwd: '/tmp', title: 'demo' }))
+  })
+})
+
+describe('TerminalService saves the tabs for the next start', () => {
+  const snapshot: TerminalSnapshot = {
+    layout: 'cols',
+    active: 1,
+    tabs: [{ title: '~', cwd: '/home/u', scrollback: 'hello', profileId: 'zsh' }],
+    savedAt: '2026-10-15T10:00:00.000Z'
+  }
+
+  it('a clean start by default: nothing restored — a `restore` saved by earlier versions (on by default then) no longer counts', async () => {
+    await svc.persist(snapshot)
+    expect(await svc.restore()).toBeNull()
+    await expect(readFile(join(dataDir, 'terminals.json'))).rejects.toMatchObject({ code: 'ENOENT' })
+    svc = service({ terminal: { restore: true } as never })
+    expect(svc.settings()).not.toHaveProperty('restore')
+    expect(svc.settings().restoreTabs).toBe(false)
+    expect(await svc.restore()).toBeNull()
+  })
+
+  it('persists and restores when asked to; nothing is kept when restoring is off', async () => {
+    svc = service({ terminal: { restoreTabs: true } })
+    expect(await svc.restore()).toBeNull() // nothing saved yet
+    await svc.persist(snapshot)
+    expect(await svc.restore()).toEqual(snapshot)
+    // Scrollback may show secrets: the file is the user's alone.
+    if (process.platform !== 'win32') expect((await stat(join(dataDir, 'terminals.json'))).mode & 0o777).toBe(0o600)
+
+    await writeFile(join(dataDir, 'terminals.json'), '{"layout":"nope"}')
+    expect(await svc.restore()).toBeNull()
+    // damaged: set aside for rescue, not overwritten by the next save
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    await writeFile(join(dataDir, 'terminals.json'), '{"layout":')
+    expect(await svc.restore()).toBeNull()
+    expect((await readdir(dataDir)).some((name) => name.startsWith('terminals.corrupt-'))).toBe(true)
+
+    // a quit waits for the save under way — a failing one too
+    const pending = svc.persist(snapshot)
+    let done = false
+    const quit = svc.saved().then(() => (done = true))
+    expect(done).toBe(false)
+    await pending
+    await quit
+    expect(done).toBe(true)
+    await svc.saved() // nothing under way: at once
+    await rm(join(dataDir, 'terminals.json'))
+    await mkdir(join(dataDir, 'terminals.json')) // a folder in the way: the save fails
+    const failing = svc.persist(snapshot)
+    failing.catch(() => {})
+    await svc.saved()
+    await expect(failing).rejects.toThrow()
+    await rm(join(dataDir, 'terminals.json'), { recursive: true })
+    svc = service({ terminal: { restoreTabs: false } })
+    expect(await svc.restore()).toBeNull()
+    await svc.persist(snapshot)
+    await expect(readFile(join(dataDir, 'terminals.json'))).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+})
+
+describe('terminal request schemas', () => {
+  it('hold profiles and settings to their bounds', async () => {
+    const { parseRequest } = await import('@shared/ipc/schemas')
+    const profile = { id: 'custom-1', name: 'Dev', command: 'ssh', args: ['h'], env: { A_1: 'x' }, cwd: '/srv' }
+    expect(parseRequest('terminal:configure', { profiles: [profile], defaultProfile: '' })).toMatchObject({ ok: true })
+    expect(parseRequest('terminal:configure', { profiles: [{ ...profile, cwd: 'C:\\Users' }] })).toMatchObject({ ok: true })
+    expect(parseRequest('terminal:configure', { profiles: [{ ...profile, cwd: 'relative' }] })).toMatchObject({ ok: false })
+    expect(parseRequest('terminal:configure', { profiles: [{ ...profile, id: 'zsh' }] })).toMatchObject({ ok: false })
+    expect(parseRequest('terminal:configure', { profiles: [{ ...profile, env: { 'BAD KEY': 'x' } }] })).toMatchObject({ ok: false })
+    const many = Object.fromEntries(Array.from({ length: 65 }, (_, i) => [`K${i}`, 'v']))
+    expect(parseRequest('terminal:configure', { profiles: [{ ...profile, env: many }] })).toMatchObject({ ok: false })
+    expect(parseRequest('terminal:configure', { fontSize: 99 })).toMatchObject({ ok: false })
+    expect(parseRequest('terminal:configure', { cursorStyle: 'block', scrollback: 1000 })).toMatchObject({ ok: true })
+    expect(parseRequest('terminal:persist', { layout: 'grid', active: 0, tabs: [], savedAt: 'x' })).toMatchObject({ ok: true })
   })
 })

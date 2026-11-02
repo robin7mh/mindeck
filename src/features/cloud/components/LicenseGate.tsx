@@ -1,28 +1,32 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { Hourglass, Loader2, LogOut, MailCheck, RefreshCw, ShoppingCart, UserRound, WifiOff } from 'lucide-react'
+import { CirclePause, Hourglass, Loader2, LogOut, MailCheck, RefreshCw, ShoppingCart, UserRound, WifiOff } from 'lucide-react'
 import type { CloudStatus } from '@shared/types/cloud'
 import { Panel } from '@/components/ui/Panel'
 import { TechLabel } from '@/components/ui/TechLabel'
+import { MindeckMark } from '@/components/brand/MindeckMark'
 import { GlowBackground } from '@/components/shell/GlowBackground'
 import { cn } from '@/lib/cn'
 import { useT } from '@/lib/i18n'
+import { useOverlay } from '@/lib/overlay'
 import { useCloud } from '../store'
 import { CloudNotice, primaryButton, quietButton, SignInForm } from './CloudForms'
 
 function Frame({ children, overlay }: { children: ReactNode; overlay?: boolean }) {
   const t = useT()
+  // Covering the app: the browser's page must not show through.
+  useOverlay(!!overlay)
   return (
     <div
       className={cn(
         'flex h-screen w-screen items-center justify-center overflow-hidden p-4',
-        overlay ? 'fixed inset-0 z-[200] bg-void/85 backdrop-blur-sm' : 'relative'
+        overlay ? 'fixed inset-0 z-200 bg-void/85 backdrop-blur-xs' : 'relative'
       )}
     >
       {!overlay && <GlowBackground />}
       <div className="relative z-10 w-full max-w-md">
         <div className="mb-5 flex items-center justify-center gap-2.5">
-          <div className="flex h-9 w-9 items-center justify-center rounded-md border border-cyan/40 bg-cyan/5 font-mono text-sm font-bold text-cyan text-glow-cyan">
-            MD
+          <div className="flex h-9 w-9 items-center justify-center">
+            <MindeckMark size={34} />
           </div>
           <div className="leading-none">
             <div className="font-sans text-[15px] font-semibold tracking-wide text-text-primary">Mindeck</div>
@@ -132,6 +136,17 @@ export function CloudScreen({ status, overlay }: { status: CloudStatus; overlay?
         email={status.account?.email}
         primary={{ label: t.cloud.checkAgain, icon: RefreshCw, run: refresh }}
         secondary={{ label: t.cloud.resend, run: () => void cloud.resend() }}
+      />
+    )
+  } else if (status.state === 'license_suspended') {
+    // A disputed payment (chargeback): nothing to buy — the dispute has to be closed.
+    body = (
+      <Locked
+        icon={CirclePause}
+        title={t.cloud.suspendedTitle}
+        intro={t.cloud.suspendedIntro}
+        email={status.account?.email}
+        primary={{ label: t.cloud.checkAgain, icon: RefreshCw, run: refresh }}
       />
     )
   } else if (status.state === 'trial_expired') {

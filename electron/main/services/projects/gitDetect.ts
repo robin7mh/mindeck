@@ -2,12 +2,13 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import type { GitInfo } from '@shared/types/project'
 import { remoteWebUrl } from '../git/GitService'
+import { gitGuard, gitProgram } from '../../lib/git'
 
 const exec = promisify(execFile)
 
-/** Run a git subcommand read-only in `cwd`. Args are an array — never a shell string. */
-async function git(cwd: string, args: string[], timeout = 6000): Promise<string> {
-  const { stdout } = await exec('git', args, { cwd, timeout, windowsHide: true })
+/** Run a git subcommand read-only in `cwd` (`guard`: the untrusted overrides). Args are an array — never a shell string. */
+async function git(cwd: string, guard: string[], args: string[], timeout = 6000): Promise<string> {
+  const { stdout } = await exec(gitProgram(), [...guard, ...args], { cwd, timeout, windowsHide: true })
   return stdout.trim()
 }
 
@@ -16,9 +17,12 @@ async function git(cwd: string, args: string[], timeout = 6000): Promise<string>
  * probe is independently guarded so a shallow/detached/upstream-less repo still
  * returns partial info instead of failing.
  */
-export async function detectGit(cwd: string): Promise<GitInfo> {
+export async function detectGit(cwd: string, trusted = false): Promise<GitInfo> {
+  let guard: string[]
   try {
-    await git(cwd, ['rev-parse', '--is-inside-work-tree'])
+    // Untrusted (a project just added): git never runs what the repository's config names (see untrustedOverrides).
+    guard = await gitGuard(cwd, trusted)
+    await git(cwd, guard, ['rev-parse', '--is-inside-work-tree'])
   } catch {
     return { isRepo: false }
   }
@@ -26,13 +30,13 @@ export async function detectGit(cwd: string): Promise<GitInfo> {
   const info: GitInfo = { isRepo: true }
 
   try {
-    info.branch = await git(cwd, ['rev-parse', '--abbrev-ref', 'HEAD'])
+    info.branch = await git(cwd, guard, ['rev-parse', '--abbrev-ref', 'HEAD'])
   } catch {
     /* detached HEAD or empty repo */
   }
 
   try {
-    const status = await git(cwd, ['status', '--porcelain'], 8000)
+    const status = await git(cwd, guard, ['status', '--porcelain', ...(trusted ? [] : ['--ignore-submodules=all'])], 8000)
     info.dirty = status.length > 0
   } catch {
     /* ignore */
@@ -40,7 +44,7 @@ export async function detectGit(cwd: string): Promise<GitInfo> {
 
   // ahead/behind vs. upstream (only if an upstream is configured)
   try {
-    const counts = await git(cwd, ['rev-list', '--left-right', '--count', '@{u}...HEAD'])
+    const counts = await git(cwd, guard, ['rev-list', '--left-right', '--count', '@{u}...HEAD'])
     const [behind, ahead] = counts.split(/\s+/).map((n) => Number.parseInt(n, 10))
     if (Number.isFinite(behind)) info.behind = behind
     if (Number.isFinite(ahead)) info.ahead = ahead
@@ -50,7 +54,7 @@ export async function detectGit(cwd: string): Promise<GitInfo> {
 
   try {
     // %x1f = unit separator, safe against subjects containing spaces/pipes
-    const line = await git(cwd, ['log', '-1', '--pretty=%H%x1f%s%x1f%an%x1f%cI'])
+    const line = await git(cwd, guard, ['log', '-1', '--pretty=%H%x1f%s%x1f%an%x1f%cI'])
     if (line) {
       const [hash, subject, author, date] = line.split('\x1f')
       info.lastCommit = { hash, subject, author, date }
@@ -60,7 +64,7 @@ export async function detectGit(cwd: string): Promise<GitInfo> {
   }
 
   try {
-    const url = remoteWebUrl(await git(cwd, ['remote', 'get-url', 'origin']))
+    const url = remoteWebUrl(await git(cwd, guard, ['remote', 'get-url', 'origin']))
     if (url) info.webUrl = url
   } catch {
     /* no origin */

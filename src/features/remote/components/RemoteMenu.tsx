@@ -5,7 +5,7 @@ import { cn } from '@/lib/cn'
 import { useT } from '@/lib/i18n'
 import { isActive, useRemote } from '../store'
 
-const row = 'flex w-full items-center gap-2 rounded px-2 py-1.5 text-left font-sans text-[12.5px] text-text-secondary transition-colors hover:bg-elevated/60 hover:text-text-primary'
+const row = 'flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left font-sans text-[12.5px] text-text-secondary transition-colors hover:bg-elevated/60 hover:text-text-primary'
 
 function Connection({ c }: { c: RemoteConnection }) {
   const t = useT()
@@ -22,7 +22,7 @@ function Connection({ c }: { c: RemoteConnection }) {
         </span>
       </span>
       {isActive(c) && (
-        <button type="button" aria-label={`${t.remote.disconnect} ${c.label}`} title={t.remote.disconnect} onClick={() => void useRemote.getState().disconnect(c.id)} className="rounded p-1 text-text-muted hover:bg-elevated hover:text-text-primary">
+        <button type="button" aria-label={`${t.remote.disconnect} ${c.label}`} title={t.remote.disconnect} onClick={() => void useRemote.getState().disconnect(c.id)} className="rounded-sm p-1 text-text-muted hover:bg-elevated hover:text-text-primary">
           <X size={12} />
         </button>
       )}
@@ -96,7 +96,7 @@ export function RemoteMenu({ project }: { project?: { id: string; name: string }
               if (target.trim()) void remote.ssh(target.trim())
             }}
           >
-            <input aria-label={t.remote.target} placeholder={t.remote.target} value={target} onChange={(e) => setTarget(e.target.value)} className="min-w-0 flex-1 rounded-md border border-hud/60 bg-void/40 px-2 py-1 font-mono text-[12px] text-text-primary outline-none focus:border-cyan/60" />
+            <input aria-label={t.remote.target} placeholder={t.remote.target} value={target} onChange={(e) => setTarget(e.target.value)} className="min-w-0 flex-1 rounded-md border border-hud/60 bg-void/40 px-2 py-1 font-mono text-[12px] text-text-primary outline-hidden focus:border-cyan/60" />
             <button type="submit" disabled={!target.trim()} className="rounded-md border border-cyan/50 px-2 py-1 font-sans text-[12px] text-cyan hover:bg-cyan/10 disabled:opacity-40">
               {t.remote.connect}
             </button>
@@ -118,7 +118,7 @@ export function RemoteMenu({ project }: { project?: { id: string; name: string }
             </>
           )}
           {error && (
-            <p role="alert" className="flex items-start gap-1 rounded bg-danger/10 px-2 py-1 font-sans text-[11.5px] text-danger">
+            <p role="alert" className="flex items-start gap-1 rounded-sm bg-danger/10 px-2 py-1 font-sans text-[11.5px] text-danger">
               <span className="flex-1 whitespace-pre-wrap">{error}</span>
               <button type="button" aria-label={t.common.dismiss} onClick={() => remote.clearError()}>
                 <X size={12} />

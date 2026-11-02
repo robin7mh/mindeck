@@ -1,21 +1,25 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { AlertTriangle, ArrowUpFromLine, BookOpen, Bug, CircleX, Database, FlaskConical, Radio, Paintbrush, Server, Code2, ExternalLink, Files, FileWarning, FolderGit2, GitBranch, GitGraph as GraphIcon, GitPullRequest, Lock, RefreshCcw, RefreshCw, Search, X, type LucideIcon } from 'lucide-react'
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
+import { AlertTriangle, ArrowUpFromLine, Bug, CircleX, CloudUpload, Code2, Database, FlaskConical, Radio, Paintbrush, Server, Files, FolderGit2, GitBranch, GitGraph as GraphIcon, GitPullRequest, ListTree, Lock, RefreshCcw, RefreshCw, Search, X, type LucideIcon } from 'lucide-react'
 import { create } from 'zustand'
-import { ipc, isDesktop } from '@shared/ipc/client'
+import { isDesktop } from '@shared/ipc/client'
 import { Panel } from '@/components/ui/Panel'
-import { isMac } from '@/lib/platform'
 import { cn } from '@/lib/cn'
 import { Select } from '@/components/ui/Select'
 import { useT } from '@/lib/i18n'
 import { useProjects } from '@/features/projects/store'
 import { useSession } from '@/features/session/store'
 import type { ModuleId } from '@/types'
-import { useEditor, type EditorTab } from '../store'
-import { useScm, type EditorPane } from '../scm'
+import { useEditor } from '../store'
+import { needsPublish, useScm, type EditorPane } from '../scm'
+import { useOutline } from '../outline'
 import { FileTree } from './FileTree'
-import { EditorTabs } from './EditorTabs'
 import { DiffHeader, ScmPanel } from './ScmPanel'
 import { SearchPanel } from './SearchPanel'
+import { Banner, Centered, EditorGroup, primary, Starting } from './EditorGroup'
+import { EditorGrid } from './EditorGrid'
+import { OutlinePanel } from './OutlinePanel'
+import { useSearch } from '../search'
+import { useBlame } from '../blame'
 import { QuickOpen } from './QuickOpen'
 import { buildCommands } from '../commands'
 import { projectProblems, useProblems } from '../problems'
@@ -41,17 +45,19 @@ import { useRemote } from '@/features/remote/store'
 import { useLintStatus } from '../lintStatus'
 import type { PickItem } from '../scm'
 import { GitGraph } from './GitGraph'
+import { TrustBanner } from './TrustBanner'
 import type { CursorInfo } from './CodeEditor'
+import { usePaneFocused } from '@/features/workspace/pane'
+import { usePalette } from '@/features/palette/store'
+import { allCommands, registerCommands } from '@/features/palette/registry'
+import { showModule } from '@/features/palette/reveal'
 
 // Monaco is a few MB — it loads the first time the Editor module opens.
-const CodeEditor = lazy(() => import('./CodeEditor'))
 const DiffView = lazy(() => import('./DiffView'))
-const NotebookView = lazy(() => import('./NotebookView'))
-
-const isNotebook = (tab?: { path: string }) => !!tab?.path.toLowerCase().endsWith('.ipynb')
 
 const PANES: { id: EditorPane; icon: LucideIcon }[] = [
   { id: 'files', icon: Files },
+  { id: 'outline', icon: ListTree },
   { id: 'search', icon: Search },
   { id: 'scm', icon: GitBranch },
   { id: 'graph', icon: GraphIcon },
@@ -64,7 +70,7 @@ const PANES: { id: EditorPane; icon: LucideIcon }[] = [
   { id: 'remote', icon: Server }
 ]
 
-/** VS Code's activity bar: explorer, search, source control (with the change count) and the git graph. */
+/** VS Code's activity bar: explorer, outline, search, source control (with the change count) and the git graph. */
 function ActivityBar() {
   const t = useT()
   const pane = useScm((s) => s.pane)
@@ -175,7 +181,7 @@ function runUserBinding(e: KeyboardEvent, commands: () => PickItem[]): boolean {
     const id = WORKBENCH_COMMANDS[b.command]
     const strokes = id ? parseKeybinding(b.key) : null
     if (!strokes || strokes.length !== 1 || !matchesStroke(strokes[0], e)) continue
-    if (id === 'palette') useScm.getState().setQuickOpen(true, '>')
+    if (id === 'palette') usePalette.getState().show()
     else void commands().find((c) => c.id === id)?.run()
     return true
   }
@@ -200,147 +206,64 @@ function debugKey(e: KeyboardEvent): boolean {
 }
 
 /**
- * The focused editor's cursor. A store of its own, not EditorView state: it
+ * Each editor group's cursor. A store of its own, not EditorView state: it
  * moves on every keystroke, and only the status bar bits showing it should
  * re-render then — not the whole editor (tree, tabs, panels).
  */
-const useCursor = create<{ cursor?: CursorInfo }>(() => ({}))
-const setCursor = (cursor: CursorInfo) => useCursor.setState({ cursor })
+const useCursors = create<Record<string, CursorInfo>>(() => ({}))
 
-function CursorPosition() {
+const onCursor = (group: string, info: CursorInfo) => {
+  useCursors.setState({ [group]: info })
+  useOutline.getState().setCursor(group, { line: info.line, column: info.col })
+}
+
+function CursorPosition({ group }: { group: string }) {
   const t = useT()
-  const cursor = useCursor((s) => s.cursor)
+  const cursor = useCursors((s) => s[group])
   return cursor ? <span>{t.editor.lineCol(cursor.line, cursor.col)}</span> : null
 }
 
-function CursorLanguage() {
-  const language = useCursor((s) => s.cursor?.language)
+function CursorLanguage({ group }: { group: string }) {
+  const language = useCursors((s) => s[group]?.language)
   return language ? <span>{language}</span> : null
 }
 
-/** F9: a breakpoint on the cursor line of the file on screen. */
+/** F9: a breakpoint on the cursor line of the file in the focused group. */
 function toggleBreakpointAtCursor(): void {
-  const { tabs, focusedId } = useEditor.getState()
+  const { tabs, focusedId, activeGroup } = useEditor.getState()
   const tab = tabs.find((x) => x.id === focusedId())
-  if (tab) useDebug.getState().toggleBreakpoint(tab.projectId, tab.path, useCursor.getState().cursor?.line ?? 1)
+  if (tab) useDebug.getState().toggleBreakpoint(tab.projectId, tab.path, useCursors.getState()[activeGroup]?.line ?? 1)
 }
 
 /** How often open files are compared with the disk while the editor is visible. */
 const DISK_POLL_MS = 3000
+/** …and while the window is on screen without the focus (next to another app, an agent at work): less often. */
+const BLURRED_POLL_MS = 15_000
 
-const button =
-  'flex items-center gap-1.5 rounded-md border px-2.5 py-1 font-sans text-[12px] font-medium transition-colors'
-const primary = cn(button, 'border-cyan/40 bg-cyan/[0.06] text-cyan hover:bg-cyan/[0.12]')
-const quiet = cn(button, 'border-hud/60 text-text-secondary hover:border-hud-strong hover:text-text-primary')
-
-function Banner({ tone, children }: { tone: 'warn' | 'info'; children: ReactNode }) {
-  return (
-    <div
-      role="alert"
-      className={cn(
-        'flex shrink-0 flex-wrap items-center gap-2 border-b px-3 py-1.5 font-sans text-[12.5px]',
-        tone === 'warn' ? 'border-amber/30 bg-amber/[0.07] text-text-primary' : 'border-hud/60 bg-elevated/40 text-text-secondary'
-      )}
-    >
-      {children}
-    </div>
-  )
-}
-
-function Centered({ icon, title, children }: { icon: ReactNode; title: string; children?: ReactNode }) {
-  return (
-    <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 p-6 text-center">
-      {icon}
-      <p className="font-sans text-[14px] font-semibold text-text-primary">{title}</p>
-      {children}
-    </div>
-  )
-}
-
-/** What the editor area shows when the active tab has no text to edit. */
-function Placeholder({ tab, onExternal }: { tab?: EditorTab; onExternal?: () => void }) {
-  const t = useT()
-  const key = isMac ? '⌘' : 'Ctrl+'
-  if (!tab) {
-    return (
-      <Centered icon={<Code2 size={28} className="text-text-muted" />} title={t.editor.openFromExplorer}>
-        <p className="font-mono text-[11px] text-text-muted">
-          {t.editor.shortcuts(key)}
-        </p>
-      </Centered>
-    )
-  }
-  if (tab.loading) return <Centered icon={<RefreshCw size={22} className="animate-spin text-text-muted" />} title={t.common.loading} />
-  const vsCode = onExternal && (
-    <button type="button" onClick={onExternal} className={quiet}>
-      <ExternalLink size={13} /> {t.editor.openInVsCode}
-    </button>
-  )
-  if (tab.unsupported) {
-    return (
-      <Centered
-        icon={<FileWarning size={28} className="text-text-muted" />}
-        title={tab.unsupported === 'binary' ? t.editor.binary : t.editor.tooLarge}
-      >
-        <p className="font-sans text-[13px] text-text-secondary">{t.editor.textOnly}</p>
-        {vsCode}
-      </Centered>
-    )
-  }
-  return (
-    <Centered icon={<AlertTriangle size={26} className="text-danger" />} title={t.editor.cantOpen}>
-      <p className="font-sans text-[13px] text-text-secondary">{tab.error}</p>
-      <button type="button" onClick={() => void useEditor.getState().reload(tab.id)} className={quiet}>
-        <RefreshCw size={13} /> {t.editor.tryAgain}
-      </button>
-    </Centered>
-  )
-}
-
-
-/** Tabs showing their notebook as JSON (the text editor underneath). */
-const rawNotebooks = new Set<string>()
-
-/** A notebook over its file's text editor — or the JSON, with the way back. */
-function NotebookLayer({ tab, readOnly }: { tab: EditorTab; readOnly: boolean }) {
-  const t = useT()
-  const [raw, setRaw] = useState(rawNotebooks.has(tab.id))
-  const toggle = () => {
-    if (raw) rawNotebooks.delete(tab.id)
-    else rawNotebooks.add(tab.id)
-    setRaw(!raw)
-  }
-  if (raw)
-    return (
-      <button type="button" onClick={toggle} className="absolute right-6 top-2 z-10 flex items-center gap-1 rounded border border-cyan/40 bg-elevated/95 px-2 py-1 font-sans text-[11.5px] text-cyan hover:bg-elevated">
-        <BookOpen size={12} /> {t.notebook.notebook}
-      </button>
-    )
-  return (
-    <div className="absolute inset-0 z-[5]">
-      <Suspense fallback={null}>
-        <NotebookView key={tab.id} tab={tab} readOnly={readOnly} onRaw={toggle} />
-      </Suspense>
-    </div>
-  )
+/** ⌘1…⌘9 (Ctrl elsewhere) — the editor group to focus (0-based), or undefined. */
+function groupKey(e: KeyboardEvent): number | undefined {
+  const digit = /^Digit([1-9])$/.exec(e.code)?.[1] ?? /^[1-9]$/.exec(e.key)?.[0]
+  return digit && !e.shiftKey && !e.altKey ? Number(digit) - 1 : undefined
 }
 
 /**
- * The Editor module: a project's files on the left, open files as tabs, and
- * Monaco — VS Code's editor core — in the middle. Saving is explicit (⌘S);
- * the disk stays the source of truth: changes made elsewhere (an agent, git,
- * VS Code) flow into clean tabs, and conflicting ones ask first.
+ * The Editor module: a project's files on the left, open files in editor
+ * groups (tabs and Monaco — VS Code's editor core — in a grid of as many as
+ * the user splits). Saving is explicit (⌘S); the disk stays the source of
+ * truth: changes made elsewhere (an agent, git, VS Code) flow into clean
+ * tabs, and conflicting ones ask first.
  */
 export function EditorView({ active, onNavigate }: { active: boolean; onNavigate: (id: ModuleId) => void }) {
   const t = useT()
+  // Next to other modules, the editor's keys work while its pane has the focus.
+  const paneFocused = usePaneFocused()
   const projects = useProjects((s) => s.projects)
   const [projectsLoaded, setProjectsLoaded] = useState(projects.length > 0)
-  const { projectId, tabs, activeId, closing, splitId, focusRight } = useEditor()
-  const tab = tabs.find((x) => x.id === activeId)
-  const splitTab = tabs.find((x) => x.id === splitId)
-  /** The file of the focused editor (of a split) — the status bar and file commands are about it. */
-  const focused = focusRight && splitTab ? splitTab : tab
-  const closingTab = tabs.find((x) => x.id === closing)
+  const projectId = useEditor((s) => s.projectId)
+  const editorProject = projects.find((p) => p.id === projectId)
+  const activeGroup = useEditor((s) => s.activeGroup)
+  /** The file of the focused group — the status bar and file commands are about it. */
+  const focused = useEditor((s) => s.tabs.find((x) => x.id === s.activeId))
   const info = useSession((s) => s.info)
   const desktop = isDesktop()
   // Writing project files can run code (hooks, scripts) — remote clients may
@@ -356,19 +279,42 @@ export function EditorView({ active, onNavigate }: { active: boolean; onNavigate
   const names = useMemo(() => new Map(projects.map((p) => [p.id, p.name])), [projects])
   const { pane, diff, quickOpen, quickQuery, pick, status, busy, error: scmError } = useScm()
   const ghError = useGitHub((s) => s.error)
+  const blameShown = useBlame((s) => s.shown)
   // A pull request takes the editor area while its pane is open.
   const pullOpen = useGitHub((s) => !!s.detail) && pane === 'prs'
   // So does a MongoDB collection while the databases pane is open.
   const mongoOpen = useMongo((s) => !!s.open) && pane === 'mongo'
   const mongoError = useMongo((s) => s.error)
   const lintError = useLintStatus((s) => (projectId ? s.errors[projectId] : undefined))
+  const overlayKind = diff ? 'diff' : pane === 'graph' ? 'graph' : pullOpen ? 'pull' : mongoOpen ? 'mongo' : undefined
+  const [overlayHost, setOverlayHost] = useState<string>()
+  useEffect(() => {
+    if (overlayKind) setOverlayHost(useEditor.getState().activeGroup)
+  }, [overlayKind, diff])
+  const hostAlive = useEditor((s) => s.groups.some((g) => g.id === overlayHost))
+  const overlayGroup = hostAlive ? overlayHost : activeGroup
   const commands = useRef<() => PickItem[]>()
   commands.current = () =>
     buildCommands(t, {
-      onNavigate,
       readOnly,
-      extra: [...(readOnly ? [] : [...debugCommands(t), ...liveCommands(t), ...testCommands(t)]), ...(desktop && projectId ? remoteCommands(t) : []), { id: 'migrate', label: `Mindeck: ${t.migrate.title}`, run: () => onNavigate('settings') }]
+      extra: [...(readOnly ? [] : [...debugCommands(t), ...liveCommands(t), ...testCommands(t)]), ...(desktop && projectId ? remoteCommands(t) : [])]
     })
+  // The palette lists the editor's commands while the editor is there; running one brings the editor up.
+  useEffect(
+    () =>
+      registerCommands('editor', (dict) =>
+        commands.current!().map((c) => ({
+          ...c,
+          group: dict.nav.editor,
+          icon: Code2,
+          run: () => {
+            showModule('editor')
+            return c.run()
+          }
+        }))
+      ),
+    []
+  )
   const byFile = useProblems((s) => s.byFile)
   const problems = useMemo(() => (projectId ? projectProblems(byFile, projectId) : []), [byFile, projectId])
   const errors = problems.filter((p) => p.severity === 'error').length
@@ -400,25 +346,48 @@ export function EditorView({ active, onNavigate }: { active: boolean; onNavigate
     void useEditor.getState().selectProject((projects.find((p) => p.id === selected) ?? projects[0]).id)
   }, [projects])
 
-  // While visible: follow the disk, and ⌘S / Ctrl+S saves.
+  // While visible: follow the disk, and ⌘S / Ctrl+S saves (while focused).
   useEffect(() => {
     if (!active) return
-    // Disk and git both follow edits made elsewhere (agents, terminals, other editors).
-    // One check at a time: a slow core (big repo, remote link) must not pile up polls.
-    let checking = false
-    const check = () => {
-      if (checking) return
-      checking = true
+    // Disk and git both follow edits made elsewhere (agents, terminals, other editors) — not while the
+    // window is hidden with Mindeck running in the background (no git status every few seconds for hours),
+    // and only now and then while it's on screen without the focus. The window coming back (shown again,
+    // or focused) looks right away — once, though both usually come together.
+    let blurred = false
+    let last = 0
+    let returned = -Infinity
+    // One look at a time: a slow core (big repo, remote link) must not pile up polls.
+    let looking = false
+    const look = () => {
+      if (looking) return
+      looking = true
+      last = Date.now()
       void Promise.allSettled([useEditor.getState().checkDisk(), useScm.getState().refresh()]).then(() => {
-        checking = false
+        looking = false
       })
+    }
+    const poll = () => {
+      if (document.hidden || (blurred && Date.now() - last < BLURRED_POLL_MS)) return
+      look()
+    }
+    const back = () => {
+      if (document.hidden || Date.now() - returned < 1000) return
+      returned = Date.now()
+      look()
+    }
+    const onFocus = () => {
+      blurred = false
+      back()
+    }
+    const onBlur = () => {
+      blurred = true
     }
     const onKey = (e: KeyboardEvent) => {
       const scm = useScm.getState()
-      if (runUserBinding(e, () => commands.current!())) return e.preventDefault()
+      if (runUserBinding(e, () => allCommands(t))) return e.preventDefault()
       if (debugKey(e)) return e.preventDefault()
       if (e.key === 'F1') {
-        scm.setQuickOpen(true, '>')
+        usePalette.getState().show()
         return e.preventDefault()
       }
       if (e.ctrlKey && !e.metaKey && !e.shiftKey && e.key.toLowerCase() === 'g') {
@@ -427,31 +396,48 @@ export function EditorView({ active, onNavigate }: { active: boolean; onNavigate
       }
       if (!(e.metaKey || e.ctrlKey)) return
       const key = e.key.toLowerCase()
-      if (key === 's' && e.altKey) void useEditor.getState().saveAll()
+      const group = groupKey(e)
+      if (group !== undefined) useEditor.getState().focusGroupAt(group)
+      else if (key === 's' && e.altKey) void useEditor.getState().saveAll()
       else if (key === 's') void useEditor.getState().save()
-      else if (key === 'p') scm.setQuickOpen(true, e.shiftKey ? '>' : '')
+      else if (key === 'p' && e.shiftKey) usePalette.getState().show()
+      else if (key === 'p') scm.setQuickOpen(true)
       else if (key === 'f' && e.shiftKey) scm.setPane('search')
+      else if (key === 'h' && e.shiftKey) {
+        scm.setPane('search')
+        useSearch.getState().set({ showReplace: true })
+      }
       else if (key === 'g' && e.shiftKey) scm.setPane('scm')
-      else if (key === '\\') {
+      // ⌘W / Ctrl+W: the focused group's tab (asking first when it has unsaved edits) — an empty group of several
+      // closes itself, like VS Code; with nothing to close, the workspace closes the pane.
+      else if (key === 'w' && !e.shiftKey && !e.altKey && (useEditor.getState().activeId || useEditor.getState().groups.length > 1)) {
         const editor = useEditor.getState()
-        if (editor.splitId) editor.closeSplit()
-        else editor.split()
-      } else return
+        if (editor.activeId) editor.requestClose(editor.activeId)
+        else editor.closeGroup()
+      } else if (key === '\\') useEditor.getState().split('right')
+      else return
       e.preventDefault()
     }
-    check()
-    const timer = window.setInterval(check, DISK_POLL_MS)
-    window.addEventListener('focus', check)
-    window.addEventListener('keydown', onKey)
+    poll()
+    const timer = window.setInterval(poll, DISK_POLL_MS)
+    window.addEventListener('focus', onFocus)
+    window.addEventListener('blur', onBlur)
+    document.addEventListener('visibilitychange', back)
+    if (paneFocused) window.addEventListener('keydown', onKey)
     return () => {
       window.clearInterval(timer)
-      window.removeEventListener('focus', check)
+      window.removeEventListener('focus', onFocus)
+      window.removeEventListener('blur', onBlur)
+      document.removeEventListener('visibilitychange', back)
       window.removeEventListener('keydown', onKey)
     }
-  }, [active])
+    // `t`: command titles (user key bindings) follow a language switch.
+  }, [active, paneFocused, t])
 
   // The debugger follows the core's session events while the editor is mounted.
   useEffect(() => useDebug.getState().connect(), [])
+  // Project search results stream in as events.
+  useEffect(() => useSearch.getState().connect(), [])
   // Live Server and the Sass watcher follow the core.
   useEffect(() => useLive.getState().connect(), [])
   // SFTP: the project's targets, upload on save.
@@ -465,7 +451,7 @@ export function EditorView({ active, onNavigate }: { active: boolean; onNavigate
     }
   }, [])
   // The cursor belongs to this view: gone with it.
-  useEffect(() => () => useCursor.setState({ cursor: undefined }), [])
+  useEffect(() => () => useCursors.setState({}, true), [])
   // Settings, keybindings and snippets taken over from VS Code / Cursor.
   useEffect(() => void useEditorPrefs.getState().load(), [])
 
@@ -479,15 +465,6 @@ export function EditorView({ active, onNavigate }: { active: boolean; onNavigate
     window.addEventListener('beforeunload', guard)
     return () => window.removeEventListener('beforeunload', guard)
   }, [])
-
-  const openExternal = desktop
-    ? () => {
-        const call = focused
-          ? ipc('projects:openFile', { id: focused.projectId, file: focused.path, line: useCursor.getState().cursor?.line })
-          : ipc('projects:openInEditor', { id: projectId! })
-        void call.catch(() => {})
-      }
-    : undefined
 
   if (!projects.length) {
     return (
@@ -504,7 +481,25 @@ export function EditorView({ active, onNavigate }: { active: boolean; onNavigate
     )
   }
 
-  const hasText = tab?.content !== undefined
+  // A diff, the git graph, a pull request or a collection takes the place of a group (the focused one when it opened).
+  const overlay = diff ? (
+    <>
+      <DiffHeader title={diff.title} onClose={() => useScm.getState().closeDiff()} />
+      <div className="relative min-h-0 flex-1">
+        <Suspense fallback={<Starting />}>
+          <DiffView path={diff.path} original={diff.original} modified={diff.modified} />
+        </Suspense>
+      </div>
+    </>
+  ) : pane === 'graph' ? (
+    <div className="min-h-0 flex-1">
+      <GitGraph />
+    </div>
+  ) : pullOpen ? (
+    <PullDetail />
+  ) : mongoOpen ? (
+    <MongoView />
+  ) : undefined
 
   return (
     <Panel
@@ -513,17 +508,10 @@ export function EditorView({ active, onNavigate }: { active: boolean; onNavigate
       flush
       className="min-h-0 flex-1"
       bodyClassName="flex"
-      headerRight={
-        openExternal && (
-          <button type="button" onClick={openExternal} className={quiet} title={t.editor.openInVsCode}>
-            <ExternalLink size={13} /> VS Code
-          </button>
-        )
-      }
     >
       <ActivityBar />
 
-      {/* Sidebar: explorer, search or source control */}
+      {/* Sidebar: explorer, outline, search or source control */}
       <aside className="flex w-64 shrink-0 flex-col border-r border-hud/60">
         <div className="flex items-center gap-1.5 p-2">
           <Select
@@ -544,9 +532,9 @@ export function EditorView({ active, onNavigate }: { active: boolean; onNavigate
           </button>
         </div>
         {pane === 'search' ? (
-          <SearchPanel />
+          <SearchPanel readOnly={readOnly} />
         ) : pane === 'scm' || pane === 'graph' ? (
-          <ScmPanel />
+          <ScmPanel readOnly={readOnly} />
         ) : pane === 'remote' ? (
           <RemotePanel />
         ) : pane === 'prs' ? (
@@ -557,13 +545,16 @@ export function EditorView({ active, onNavigate }: { active: boolean; onNavigate
           projectId && <TestsPanel key={projectId} />
         ) : pane === 'debug' ? (
           projectId && <DebugPanel />
+        ) : pane === 'outline' ? (
+          <OutlinePanel />
         ) : (
           projectId && <FileTree projectId={projectId} readOnly={readOnly} />
         )}
       </aside>
 
-      {/* Tabs · banners · Monaco (or a diff, or the graph) · status */}
+      {/* Editor groups (one may show a diff, the graph …) · debug console · status */}
       <section className="flex min-w-0 flex-1 flex-col">
+        {editorProject && <TrustBanner project={editorProject} />}
         {live.error && (
           <Banner tone="warn">
             <AlertTriangle size={13} className="shrink-0 text-danger" />
@@ -600,96 +591,11 @@ export function EditorView({ active, onNavigate }: { active: boolean; onNavigate
             </button>
           </Banner>
         )}
-        {diff ? (
-          <div className="flex min-h-0 flex-1 flex-col">
-            <DiffHeader title={diff.title} onClose={() => useScm.getState().closeDiff()} />
-            <div className="relative min-h-0 flex-1">
-              <Suspense fallback={<Centered icon={<RefreshCw size={22} className="animate-spin text-text-muted" />} title={t.editor.starting} />}>
-                <DiffView path={diff.path} original={diff.original} modified={diff.modified} />
-              </Suspense>
-            </div>
-          </div>
-        ) : pane === 'graph' ? (
-          <div className="min-h-0 flex-1">
-            <GitGraph />
-          </div>
-        ) : pullOpen ? (
-          <PullDetail />
-        ) : mongoOpen ? (
-          <MongoView />
-        ) : null}
-        <div className={cn('flex min-h-0 flex-1 flex-col', (diff || pane === 'graph' || pullOpen || mongoOpen) && 'hidden')}>
-          <EditorTabs projectNames={names} />
-
-          {closingTab ? (
-            <Banner tone="warn">
-              <span className="mr-auto">{t.editor.saveBeforeClose(closingTab.name)}</span>
-              <button type="button" onClick={() => void useEditor.getState().saveAndClose(closingTab.id)} className={primary} disabled={readOnly}>
-                {t.common.save}
-              </button>
-              <button type="button" onClick={() => useEditor.getState().close(closingTab.id)} className={quiet}>
-                {t.editor.dontSave}
-              </button>
-              <button type="button" onClick={() => useEditor.getState().cancelClose()} className={quiet}>
-                {t.common.cancel}
-              </button>
-            </Banner>
-          ) : tab?.conflict ? (
-            <Banner tone="warn">
-              <span className="mr-auto">{t.editor.changedOnDisk(tab.name)}</span>
-              <button type="button" onClick={() => void useEditor.getState().reload(tab.id)} className={quiet}>
-                {t.editor.loadDisk}
-              </button>
-              <button type="button" onClick={() => void useEditor.getState().save(tab.id, { force: true })} className={primary} disabled={readOnly}>
-                {t.editor.keepMine}
-              </button>
-            </Banner>
-          ) : tab?.deleted ? (
-            <Banner tone="info">{t.editor.deletedOnDisk(tab.name)}</Banner>
-          ) : tab?.error && hasText ? (
-            <Banner tone="warn">
-              <AlertTriangle size={13} className="text-danger" /> {tab.error}
-            </Banner>
-          ) : null}
-
-          <div className="flex min-h-0 flex-1">
-            <div className={cn('relative min-h-0 min-w-0 flex-1', splitTab && 'border-r border-hud/60')} onMouseDown={() => useEditor.getState().focusGroup(false)}>
-              {splitTab && <span aria-hidden className={cn('absolute inset-x-0 top-0 z-10 h-px', focusRight ? 'bg-transparent' : 'bg-cyan')} />}
-              <Suspense fallback={<Centered icon={<RefreshCw size={22} className="animate-spin text-text-muted" />} title={t.editor.starting} />}>
-                <CodeEditor tab={tab} readOnly={readOnly} onCursor={setCursor} />
-              </Suspense>
-              {hasText && isNotebook(tab) && <NotebookLayer tab={tab!} readOnly={readOnly} />}
-              {!hasText && (
-                <div className="absolute inset-0 bg-panel/80">
-                  <Placeholder tab={tab} onExternal={openExternal} />
-                </div>
-              )}
-            </div>
-            {splitTab && (
-              <section aria-label={t.editor.splitLabel(splitTab.name)} className="flex min-h-0 min-w-0 flex-1 flex-col" onMouseDown={() => useEditor.getState().focusGroup(true)}>
-                <div className={cn('flex h-7 shrink-0 items-center gap-1.5 border-b px-2 font-sans text-[12px]', focusRight ? 'border-cyan/50 text-text-primary' : 'border-hud/60 text-text-muted')}>
-                  <span className="truncate">{splitTab.name}</span>
-                  {splitTab.dirty && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-text-secondary" />}
-                  <button type="button" aria-label={t.editor.closeSplit} title={t.editor.closeSplit} onClick={() => useEditor.getState().closeSplit()} className="ml-auto rounded p-0.5 text-text-muted hover:bg-elevated hover:text-text-primary">
-                    <X size={12} />
-                  </button>
-                </div>
-                <div className="relative min-h-0 flex-1">
-                  <Suspense fallback={null}>
-                    <CodeEditor secondary tab={splitTab} readOnly={readOnly} onCursor={setCursor} />
-                  </Suspense>
-                  {splitTab.content !== undefined && isNotebook(splitTab) && <NotebookLayer tab={splitTab} readOnly={readOnly} />}
-                  {splitTab.content === undefined && (
-                    <div className="absolute inset-0 bg-panel/80">
-                      <Placeholder tab={splitTab} onExternal={openExternal} />
-                    </div>
-                  )}
-                </div>
-              </section>
-            )}
-          </div>
-
-        </div>
+        <EditorGrid
+          renderGroup={(id, index) => (
+            <EditorGroup id={id} index={index} projectNames={names} readOnly={readOnly} overlay={id === overlayGroup ? overlay : undefined} onCursor={onCursor} />
+          )}
+        />
 
         {consoleOpen && <DebugConsole />}
 
@@ -726,6 +632,17 @@ export function EditorView({ active, onNavigate }: { active: boolean; onNavigate
                   className="flex items-center gap-1 hover:text-text-primary disabled:opacity-50"
                 >
                   <RefreshCcw size={11} className={cn(busy && 'animate-spin')} /> {status.behind}↓ {status.ahead}↑
+                </button>
+              ) : needsPublish(status) ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    useScm.getState().setPane('scm')
+                    useGitHub.getState().setPublishing(true)
+                  }}
+                  className="flex items-center gap-1 hover:text-text-primary"
+                >
+                  <CloudUpload size={11} /> {t.scm.publishGitHub}
                 </button>
               ) : (
                 <button type="button" aria-label={t.scm.publish} title={t.scm.publish} disabled={!!busy} onClick={() => void useScm.getState().push()} className="flex items-center gap-1 hover:text-text-primary disabled:opacity-50">
@@ -774,20 +691,25 @@ export function EditorView({ active, onNavigate }: { active: boolean; onNavigate
                   <Lock size={11} /> {t.editor.readOnly}
                 </span>
               )}
-              <CursorPosition />
+              <CursorPosition group={activeGroup} />
               {missingServer && (
                 <button type="button" title={t.languages.noServerHint} onClick={() => onNavigate('settings')} className="shrink-0 text-amber/80 hover:text-amber">
                   {t.languages.noServer(missingServer.name)}
                 </button>
               )}
-              <CursorLanguage />
+              <CursorLanguage group={activeGroup} />
+              {status?.repo && (
+                <button type="button" aria-pressed={!!blameShown[focused.id]} title={t.blame.toggle} onClick={() => useBlame.getState().toggle(focused.id)} className={cn('hover:text-text-primary', blameShown[focused.id] && 'text-cyan')}>
+                  {t.blame.show}
+                </button>
+              )}
               <span className={cn(focused.dirty && 'text-amber')}>{focused.saving ? t.editor.saving : focused.dirty ? t.editor.unsaved : t.editor.saved}</span>
             </>
           )}
         </footer>
       </section>
       {quickOpen && (
-        <QuickOpen key={pick ? `pick:${pick.placeholder}` : `q:${quickQuery}`} commands={commands.current()} />
+        <QuickOpen key={pick ? `pick:${pick.placeholder}` : `q:${quickQuery}`} />
       )}
     </Panel>
   )

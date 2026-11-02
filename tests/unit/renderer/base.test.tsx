@@ -9,8 +9,10 @@ import { useClock } from '@/hooks/useClock'
 import { useBoot } from '@/hooks/useBoot'
 import { NAV_ITEMS } from '@/data/navigation'
 import { BOOT_LINES } from '@/data/bootLines'
-import { errorMessage, ipc, IpcError, onEvent } from '@shared/ipc/client'
-import { IPC_CHANNELS, IPC_EVENTS } from '@shared/ipc/contract'
+import { errorMessage, ipc, IpcError, onEvent, setTransport } from '@shared/ipc/client'
+import { useLocale } from '@/lib/i18n'
+import { blameHover } from '@/features/editor/blame'
+import { CHANNEL_ACCESS, DESKTOP_EVENTS, IPC_CHANNELS, IPC_EVENTS, TERMINAL_EVENTS } from '@shared/ipc/contract'
 import { DEFAULT_GRAPH_STYLE, GRAPH_COLORS } from '@shared/types/memory'
 import { EVENT_CATALOG } from '@shared/types/events'
 import { renderMarkdown } from '@/features/memory/markdown'
@@ -189,7 +191,7 @@ describe('hooks', () => {
 
 describe('data & shared constants', () => {
   it('navigation and boot lines', () => {
-    expect(NAV_ITEMS.map((n) => n.id)).toEqual(['core', 'editor', 'terminal', 'projects', 'memory', 'agents', 'system', 'settings'])
+    expect(NAV_ITEMS.map((n) => n.id)).toEqual(['core', 'editor', 'terminal', 'browser', 'files', 'projects', 'memory', 'agents', 'system', 'logs', 'settings'])
     expect(BOOT_LINES.length).toBeGreaterThan(3)
   })
 
@@ -202,6 +204,8 @@ describe('data & shared constants', () => {
       'memory:changed',
       'terminal:data',
       'terminal:exit',
+      'terminal:info',
+      'terminal:reveal',
       'ai:delta',
       'ai:inlineDelta',
       'ai:message',
@@ -221,8 +225,24 @@ describe('data & shared constants', () => {
       'sftp:progress',
       'remote:changed',
       'tests:changed',
-      'notebook:event'
+      'search:progress',
+      'notebook:event',
+      'browser:state',
+      'browser:find',
+      'browser:command',
+      'browser:reveal',
+      'browser:bookmarks',
+      'browser:import',
+      'finder:progress'
     ])
+    // The browser's pages are private: none of its events reach remote clients, all its channels are desktop-only.
+    // Files reach paired devices only with remote shells; the host's own apps and its clipboard never.
+    expect(DESKTOP_EVENTS).toEqual(['browser:state', 'browser:find', 'browser:command', 'browser:reveal', 'browser:bookmarks', 'browser:import', 'remote:changed'])
+    expect(TERMINAL_EVENTS).toContain('finder:progress')
+    for (const channel of IPC_CHANNELS.filter((c) => c.startsWith('browser:'))) expect(CHANNEL_ACCESS[channel], channel).toBe('desktop')
+    const shared = (prefix: string) => IPC_CHANNELS.filter((c) => c.startsWith(prefix) && CHANNEL_ACCESS[c] !== 'desktop')
+    expect(shared('finder:').every((c) => CHANNEL_ACCESS[c] === 'terminal')).toBe(true)
+    for (const channel of ['finder:open', 'finder:reveal', 'finder:clipboardRead', 'finder:clipboardWrite', 'finder:privacySettings', 'browser:freeze', 'browser:extensions'] as const) expect(CHANNEL_ACCESS[channel]).toBe('desktop')
     expect(GRAPH_COLORS).toHaveLength(8)
     expect(DEFAULT_GRAPH_STYLE).toEqual({ mode: 'colorful', color: 'cyan' })
     expect(EVENT_CATALOG['app.started']).toBe('activity')
@@ -235,11 +255,12 @@ describe('data & shared constants', () => {
       import('@shared/types/project'),
       import('@shared/types/settings'),
       import('@shared/types/system'),
-      import('@shared/types/terminal'),
       import('@/types')
     ])) {
       expect(Object.keys(mod)).toEqual([])
     }
+    // the Terminal's types come with its defaults and bounds
+    expect(Object.keys(await import('@shared/types/terminal')).sort()).toEqual(['DEFAULT_TERMINAL_SETTINGS', 'TERMINAL_CURSORS', 'TERMINAL_LIMITS'])
   })
 })
 
@@ -272,6 +293,28 @@ describe('ipc client', () => {
     expect(errorMessage(new Error('plain'))).toBe('plain')
     expect(errorMessage('str')).toBe('str')
   })
+
+  it('words the client\'s own failures in the UI language; the core\'s messages stay as they come', async () => {
+    useLocale.getState().setLocale('de')
+    expect(errorMessage(Object.assign(new Error('Mindeck core unreachable: Failed to fetch'), { code: 'offline' }))).toBe('Der Mindeck-Core ist nicht erreichbar.')
+    expect(errorMessage(Object.assign(new Error('Unexpected response (502)'), { code: 'bad-response' }))).toBe('Unerwartete Antwort vom Mindeck-Core (502)')
+    expect(errorMessage(new IpcError('bad-response', 'odd'))).toBe('Unerwartete Antwort vom Mindeck-Core (?)')
+    expect(errorMessage(new IpcError('not-found', 'Note not found'))).toBe('Note not found')
+    expect(errorMessage(new IpcError('rate-limited', 'Too many ai calls from this device — try again in 42 s'))).toBe('Zu viele Anfragen — bitte versuch es in 42 s noch einmal.')
+    expect(errorMessage(new IpcError('rate-limited', 'Too many failed pairing attempts — try again later'))).toBe('Zu viele Anfragen — bitte versuch es gleich noch einmal.')
+    expect(errorMessage(Object.assign(new Error('x'), { code: 7 }))).toBe('x')
+    await expect(ipc('projects:list')).rejects.toThrow('Nicht mit einem Mindeck-Core verbunden')
+    setTransport({ kind: 'remote', invoke: async () => ({ ok: false, error: { code: 'offline', message: 'Mindeck core unreachable: x' } }), on: () => () => {} })
+    await expect(ipc('projects:list')).rejects.toMatchObject({ code: 'offline', message: 'Der Mindeck-Core ist nicht erreichbar.' })
+    // Dates follow the app's language, not the system's.
+    const date = '2026-10-17T09:00:00Z'
+    expect(blameHover({ hash: 'abcdef1234567', summary: 's', author: 'a', email: 'e', date } as never)).toContain(new Date(date).toLocaleString('de-DE'))
+    useLocale.getState().setLocale('en')
+    await expect(ipc('projects:list')).rejects.toThrow('The Mindeck core is not reachable.')
+    expect(errorMessage(new IpcError('rate-limited', 'Too many github calls from this device — try again in 3 s'))).toBe('Too many requests — please try again in 3 s.')
+    expect(errorMessage(new IpcError('rate-limited', 'x'))).toBe('Too many requests — please try again in a moment.')
+    setTransport(null)
+  })
 })
 
 describe('markdown', () => {
@@ -280,16 +323,26 @@ describe('markdown', () => {
       'See [[A]] [[B|Bee]] [[C#Part]] [[Missing]] ![[Embed]] [[]] #tag #123 C#sharp\n\n<a class="wikilink">raw</a><script>x()</script><img src=x onerror=alert(1)>',
       { A: 'A.md', B: 'B.md', C: 'C.md', Embed: 'E.md' }
     )
-    expect(html).toContain('<a class="wikilink" data-target="A">A</a>')
+    expect(html).toContain('<a class="wikilink" href="#" data-target="A">A</a>')
     expect(html).toContain('data-target="B">Bee</a>')
     expect(html).toContain('data-target="C">C › Part</a>')
-    expect(html).toContain('class="wikilink unresolved" data-target="Missing"')
+    expect(html).toContain('class="wikilink unresolved" href="#" data-target="Missing"')
     expect(html).toContain('<a class="wikilink unresolved">raw</a>')
     expect(html).toContain('[[]]')
     expect(html).toContain('<span class="md-tag">#tag</span>')
     expect(html).not.toContain('#123</span>')
     expect(html).not.toContain('#sharp</span>')
     expect(html).not.toMatch(/<script|onerror/)
+  })
+
+  it('shows pictures only from the vault: embeds and sources move to data-embed, data: stays', () => {
+    const html = renderMarkdown('![[bild.png]] ![[w.jpg|300]] ![[Note]] ![alt](attachments/a%20b.png) ![remote](https://x.dev/p.png) ![inline](data:image/png;base64,AA)', {})
+    expect(html).toContain('<img class="embed" data-embed="bild.png" alt="bild.png">')
+    expect(html).toContain('<img class="embed" data-embed="w.jpg" alt="w.jpg" width="300">')
+    expect(html).toContain('data-target="Note">Note</a>')
+    expect(html).toContain('<img alt="alt" data-embed="attachments/a%20b.png">')
+    expect(html).toContain('<img alt="remote" data-embed="https://x.dev/p.png">')
+    expect(html).toContain('<img src="data:image/png;base64,AA" alt="inline">')
   })
 
   it('escapes HTML inside link labels and tags', () => {

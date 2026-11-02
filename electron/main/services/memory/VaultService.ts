@@ -1,10 +1,14 @@
 import { watch, type FSWatcher } from 'node:fs'
 import { mkdir, readFile, readdir, realpath, rename, stat, writeFile } from 'node:fs/promises'
-import { basename, dirname, join, posix, resolve, sep } from 'node:path'
+import { basename, dirname, extname, join, posix, resolve, sep } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import {
+  ATTACHMENTS_FOLDER,
+  DEFAULT_DAILY_NOTES,
   DEFAULT_GRAPH_STYLE,
   GRAPH_COLORS,
+  IMAGE_EXTS,
+  type DailyNotesSettings,
   type GraphStyle,
   type MemoryChanged,
   type MemoryGraph,
@@ -12,6 +16,7 @@ import {
   type NoteMeta,
   type NotePath,
   type SearchHit,
+  type VaultAttachment,
   type VaultStatus
 } from '@shared/types/memory'
 import type { SettingsService } from '../settings/SettingsService'
@@ -19,10 +24,27 @@ import { MemoryIndex } from './MemoryIndex'
 import { frontmatterBlock, sanitizeTitle } from './parse'
 import { appendLink, removeLinks, rewriteLinks } from './linkEdit'
 import { FOLDER_TYPES, frontmatter, starterNotes } from './starterVault'
+import { formatDate, localTime, noteFromTemplate, templateBody } from './template'
 import { desktopOnly, type Platform } from '../../platform/types'
 
 const MAX_NOTES = 20_000
 const MAX_NOTE_BYTES = 5 * 1024 * 1024
+/** Pictures pasted into or shown in notes. */
+const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024
+const IMAGE_TYPES: Record<string, string> = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  avif: 'image/avif',
+  bmp: 'image/bmp',
+  svg: 'image/svg+xml'
+}
+const imageExt = (name: string) => {
+  const ext = extname(name).slice(1).toLowerCase()
+  return (IMAGE_EXTS as readonly string[]).includes(ext) ? ext : null
+}
 const FLUSH_DELAY_MS = 200
 
 /** `.obsidian`, `.trash`, `.git`, our temp files … and dependency folders. */
@@ -50,6 +72,24 @@ async function scan(dir: string, limit = MAX_NOTES): Promise<string[]> {
       if (d.isDirectory()) stack.push(child) // symlinked dirs are skipped (no cycles)
       else if (d.isFile() && isNoteFile(d.name)) out.push(child)
       if (out.length >= limit) break
+    }
+  }
+  return out
+}
+
+/** Files named `name` (any case) under `dir`, as POSIX paths relative to it. */
+async function scanFor(dir: string, name: string): Promise<string[]> {
+  const out: string[] = []
+  const stack = ['']
+  let dirs = 0
+  while (stack.length && dirs < MAX_NOTES) {
+    const rel = stack.pop()!
+    dirs += 1
+    for (const d of await readdir(join(dir, rel), { withFileTypes: true }).catch(() => [])) {
+      if (ignoredSegment(d.name)) continue
+      const child = rel ? `${rel}/${d.name}` : d.name
+      if (d.isDirectory()) stack.push(child)
+      else if (d.isFile() && d.name.toLowerCase() === name) out.push(child)
     }
   }
   return out
@@ -109,7 +149,8 @@ export class VaultService {
       isDefault,
       exists: await isDir(root),
       noteCount: this.index.size,
-      graphStyle: this.graphStyle()
+      graphStyle: this.graphStyle(),
+      dailyNotes: this.dailyNotes()
     }
   }
 
@@ -181,9 +222,14 @@ export class VaultService {
     return this.index.get(rel)!.meta
   }
 
-  /** New note named after `title` (Obsidian: filename = title), never overwriting. */
-  async create(title: string, folder = ''): Promise<NoteMeta> {
+  /**
+   * New note named after `title` (Obsidian: filename = title), never
+   * overwriting — optionally started from a template note, filled in for
+   * `now` (the UI's local time).
+   */
+  async create(title: string, folder = '', template?: string, now?: string): Promise<NoteMeta> {
     await this.ensureIndexed()
+    const source = template ? await this.templateText(template) : undefined
     const root = this.root()
     await mkdir(root, { recursive: true })
     const dir = folder
@@ -199,7 +245,11 @@ export class VaultService {
       const rel = this.normalize(`${dir ? `${dir}/` : ''}${n === 1 ? base : `${base} ${n}`}.md`)
       if (this.index.has(rel)) continue
       const abs = await this.confine(rel, true)
-      const raw = frontmatter({ type: FOLDER_TYPES[top] }) // empty body: the editor starts blank
+      const type = FOLDER_TYPES[top]
+      const raw =
+        source === undefined
+          ? frontmatter({ type }) // empty body: the editor starts blank
+          : noteFromTemplate(source, { title: rel.slice(rel.lastIndexOf('/') + 1, -3), now: localTime(now), type })
       try {
         await writeFile(abs, raw, { encoding: 'utf8', flag: 'wx' })
       } catch (err) {
@@ -341,6 +391,79 @@ export class VaultService {
     return next === raw ? this.index.get(a)!.meta : this.write(a, next)
   }
 
+  /** Today's daily note (`now` = the UI's local time): opened if it exists, else created from the daily template. */
+  async daily(now?: string): Promise<NoteMeta> {
+    await this.ensureIndexed()
+    const { folder, template } = this.dailyNotes()
+    const name = formatDate(localTime(now), 'YYYY-MM-DD')
+    const rel = this.normalize(`${folder ? `${folder}/` : ''}${name}.md`)
+    if (this.index.has(rel)) return this.index.get(rel)!.meta
+    // A missing template file (moved, renamed) must not keep the day from starting.
+    const usable = template && this.index.has(template) ? template : undefined
+    return this.create(name, folder, usable, now)
+  }
+
+  async setDailyNotes(daily: DailyNotesSettings): Promise<DailyNotesSettings> {
+    const next = { folder: this.normalizeDir(daily.folder), template: daily.template ? this.normalize(daily.template) : '' }
+    await this.opts.settings.update({ dailyNotes: next })
+    return this.dailyNotes()
+  }
+
+  /** A template's text filled in for the note `title` — what "Insert template" adds at the cursor. */
+  async renderTemplate(path: string, title: string, now?: string): Promise<string> {
+    await this.ensureIndexed()
+    return templateBody(await this.templateText(path), { title, now: localTime(now) })
+  }
+
+  /**
+   * A picture pasted or dropped into a note: saved under `attachments/`
+   * (a taken name gets a number). Returns its path and what goes into
+   * `![[…]]` — the file name, which resolves from anywhere in the vault.
+   */
+  async attach(name: string, base64: string): Promise<{ path: string; link: string }> {
+    await this.ensureIndexed()
+    const data = Buffer.from(base64, 'base64')
+    if (data.length > MAX_ATTACHMENT_BYTES) throw coded('too-large', 'Pictures in notes may be up to 20 MB')
+    const ext = imageExt(name)
+    if (!ext) throw coded('bad-type', 'Only pictures can be added to notes')
+    const stem = sanitizeTitle(basename(name).slice(0, -(ext.length + 1)))
+    await mkdir(this.root(), { recursive: true })
+    for (let n = 1; n < 1000; n += 1) {
+      const file = `${n === 1 ? stem : `${stem} ${n}`}.${ext}`
+      const rel = this.normalize(`${ATTACHMENTS_FOLDER}/${file}`, false)
+      try {
+        await writeFile(await this.confine(rel, true), data, { flag: 'wx' })
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === 'EEXIST') continue
+        throw err
+      }
+      return { path: rel, link: file }
+    }
+    throw coded('exists', `Too many pictures named "${stem}"`)
+  }
+
+  /**
+   * A picture a note shows (`![[bild.png]]`, `![](../img/a.png)`), from the
+   * vault only: next to the note, by its vault path, in `attachments/`, or —
+   * like Obsidian — anywhere by name (shortest path wins).
+   */
+  async attachment(target: string, from?: string): Promise<VaultAttachment> {
+    await this.ensureIndexed()
+    const clean = target.trim().replace(/\\/g, '/').replace(/^\.\//, '')
+    if (!imageExt(clean)) throw coded('bad-type', 'Not a picture')
+    const noteDir = from ? posix.dirname(this.normalize(from)) : '.'
+    const candidates = [posix.join(noteDir, clean), clean, `${ATTACHMENTS_FOLDER}/${posix.basename(clean)}`]
+    for (const rel of candidates) {
+      const hit = await this.readAttachment(rel)
+      if (hit) return hit
+    }
+    const root = this.root()
+    const found = (await scanFor(root, posix.basename(clean).toLowerCase())).sort((a, b) => a.length - b.length || a.localeCompare(b))
+    const hit = found.length ? await this.readAttachment(found[0]) : null
+    if (!hit) throw coded('not-found', `Picture not found: ${target}`)
+    return hit
+  }
+
   dispose(): void {
     this.stopWatching()
     if (this.flushTimer) clearTimeout(this.flushTimer)
@@ -420,6 +543,31 @@ export class VaultService {
     return this.opts.settings.get().graphStyle ?? DEFAULT_GRAPH_STYLE
   }
 
+  private dailyNotes(): DailyNotesSettings {
+    return { ...DEFAULT_DAILY_NOTES, ...this.opts.settings.get().dailyNotes }
+  }
+
+  private async templateText(path: string): Promise<string> {
+    const rel = this.requireNote(path)
+    return this.index.rawOf(rel)!
+  }
+
+  /** The picture at a vault path, or null when there is none (or it is not one Mindeck shows). */
+  private async readAttachment(path: string): Promise<VaultAttachment | null> {
+    let rel: string
+    let abs: string
+    try {
+      rel = this.normalize(path, false)
+      abs = await this.confine(rel)
+    } catch {
+      return null
+    }
+    const st = await stat(abs).catch(() => null)
+    if (!st?.isFile() || st.size > MAX_ATTACHMENT_BYTES) return null
+    const mime = IMAGE_TYPES[imageExt(rel)!]
+    return { path: rel, mime, dataUrl: `data:${mime};base64,${(await readFile(abs)).toString('base64')}` }
+  }
+
   private async switched(): Promise<VaultStatus> {
     this.indexedRoot = undefined
     await this.ensureIndexed()
@@ -465,12 +613,13 @@ export class VaultService {
     }
   }
 
-  private normalize(path: string): NotePath {
+  /** A vault-relative path: a note's (`.md`), or with `note` false any file's. */
+  private normalize(path: string, note = true): NotePath {
     const rel = posix.normalize(String(path ?? '').replace(/\\/g, '/')).replace(/^\/+/, '')
     const segments = rel.split('/')
     if (
       !rel ||
-      !isNoteFile(rel) ||
+      (note && !isNoteFile(rel)) ||
       segments.some((s) => s === '..' || ignoredSegment(s)) || // posix.normalize already collapsed '//'
       (process.platform === 'win32' && rel.includes(':'))
     ) {
