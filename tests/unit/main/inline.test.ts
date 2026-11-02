@@ -5,7 +5,7 @@ import { aiError, type LlmProvider, type LlmRequest, type StopReason } from '../
 import type { AiService } from '../../../electron/main/services/ai/AiService'
 
 /** A provider that answers with the given chunks (streamed) or waits until aborted. */
-function harness(settings: Partial<AiSettings> & { ownKey?: boolean } = {}, answer: (req: LlmRequest) => { chunks: string[]; stop?: StopReason } | 'hang' | Error = () => ({ chunks: ['x'] })) {
+function harness(settings: Partial<AiSettings> & { ownKey?: boolean; ready?: Promise<unknown> } = {}, answer: (req: LlmRequest) => { chunks: string[]; stop?: StopReason } | 'hang' | Error = () => ({ chunks: ['x'] })) {
   const requests: LlmRequest[] = []
   const deltas: InlineDelta[] = []
   const provider: LlmProvider = {
@@ -24,7 +24,7 @@ function harness(settings: Partial<AiSettings> & { ownKey?: boolean } = {}, answ
   const all = { ...DEFAULT_AI_SETTINGS, inline: true, ...settings }
   const ai = {
     settings: () => all,
-    provider: async () => provider,
+    provider: async () => (await settings.ready, provider),
     ownKey: async () => settings.ownKey ?? true,
     model: async () => ((settings.ownKey ?? true) ? all.model : all.cloudModel)
   } as unknown as AiService
@@ -115,5 +115,21 @@ describe('InlineService', () => {
     await new Promise((r) => setTimeout(r, 0))
     h.service.cancel('e1')
     await expect(pending).rejects.toMatchObject({ code: 'cancelled' })
+  })
+
+  it('a cancel or a newer suggestion while the provider is still resolving stops the request before it is sent', async () => {
+    let release!: () => void
+    const h = harness({ ready: new Promise<void>((r) => (release = r)) })
+    const pending = h.service.edit(edit)
+    const first = h.service.complete(complete({ requestId: 'a' }))
+    await new Promise((r) => setTimeout(r, 0))
+    h.service.cancel('e1')
+    const second = h.service.complete(complete({ requestId: 'b' })) // overtakes 'a'
+    await new Promise((r) => setTimeout(r, 0))
+    release()
+    await expect(pending).rejects.toMatchObject({ code: 'cancelled' })
+    expect(await first).toBe('')
+    expect(await second).toBe('x')
+    expect(h.requests).toHaveLength(1) // only the newest suggestion reached the model
   })
 })

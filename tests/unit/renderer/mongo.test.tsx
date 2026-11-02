@@ -166,6 +166,30 @@ describe('MongoDB store', () => {
     expect(s().open).toBeUndefined()
   })
 
+  it('documents arriving after another collection opened stay out of it (find and aggregate)', async () => {
+    const orders = { id: 'c1', db: 'shop', collection: 'orders' }
+    const late: ((v: unknown) => void)[] = []
+    const slowFor = (p: { collection: string }, fast: unknown) => (p.collection === 'users' ? new Promise((r) => late.push(r)) : fast)
+    mongo({
+      'mongo:find': (p: { collection: string }) => slowFor(p, { documents: [bob], total: 1 }),
+      'mongo:aggregate': (p: { collection: string }) => slowFor(p, ['{"n": 1}'])
+    })
+    const first = s().openCollection(users)
+    await s().openCollection(orders)
+    late[0]({ documents: [ann, bob], total: 3 })
+    await first
+    expect(s()).toMatchObject({ open: orders, documents: [bob], total: 1 })
+
+    useMongo.setState({ open: users, mode: 'aggregate' })
+    const aggregating = s().run()
+    useMongo.setState({ open: orders })
+    await s().run()
+    expect(s()).toMatchObject({ documents: ['{"n": 1}'], total: 1 })
+    late[1](['{"n": 2}', '{"n": 3}'])
+    await aggregating
+    expect(s()).toMatchObject({ open: orders, documents: ['{"n": 1}'], total: 1 })
+  })
+
   it('documents: edit (replace by _id), new (insert), delete; the list reloads; nothing without a collection', async () => {
     const bridge = mongo()
     await s().saveEdit()

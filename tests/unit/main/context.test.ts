@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { mkdir, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { tempDir } from './helpers'
@@ -28,6 +28,7 @@ import {
 } from '../../../electron/main/services/context/analyzers'
 import { ContextService } from '../../../electron/main/services/context/ContextService'
 import { ContextStore } from '../../../electron/main/services/context/contextStore'
+import type { ProjectContext } from '@shared/types/context'
 
 const write = async (root: string, files: Record<string, string>) => {
   for (const [rel, content] of Object.entries(files)) {
@@ -248,6 +249,9 @@ describe('ContextService', () => {
     const store = new ContextStore(join(data, 'cache'))
     // The store keeps its files in <dir>/context: two levels up is `secret.json`.
     expect(await store.get('../../secret')).toBeNull()
+    // …nor writes there.
+    await expect(store.save({ projectId: '../../secret' } as ProjectContext)).rejects.toMatchObject({ code: 'bad-id' })
+    expect(await readFile(join(data, 'secret.json'), 'utf8')).toBe('{"projectId":"leak"}')
   })
 
   it('reports intermediate progress during large scans', async () => {

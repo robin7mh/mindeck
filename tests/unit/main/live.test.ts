@@ -1,8 +1,16 @@
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { createServer, request } from 'node:http'
+import { connect } from 'node:net'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { tempDir } from './helpers'
+
+// The real fs.watch, unless a test makes it fail (out of inotify watches).
+const fsHooks = vi.hoisted(() => ({ watch: undefined as undefined | (() => never) }))
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>()
+  return { ...actual, watch: ((...args: Parameters<typeof actual.watch>) => (fsHooks.watch ? fsHooks.watch() : actual.watch(...args))) as typeof actual.watch }
+})
 import { inject, listen, LiveServerService, matchesGlob, RELOAD_SCRIPT, unchanged } from '../../../electron/main/services/live/LiveServerService'
 import { outputPath, SassService, type SassCompiler } from '../../../electron/main/services/live/SassService'
 import { liveServerSettings, sassSettings } from '../../../electron/main/services/migrate/MigrateService'
@@ -63,6 +71,17 @@ function statusWithHost(port: number, path: string, host: string): Promise<numbe
   })
 }
 
+/** The status code of a hand-written request (e.g. HTTP/1.0 without a Host header). */
+function rawStatus(port: number, raw: string): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const socket = connect(port, '127.0.0.1', () => socket.write(raw))
+    let text = ''
+    socket.on('data', (d) => (text += d.toString()))
+    socket.on('close', () => resolve(Number(/^HTTP\/1\.\d (\d+)/.exec(text)?.[1] ?? 0)))
+    socket.on('error', reject)
+  })
+}
+
 describe('Live Server', () => {
   it('starting twice at once opens one server', async () => {
     const root = await site()
@@ -101,6 +120,7 @@ describe('Live Server', () => {
     expect((await fetch(`${status.url}/%E0%A4%A`)).status).toBe(400)
     expect(await statusWithHost(status.port, '/index.html', 'evil.example:5500')).toBe(403)
     expect(await statusWithHost(status.port, '/index.html', `localhost:${status.port}`)).toBe(200)
+    expect(await rawStatus(status.port, 'GET /index.html HTTP/1.0\r\n\r\n')).toBe(403) // no Host at all: not provably local
 
     // Started again: the same server, the page opens.
     expect(await service.start('p')).toEqual(status)
@@ -189,6 +209,24 @@ describe('Live Server', () => {
     await expect(listen(none, port, 1)).rejects.toMatchObject({ code: 'EADDRINUSE' })
     taken.close()
     next.close()
+  })
+
+  it('a folder that can’t be watched fails the start and leaves the port free', async () => {
+    const root = await site()
+    const probe = createServer()
+    const port = await listen(probe, 0)
+    await new Promise((r) => probe.close(r))
+    fsHooks.watch = () => {
+      throw Object.assign(new Error('ENOSPC: System limit for number of file watchers reached'), { code: 'ENOSPC' })
+    }
+    try {
+      await expect(make(root, { root: 'public', port }).service.start('p')).rejects.toMatchObject({ code: 'ENOSPC' })
+    } finally {
+      fsHooks.watch = undefined
+    }
+    const again = createServer()
+    expect(await listen(again, port, 1)).toBe(port) // not left bound by the failed start
+    again.close()
   })
 
   it('injects and matches globs', () => {

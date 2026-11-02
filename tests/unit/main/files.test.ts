@@ -1,7 +1,22 @@
 import { chmod, mkdir, readFile, readdir, realpath, stat, symlink, utimes, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { tempDir } from './helpers'
+
+// The real confine(), with a hook to change the disk right after its check (a race with another program).
+const race = vi.hoisted(() => ({ afterConfine: undefined as undefined | ((abs: string) => Promise<void>) }))
+vi.mock('../../../electron/main/lib/confine', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../../../electron/main/lib/confine')>()
+  return {
+    confine: async (root: string, rel: string) => {
+      const abs = await real.confine(root, rel)
+      const hook = race.afterConfine
+      race.afterConfine = undefined
+      await hook?.(abs)
+      return abs
+    }
+  }
+})
 import { FilesService, MAX_EDIT_BYTES } from '../../../electron/main/services/files/FilesService'
 
 async function project(files: Record<string, string | Buffer>) {
@@ -113,6 +128,14 @@ describe('FilesService', () => {
     const outside = join(await tempDir('mindeck-outside-'), 'planted.sh')
     await symlink(outside, join(root, 'trap.sh'))
     await expect(service.write('p', 'trap.sh', 'x')).rejects.toMatchObject({ code: 'outside-project' })
+    await expect(stat(outside)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('a dangling link planted right after the path was checked is still not written through', async () => {
+    const { service } = await project({})
+    const outside = join(await tempDir('mindeck-outside-'), 'planted.sh')
+    race.afterConfine = (abs) => symlink(outside, abs)
+    await expect(service.write('p', 'late.sh', 'x')).rejects.toMatchObject({ code: 'outside-project', message: 'late.sh is a link to nowhere' })
     await expect(stat(outside)).rejects.toMatchObject({ code: 'ENOENT' })
   })
 

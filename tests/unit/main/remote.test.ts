@@ -261,6 +261,8 @@ describe('Remote-SSH', () => {
     await expect(mute.svc.ssh('box')).rejects.toMatchObject({ message: 'The remote Mindeck stopped' })
     const slow = await setup({ machine: machine({ core: (p) => p.stderr.write('warming up\n') }) })
     await expect(slow.svc.ssh('box')).rejects.toMatchObject({ message: 'The remote Mindeck did not start in time' })
+    const unstartable = await setup({ machine: machine({ core: (p) => p.emit('error', new Error('spawn ssh EAGAIN')) }) })
+    await expect(unstartable.svc.ssh('box')).rejects.toMatchObject({ code: 'remote-start', message: 'spawn ssh EAGAIN' })
 
     const unlicensed = await setup({ api: api({ adopt: 'fail' }) })
     await expect(unlicensed.svc.ssh('box')).rejects.toMatchObject({ code: 'remote-license', message: expect.stringContaining('(bad-entitlement)') })
@@ -289,6 +291,12 @@ describe('Remote-SSH', () => {
       process.env.HOME = home
     }
   }, 30_000)
+
+  it('a target that would be read as an ssh option is refused before ssh runs', async () => {
+    const t = await setup()
+    await expect(t.svc.ssh('-oProxyCommand=touch /tmp/pwned')).rejects.toMatchObject({ code: 'bad-input' })
+    expect(t.m.procs).toEqual([])
+  })
 
   it('a process that never ends is stopped after the timeout', async () => {
     const t = await setup({ machine: machine({ probe: () => {} }) })

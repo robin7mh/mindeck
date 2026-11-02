@@ -262,6 +262,8 @@ describe('ScmService', () => {
     await writeFile(join(dir, 'new.txt'), 'x')
     await rm(join(dir, 'b.txt'))
     expect((await service(dir).files('p')).sort()).toEqual(['.gitignore', 'a.txt', 'new.txt'])
+    // A huge repo stops at the cap.
+    expect(await service(dir, { files: 2, matches: 10, line: 10 }).files('p')).toHaveLength(2)
 
     const plain = await tempDir()
     await mkdir(join(plain, 'src', 'deep'), { recursive: true })

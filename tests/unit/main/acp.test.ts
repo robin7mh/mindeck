@@ -1,4 +1,6 @@
+import { EventEmitter } from 'node:events'
 import { join } from 'node:path'
+import { PassThrough } from 'node:stream'
 import { describe, expect, it, vi } from 'vitest'
 import {
   AgentSideConnection,
@@ -103,6 +105,37 @@ describe('spawnAcp', () => {
       proc.kill()
     } finally {
       Object.defineProperty(process, 'platform', { value: platform })
+    }
+  })
+
+  it('an agent that cannot start ends like one that exited — no uncaught error', async () => {
+    const platform = process.platform
+    Object.defineProperty(process, 'platform', { value: 'win32' }) // spawned directly: the spawn itself fails
+    try {
+      const cwd = await tempDir()
+      const proc = spawnAcp({ file: join(cwd, 'no-such-agent'), args: [] }, cwd, { ...process.env } as Record<string, string>)
+      const code = await new Promise<number>((r) => proc.onExit(r))
+      expect(code).not.toBe(0)
+    } finally {
+      Object.defineProperty(process, 'platform', { value: platform })
+    }
+  })
+
+  it('a failed start that reports no exit code still ends as a failure', async () => {
+    // Node reports the errno as the code; should a platform report none, it must not read as success (0).
+    const child = Object.assign(new EventEmitter(), { stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough(), pid: undefined, kill: () => true })
+    vi.resetModules()
+    vi.doMock('node:child_process', async (importOriginal) => ({ ...(await importOriginal<typeof import('node:child_process')>()), spawn: () => child }))
+    try {
+      const { spawnAcp: spawnFailing } = await import('../../../electron/main/services/agents/acp')
+      const proc = spawnFailing({ file: 'missing-agent', args: [] }, await tempDir(), {})
+      const exited = new Promise<number>((r) => proc.onExit(r))
+      child.emit('error', Object.assign(new Error('spawn missing-agent ENOENT'), { code: 'ENOENT' }))
+      child.emit('close', null, null)
+      expect(await exited).toBe(1)
+    } finally {
+      vi.doUnmock('node:child_process')
+      vi.resetModules()
     }
   })
 })

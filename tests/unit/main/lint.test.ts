@@ -128,7 +128,7 @@ describe('ESLint and Prettier from the project', () => {
     // A worker that timed out may be stuck for good: it is stopped, the next request gets a fresh one.
     expect(procs[0].killed).toBe(true)
     const waiting = svc.format('p', 'a.js', 'x')
-    for (let i = 0; i < 500 && spawned < 2; i++) await new Promise((r) => setImmediate(r)) // answer well within the 50 ms timeout
+    for (const end = Date.now() + 5000; spawned < 2 && Date.now() < end; ) await new Promise((r) => setImmediate(r)) // answer well within the 50 ms timeout; a deadline, not a count, so a busy machine cannot cut it short
     expect(spawned).toBe(2)
     procs[0].emit('exit') // a stale exit: the new worker and what waits on it stay
     procs[1].say(JSON.stringify({ id: 3, ok: true, result: 'still here' }))

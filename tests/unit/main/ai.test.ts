@@ -550,6 +550,19 @@ describe('built-in tools', () => {
     expect(await confine(root, 'src/new/x.ts')).toBe(join(await (await import('node:fs/promises')).realpath(root), 'src', 'new', 'x.ts'))
   })
 
+  it('confine: a path on a drive that does not exist (Windows `Z:\\`) is refused, not probed forever', async () => {
+    // Windows path rules on this machine: no `Z:\` and none of its parents exist, and dirname('Z:\') is itself.
+    vi.resetModules()
+    vi.doMock('node:path', async () => (await vi.importActual<typeof import('node:path')>('node:path')).win32)
+    try {
+      const { confine: onWindows } = await import('../../../electron/main/lib/confine')
+      await expect(onWindows(await tempDir(), 'Z:\\nowhere\\file.ts')).rejects.toMatchObject({ code: 'outside-project' })
+    } finally {
+      vi.doUnmock('node:path')
+      vi.resetModules()
+    }
+  })
+
   it('shell_run runs in the project, reports exit codes, honours timeouts', async () => {
     const root = await tempDir()
     const t = builtinTools(toolDeps({ projects: { list: () => [proj({ path: root })] } }))

@@ -13,6 +13,9 @@ function deferred<T>() {
   return { promise, resolve }
 }
 
+/** The project the editor switches to has no repository (its refresh stays quiet). */
+const NO_REPO = () => ({ repo: false, files: [] })
+
 const initialScm = useScm.getState()
 const initialEditor = useEditor.getState()
 const initialMemory = useMemory.getState()
@@ -50,6 +53,49 @@ describe('answers arriving out of order', () => {
     await first
     expect(useScm.getState().search.result).toEqual({ files: [{ path: 'new.ts' }] })
     expect(useScm.getState().search.searching).toBe(false)
+  })
+
+  it('search: an older search failing after the newer one answered shows no error', async () => {
+    const slow = deferred<unknown>()
+    installBridge({ 'scm:search': (p: { query: string }) => (p.query === 'a' ? slow.promise.then(() => Promise.reject(new Error('rg crashed'))) : { files: [{ path: 'new.ts' }] }), 'scm:status': NO_REPO })
+    useEditor.setState({ projectId: 'p' })
+    useScm.getState().setSearch({ query: 'a' })
+    const first = useScm.getState().runSearch()
+    useScm.getState().setSearch({ query: 'ab' })
+    await useScm.getState().runSearch()
+    slow.resolve(undefined)
+    await first
+    expect(useScm.getState().error).toBeUndefined()
+    expect(useScm.getState().search).toMatchObject({ result: { files: [{ path: 'new.ts' }] }, searching: false })
+  })
+
+  it('search: a failure for the project the editor left shows no error in the new one', async () => {
+    const slow = deferred<unknown>()
+    installBridge({ 'scm:search': () => slow.promise.then(() => Promise.reject(new Error('rg crashed'))), 'scm:status': NO_REPO })
+    useEditor.setState({ projectId: 'a' })
+    useScm.getState().setSearch({ query: 'x' })
+    const pending = useScm.getState().runSearch()
+    useEditor.setState({ projectId: 'b' }) // resets the search
+    await settle()
+    slow.resolve(undefined)
+    await pending
+    expect(useScm.getState().error).toBeUndefined()
+    expect(useScm.getState().search).toMatchObject({ query: '', searching: false })
+  })
+
+  it('commit log: the previous project’s history never shows in the new one, nor selects a commit', async () => {
+    const old = deferred<unknown>()
+    const show = vi.fn(() => ({ hash: 'a1', files: [] }))
+    installBridge({ 'scm:log': () => old.promise, 'scm:show': show, 'scm:status': NO_REPO })
+    useEditor.setState({ projectId: 'a' })
+    const pending = useScm.getState().loadLog()
+    useEditor.setState({ projectId: 'b' })
+    await settle()
+    old.resolve([{ hash: 'a1', subject: 'from a' }])
+    await pending
+    expect(useScm.getState().log).toEqual([])
+    expect(useScm.getState().selected).toBeUndefined()
+    expect(show).not.toHaveBeenCalled()
   })
 
   it('git status of the previous project never shows in the new one', async () => {

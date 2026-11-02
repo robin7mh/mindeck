@@ -132,6 +132,21 @@ describe('GitHub store', () => {
     expect(g().pulls).toEqual([])
   })
 
+  it('a pull request arriving after the editor switched projects is not shown there', async () => {
+    let view!: (d: Detail) => void
+    github({ 'github:view': () => new Promise((r) => (view = r)) })
+    const diff = { path: 'q.ts', original: '', modified: '', title: 'q.ts' }
+    const opening = g().open(8)
+    expect(g().opening).toBe(8)
+    act(() => useEditor.setState({ projectId: 'q' }))
+    useScm.setState({ diff }) // the new project's diff on screen
+    view(detail({ number: 8 }))
+    await opening
+    expect(g()).toMatchObject({ detail: undefined, opening: undefined })
+    expect(g().error).toBeUndefined()
+    expect(useScm.getState().diff).toEqual(diff)
+  })
+
   it('a new project: its pull requests once loaded; the form and the detail close', async () => {
     const bridge = github()
     useGitHub.setState({ creating: true, detail: detail() })

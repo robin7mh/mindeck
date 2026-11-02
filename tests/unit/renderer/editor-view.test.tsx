@@ -34,6 +34,7 @@ import { EditorTabs } from '@/features/editor/components/EditorTabs'
 import { tabKey, useEditor } from '@/features/editor/store'
 import { useProjects } from '@/features/projects/store'
 import { useSession } from '@/features/session/store'
+import { useDebug } from '@/features/editor/debug'
 
 const initialEditor = useEditor.getState()
 const initialProjects = useProjects.getState()
@@ -308,6 +309,29 @@ describe('EditorView', () => {
     await act(settle)
     expect(screen.getByText('Saved')).toBeInTheDocument()
     expect(screen.queryByText(/^Ln /)).toBeNull()
+  })
+
+  it('F9 sets the breakpoint on the cursor line; the cursor goes with the view', async () => {
+    installBridge({ 'projects:list': () => [project('p')], 'files:list': () => [], 'files:stat': () => [] })
+    useProjects.setState({ projects: [project('p')] })
+    useDebug.setState({ breakpoints: {} })
+    useEditor.setState({ tabs: [tab('a.ts')], activeId: 'p:a.ts' })
+    const { unmount } = render(view())
+    await act(settle)
+    expect(screen.getByText('Ln 4, Col 2')).toBeInTheDocument()
+    fireEvent.keyDown(window, { key: 'F9' })
+    expect(useDebug.getState().breakpoints.p).toEqual([{ path: 'a.ts', line: 4 }])
+    unmount()
+
+    // A new view on a file that reported no cursor yet: not the old line 4, the first line.
+    useEditor.setState({ tabs: [tab('notes.txt')], activeId: 'p:notes.txt' })
+    render(view())
+    await act(settle)
+    fireEvent.keyDown(window, { key: 'F9' })
+    expect(useDebug.getState().breakpoints.p).toEqual([
+      { path: 'a.ts', line: 4 },
+      { path: 'notes.txt', line: 1 }
+    ])
   })
 
   it('while visible: follows the disk (now, every 3 s, on focus) and saves on ⌘S / Ctrl+S', async () => {

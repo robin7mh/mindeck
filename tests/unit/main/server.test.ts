@@ -1,4 +1,5 @@
-import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { ServerResponse } from 'node:http'
 import { connect, createServer } from 'node:net'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
@@ -132,6 +133,23 @@ describe('AuthService', () => {
     const broken = new AuthService(join(blocked, 'devices.json'))
     await expect(broken.createPairingCode()).rejects.toThrow()
     await expect(broken.createPairingCode()).rejects.toThrow() // the chain survived
+  })
+
+  it('a file damaged or removed while running: writes go on from memory', async () => {
+    let now = 7_000_000
+    const { auth, file } = await setup(() => now)
+    const { code } = await auth.createPairingCode()
+    const { token, device } = await auth.pair(code, 'phone')
+    await writeFile(file, '{ half written')
+    await auth.revoke('someone-else') // re-reads what another process wrote: nothing usable
+    expect(JSON.parse(await readFile(file, 'utf8')).devices.map((d: { id: string }) => d.id)).toEqual([device.id])
+    await writeFile(file, JSON.stringify({ devices: [], codes: 'none' }))
+    await auth.revoke('someone-else')
+    expect(JSON.parse(await readFile(file, 'utf8'))).toMatchObject({ devices: [{ id: device.id }], codes: [] })
+    await rm(file)
+    now += 2 * 60_000
+    expect(await auth.verify(token)).toMatchObject({ id: device.id }) // persists lastSeen, file gone
+    expect(JSON.parse(await readFile(file, 'utf8')).devices[0].lastSeenAt).toBe(new Date(now).toISOString())
   })
 })
 
@@ -294,6 +312,24 @@ describe('HttpServer — robustness', () => {
     })
     expect(raw).toContain('401')
     expect((await fetch(`${base}/api/health`)).status).toBe(200)
+  })
+
+  it('a failure after the headers went out drops that connection instead of answering twice', async () => {
+    const { base, token } = await startHttp()
+    const unhandled = vi.fn()
+    process.on('unhandledRejection', unhandled)
+    try {
+      // The response breaks mid-way (headers written, body not): no second response on top of it.
+      vi.spyOn(ServerResponse.prototype, 'end').mockImplementationOnce(() => {
+        throw new Error('stream broke')
+      })
+      await expect(rpc(base, 'projects:list', undefined, token)).rejects.toThrow()
+      await tick(20)
+      expect(unhandled).not.toHaveBeenCalled()
+    } finally {
+      process.off('unhandledRejection', unhandled)
+    }
+    expect(await (await rpc(base, 'projects:list', undefined, token)).json()).toEqual({ ok: true, data: [{ id: 'p' }] })
   })
 
   it('drops a WebSocket client that stopped reading instead of buffering without bound', async () => {

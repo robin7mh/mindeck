@@ -50,6 +50,7 @@ const h = vi.hoisted(() => ({
   quit: vi.fn(),
   openExternal: vi.fn(async () => {}),
   messageBox: vi.fn((): number => 1),
+  errorBox: vi.fn(),
   notifications: [] as { opts: { title: string; body: string }; click?: () => void; show: ReturnType<typeof vi.fn> }[],
   notifySupported: true,
   focused: null as unknown,
@@ -101,7 +102,7 @@ vi.mock('electron', () => ({
   },
   shell: { openExternal: h.openExternal },
   powerMonitor: { getSystemIdleTime: () => h.idleSeconds },
-  dialog: { showMessageBoxSync: (...a: unknown[]) => h.messageBox(...(a as [])) },
+  dialog: { showMessageBoxSync: (...a: unknown[]) => h.messageBox(...(a as [])), showErrorBox: h.errorBox },
   Notification: class {
     static isSupported = () => h.notifySupported
     show = vi.fn()
@@ -170,6 +171,7 @@ beforeEach(() => {
   h.core.server.start.mockReset().mockResolvedValue(undefined)
   h.core.dispose.mockReset().mockResolvedValue(undefined)
   h.quit.mockReset()
+  h.errorBox.mockReset()
 })
 afterEach(() => {
   Object.defineProperty(process, 'platform', { value: realPlatform })
@@ -267,6 +269,23 @@ describe('main process boot', () => {
     })
     await boot()
     expect(err.mock.calls[0][0]).toContain('migration from the old data folder failed')
+  })
+
+  it('a core that cannot start says why and quits instead of idling without a window', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {})
+    h.core.server.start.mockRejectedValueOnce(new Error('listen EADDRINUSE: address already in use'))
+    await boot()
+    expect(err.mock.calls[0][0]).toContain('[core] startup failed')
+    expect(h.errorBox).toHaveBeenCalledWith('Mindeck could not start', 'listen EADDRINUSE: address already in use')
+    expect(h.quit).toHaveBeenCalledTimes(1)
+    expect(FakeWindow.all).toHaveLength(0)
+    expect(h.appHandlers.has('activate')).toBe(false)
+
+    // Something thrown that is no Error still makes a readable message.
+    h.core.server.start.mockRejectedValueOnce('data folder is read-only')
+    await boot()
+    expect(h.errorBox).toHaveBeenLastCalledWith('Mindeck could not start', 'data folder is read-only')
+    expect(h.quit).toHaveBeenCalledTimes(2)
   })
 })
 

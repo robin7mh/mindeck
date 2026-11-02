@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rm, symlink, truncate, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { tempDir } from './helpers'
@@ -60,6 +60,21 @@ describe('GitService', () => {
     ])
     expect(await git.fileAt(dir, start.base, 'a.txt')).toBe('one\ntwo\nmine (before the agent)\n')
     expect(await git.fileAt(dir, start.base, 'src/new.ts')).toBe('')
+  })
+
+  it('new files too big to count, or gone before they are read, count as 0 lines', async () => {
+    const dir = await repo()
+    const start = (await git.baseline(dir))!
+    // A multi-GB dump is not read into memory (sparse here: big, but no disk used).
+    await writeFile(join(dir, 'dump.sql'), '')
+    await truncate(join(dir, 'dump.sql'), 5 * 1024 * 1024)
+    await symlink(join(dir, 'nowhere'), join(dir, 'broken-link'))
+    await writeFile(join(dir, 'small.txt'), 'a\nb\n')
+    expect(await git.changes(dir, start)).toEqual([
+      { path: 'broken-link', status: 'added', added: 0, removed: 0 },
+      { path: 'dump.sql', status: 'added', added: 0, removed: 0 },
+      { path: 'small.txt', status: 'added', added: 2, removed: 0 }
+    ])
   })
 
   it('a clean tree uses HEAD; binary diffs count as 0 lines', async () => {

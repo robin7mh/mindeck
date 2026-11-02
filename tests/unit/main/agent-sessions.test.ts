@@ -199,6 +199,15 @@ describe('AgentSessionService: sessions', () => {
     const noTranscript = track(new AgentSessionService(t.deps))
     await noTranscript.init()
     expect(noTranscript.get(s.id)).toMatchObject({ status: 'ended', terminalId: undefined, messages: [] })
+    await noTranscript.dispose()
+
+    // A damaged transcript loses only its own messages, never the other sessions.
+    await writeFile(join(t.deps.dir, 'sessions.json'), JSON.stringify({ version: 1, sessions: [s, failed].map((x) => ({ session: again.get(x.id), baseline: null, projectPath: t.projectPath })) }))
+    await writeFile(join(t.deps.dir, `${s.id}.json`), '[{"role":')
+    const damaged = track(new AgentSessionService(t.deps))
+    await damaged.init()
+    expect(damaged.list().map((x) => x.id).sort()).toEqual([s.id, failed.id].sort())
+    expect(damaged.get(s.id).messages).toEqual([])
   })
 
   it('named after the agent; renamed by the user (notification and journal follow); the repo page from origin', async () => {
