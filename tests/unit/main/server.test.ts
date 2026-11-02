@@ -4,6 +4,7 @@ import { ServerResponse } from 'node:http'
 import { connect, createServer, type Server as NetServer } from 'node:net'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import type { Duplex } from 'node:stream'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { WebSocket } from 'ws'
 import { tempDir, tick } from './helpers'
@@ -410,6 +411,22 @@ describe('HttpServer — robustness', () => {
     const raw = await rawUpgrade(http.port, '/api/events', `Origin: ${base}\r\nCookie: mindeck_${http.port}=mindeck_x\r\n`)
     expect(raw).toContain('503')
     expect(raw).not.toContain('Set-Cookie')
+    expect((await fetch(`${base}/api/health`)).status).toBe(200)
+  })
+
+  it('a connection that breaks during an upgrade ends only that socket', async () => {
+    const { base, http, auth } = await startHttp()
+    const upgrade = vi.spyOn(http as unknown as { upgrade(req: unknown, socket: Duplex, head: Buffer): Promise<void> }, 'upgrade')
+    // The device check is still running when the connection breaks.
+    let answer: ((device: null) => void) | undefined
+    vi.spyOn(auth, 'verify').mockImplementationOnce(() => new Promise((resolve) => (answer = resolve)))
+    const closed = rawUpgrade(http.port, '/api/events')
+    await vi.waitFor(() => expect(answer).toBeDefined())
+    const socket = upgrade.mock.calls[0][1]
+    socket.emit('error', new Error('read ECONNRESET')) // without a listener: an uncaught exception in the core
+    expect(socket.destroyed).toBe(true)
+    answer!(null)
+    await closed
     expect((await fetch(`${base}/api/health`)).status).toBe(200)
   })
 
