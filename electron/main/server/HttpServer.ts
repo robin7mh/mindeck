@@ -13,6 +13,8 @@ const MAX_BODY = 8 * 1024 * 1024
 const PAIR_WINDOW_MS = 10 * 60_000
 const PAIR_MAX_FAILURES = 10
 const HEARTBEAT_MS = 30_000
+/** Unsent bytes a WebSocket client may fall behind before it is dropped. */
+const MAX_BUFFERED = 16 * 1024 * 1024
 
 const CONTENT_TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -195,6 +197,7 @@ export class HttpServer {
       return await this.serveStatic(path, res)
     } catch (err) {
       const e = err instanceof HttpError ? err : new HttpError(500, 'error', String((err as Error).message))
+      if (res.headersSent) return void res.destroy()
       send(res, e.status, { ok: false, error: { code: e.code, message: e.message } })
     }
   }
@@ -206,15 +209,18 @@ export class HttpServer {
     if (recent.length >= PAIR_MAX_FAILURES) {
       throw new HttpError(429, 'rate-limited', 'Too many failed pairing attempts — try again later')
     }
+    // Counted up front: concurrent attempts must not all pass the check above
+    // before the first failure is recorded. A successful pairing clears it.
+    this.pairFailures.set(ip, [...recent, now])
     const body = (await readJson(req)) as { code?: unknown; name?: unknown } | undefined
+    let result: Awaited<ReturnType<AuthService['pair']>>
     try {
-      const result = await this.opts.auth.pair(String(body?.code ?? ''), String(body?.name ?? ''))
-      this.pairFailures.delete(ip)
-      send(res, 200, { ok: true, data: result })
+      result = await this.opts.auth.pair(String(body?.code ?? ''), String(body?.name ?? ''))
     } catch (err) {
-      this.pairFailures.set(ip, [...recent, now])
       throw new HttpError(401, 'bad-code', (err as Error).message)
     }
+    this.pairFailures.delete(ip)
+    send(res, 200, { ok: true, data: result })
   }
 
   private async rpc(req: IncomingMessage, res: ServerResponse, channel: string): Promise<void> {
@@ -255,15 +261,22 @@ export class HttpServer {
   // --- WebSocket ---
 
   private async upgrade(req: IncomingMessage, socket: Duplex, head: Buffer): Promise<void> {
-    const url = new URL(req.url as string, 'http://local')
-    const device = url.pathname === '/api/events' ? await this.opts.auth.verify(url.searchParams.get('token')) : null
+    socket.on('error', () => socket.destroy())
+    let device: Awaited<ReturnType<AuthService['verify']>> = null
+    try {
+      const url = new URL(req.url as string, 'http://local')
+      device = url.pathname === '/api/events' ? await this.opts.auth.verify(url.searchParams.get('token')) : null
+    } catch {
+      /* malformed URL or the device store failed: not authenticated */
+    }
     if (!device) {
       socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n')
       socket.destroy()
       return
     }
+    const deviceId = device.id
     this.wss.handleUpgrade(req, socket, head, (ws) => {
-      const client: Client = { ws, deviceId: device.id, alive: true }
+      const client: Client = { ws, deviceId, alive: true }
       this.clients.add(client)
       this.opts.onClients?.(this.clients.size)
       ws.on('pong', () => (client.alive = true))
@@ -271,7 +284,7 @@ export class HttpServer {
         if (this.clients.delete(client)) this.opts.onClients?.(this.clients.size)
       })
       ws.on('error', () => ws.terminate())
-      ws.send(JSON.stringify({ channel: 'hello', payload: { deviceId: device.id } }))
+      ws.send(JSON.stringify({ channel: 'hello', payload: { deviceId } }))
     })
   }
 
@@ -279,8 +292,15 @@ export class HttpServer {
     if (!this.clients.size) return
     if (TERMINAL_EVENTS.includes(channel) && !this.opts.remoteTerminal()) return
     const message = JSON.stringify({ channel, payload })
-    for (const client of this.clients) {
-      if (client.ws.readyState === client.ws.OPEN) client.ws.send(message)
+    for (const client of [...this.clients]) {
+      if (client.ws.readyState !== client.ws.OPEN) continue
+      // A client that stopped reading (stalled network, suspended phone) would
+      // otherwise buffer every event in memory: drop it, it reconnects and re-attaches.
+      if (client.ws.bufferedAmount > MAX_BUFFERED) {
+        client.ws.terminate()
+        continue
+      }
+      client.ws.send(message)
     }
   }
 

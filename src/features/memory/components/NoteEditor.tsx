@@ -101,7 +101,7 @@ export function NoteEditor(p: Props) {
     }
     const href = a.getAttribute('href') ?? ''
     if (/^(https?:|mailto:)/i.test(href)) {
-      window.open(href, '_blank') // main routes this to the OS browser
+      window.open(href, '_blank', 'noopener,noreferrer') // main routes this to the OS browser
       return
     }
     const target = safeDecode(href.split('#')[0])

@@ -174,6 +174,35 @@ describe('remote transport', () => {
     vi.useRealTimers()
   })
 
+  it('a successful call while the socket is up brings the link back online; a stuck connect is given up', async () => {
+    vi.useFakeTimers()
+    const links: LinkState[] = []
+    let reply: Reply = { status: 0, throws: new Error('down') }
+    const t = createRemoteTransport({ baseUrl: '', token: 'tok', fetch: fakeFetch(() => reply), WebSocket: FakeSocket, onLinkState: (l) => links.push(l) })
+    await t.invoke('a') // no socket yet: stays offline after success
+    reply = { status: 200, body: { ok: true } }
+    await t.invoke('a')
+    expect(links).toEqual(['offline'])
+
+    t.on('e', vi.fn())
+    FakeSocket.all[0].open()
+    reply = { status: 0, throws: new Error('down') }
+    await t.invoke('a')
+    reply = { status: 200, body: { ok: true } }
+    await t.invoke('a')
+    expect(links).toEqual(['offline', 'connecting', 'online', 'offline', 'online'])
+
+    FakeSocket.all[0].drop()
+    await vi.advanceTimersByTimeAsync(10_000)
+    const stuck = FakeSocket.all[1]
+    expect(stuck.closed).toBe(false)
+    await vi.advanceTimersByTimeAsync(10_000) // never opened → closed after 10 s
+    expect(stuck.closed).toBe(true)
+    stuck.drop()
+    t.close()
+    vi.useRealTimers()
+  })
+
   it('uses the global fetch/WebSocket by default', async () => {
     const g = globalThis as unknown as { fetch: unknown; WebSocket: unknown }
     const saved = { fetch: g.fetch, WebSocket: g.WebSocket }
@@ -206,6 +235,7 @@ describe('remote transport', () => {
     })
     await expect(pairDevice('http://x/', 'AB', 'Me', pairFetch)).rejects.toMatchObject({ code: 'bad-code', message: 'expired' })
     await expect(pairDevice('http://x', 'AB', 'Me', fakeFetch(() => ({ status: 500, badJson: true })))).rejects.toMatchObject({ code: 'bad-response' })
+    await expect(pairDevice('http://x', 'AB', 'Me', fakeFetch(() => ({ status: 0, throws: new Error('aborted') })))).rejects.toMatchObject({ code: 'offline' })
   })
 
   it('bridgeTransport wraps window.mindeck', async () => {
@@ -236,6 +266,21 @@ describe('client transport selection', () => {
     expect(isDesktop()).toBe(true)
     expect(await ipc('projects:list')).toEqual(['b'])
     setTransport(null)
+  })
+
+  it('in a browser, a subscription follows the session to the next core', () => {
+    const cb = vi.fn()
+    const off = onEvent('memory:changed', cb) // before pairing: idle
+    const first = installRemote()
+    first.emit('memory:changed', 1)
+    const second = installRemote() // re-paired: moved over, the old core is left
+    first.emit('memory:changed', 2)
+    second.emit('memory:changed', 3)
+    expect(cb.mock.calls.map((c) => c[0])).toEqual([1, 3])
+    off()
+    second.emit('memory:changed', 4)
+    setTransport(null)
+    expect(cb).toHaveBeenCalledTimes(2)
   })
 })
 

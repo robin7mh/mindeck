@@ -293,6 +293,22 @@ describe('window wiring', () => {
 
     expect(win.openHandler!({ url: 'https://example.com' })).toEqual({ action: 'deny' })
     expect(h.openExternal).toHaveBeenCalledWith('https://example.com')
+    // Only web and mail links leave the app; other schemes could start programs.
+    h.openExternal.mockClear()
+    win.openHandler!({ url: 'file:///Applications/Calculator.app' })
+    win.openHandler!({ url: 'smb://evil/share' })
+    win.openHandler!({ url: 'not a url' })
+    expect(h.openExternal).not.toHaveBeenCalled()
+    // The privileged window never navigates away (links, dropped files).
+    const navigate = win.contentsHandlers.get('will-navigate')!
+    const away = { preventDefault: vi.fn() }
+    navigate(away, 'https://example.org/')
+    expect(away.preventDefault).toHaveBeenCalled()
+    expect(h.openExternal).toHaveBeenCalledWith('https://example.org/')
+    const dropped = { preventDefault: vi.fn() }
+    navigate(dropped, 'file:///tmp/evil.html')
+    expect(dropped.preventDefault).toHaveBeenCalled()
+    expect(h.openExternal).toHaveBeenCalledTimes(1)
 
     win.emit('closed')
     expect(h.core.terminal.killAll).toHaveBeenCalled()

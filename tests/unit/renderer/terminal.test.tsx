@@ -236,7 +236,7 @@ describe('XtermPane', () => {
 
     const open = vi.spyOn(window, 'open').mockReturnValue(null)
     x.links[0]({}, 'https://example.com')
-    expect(open).toHaveBeenCalledWith('https://example.com', '_blank')
+    expect(open).toHaveBeenCalledWith('https://example.com', '_blank', 'noopener,noreferrer')
   })
 
   it('a failed attach still flushes live output; exit marks the tab and Enter restarts', async () => {

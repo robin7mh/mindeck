@@ -6,6 +6,7 @@ import { useT } from '@/lib/i18n'
 import { Select } from '@/components/ui/Select'
 import { renderMarkdown } from '@/features/memory/markdown'
 import { useGitHub } from '../github'
+import { interceptLinks } from '@/features/agents/components/ChatThread'
 
 const button = 'flex items-center gap-1 rounded border px-2 py-0.5 font-sans text-[12px] transition-colors disabled:opacity-40'
 const CHECK_ICON: Record<CheckState, { Icon: typeof CircleCheck; tint: string }> = {
@@ -19,7 +20,8 @@ const METHODS: MergeMethod[] = ['merge', 'squash', 'rebase']
 
 function Markdown({ text }: { text: string }) {
   const html = useMemo(() => renderMarkdown(text, {}), [text])
-  return <div className="md-prose chat-prose font-sans text-[12.5px]" dangerouslySetInnerHTML={{ __html: html }} />
+  // Links in PR text are untrusted: open http(s) outside, never navigate the app window.
+  return <div className="md-prose chat-prose font-sans text-[12.5px]" onClick={interceptLinks} dangerouslySetInnerHTML={{ __html: html }} />
 }
 
 function Section({ title, children }: { title: string; children: ReactNode }) {

@@ -176,9 +176,11 @@ export class SftpService {
     if (raw.protocol && raw.protocol !== 'sftp') throw coded('unsupported', `${raw.protocol.toUpperCase()} isn't supported — use SFTP`)
     const root = await realpath(this.opts.resolveRoot(projectId)!)
     const ig = ignore().add([...ALWAYS_IGNORED, ...(raw.ignore ?? []).map((g) => g.replace(/^\//, ''))])
+    const options = await this.connectOptions(raw)
     const client = await (this.opts.client ?? defaultClient)()
-    await client.connect(await this.connectOptions(raw))
     try {
+      // Inside the try: a failed handshake still ends the client (its socket).
+      await client.connect(options)
       return await fn({ client, remote: raw.remotePath ?? '/', root, context: await confine(root, clean(raw.context)), ig })
     } finally {
       await client.end().catch(() => {})

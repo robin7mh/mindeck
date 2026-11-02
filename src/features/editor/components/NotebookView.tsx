@@ -10,6 +10,7 @@ import { monaco, THEME } from '../monaco/setup'
 import { joinSource, notebookLanguage, splitSource, stripAnsi, updateCell, type Cell } from '../notebook/doc'
 import { notebookSession } from '../notebook/session'
 import { fileUri } from './CodeEditor'
+import { interceptLinks } from '@/features/agents/components/ChatThread'
 import type { EditorTab } from '../store'
 
 const tool = 'flex h-7 items-center gap-1 rounded px-2 font-sans text-[12px] text-text-secondary transition-colors hover:bg-elevated hover:text-text-primary disabled:pointer-events-none disabled:opacity-40'
@@ -113,7 +114,7 @@ function Output({ output }: { output: NotebookOutput }) {
   }
   if (data['image/svg+xml']) return <img alt="" src={`data:image/svg+xml;charset=utf-8,${encodeURIComponent(text(data['image/svg+xml']))}`} className="max-w-full rounded bg-white/90" />
   if (data['text/html']) return <HtmlOutput html={text(data['text/html'])} />
-  if (data['text/markdown']) return <div className="md-prose" dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(marked.parse(text(data['text/markdown']), { async: false })) }} />
+  if (data['text/markdown']) return <div className="md-prose" onClick={interceptLinks} dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(marked.parse(text(data['text/markdown']), { async: false })) }} />
   if (data['application/json'] !== undefined) return <pre className={cn(pre, 'text-text-secondary')}>{JSON.stringify(data['application/json'], null, 2)}</pre>
   return <pre className={cn(pre, 'text-text-primary')}>{stripAnsi(text(data['text/plain']))}</pre>
 }
@@ -161,6 +162,7 @@ function CellView({ cell, index, count, language, readOnly, running, queued, foc
           <div
             role="article"
             onDoubleClick={() => !readOnly && setEditing(true)}
+            onClick={interceptLinks}
             className="md-prose min-h-6 cursor-text px-1"
             dangerouslySetInnerHTML={{ __html: html || `<p class="text-text-muted">${t.emptyMarkdown}</p>` }}
           />

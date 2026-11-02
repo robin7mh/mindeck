@@ -42,7 +42,7 @@ export function useXterm(hostRef: RefObject<HTMLDivElement>, id: string, exited:
     const fit = new FitAddon()
     term.loadAddon(fit)
     // URLs are clickable; main routes window.open to the OS browser.
-    term.loadAddon(new WebLinksAddon((_event, uri) => void window.open(uri, '_blank')))
+    term.loadAddon(new WebLinksAddon((_event, uri) => void window.open(uri, '_blank', 'noopener,noreferrer')))
     term.open(el)
     termRef.current = term
     fitRef.current = fit

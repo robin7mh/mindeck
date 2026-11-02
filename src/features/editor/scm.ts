@@ -85,6 +85,7 @@ export interface QuickPick {
 }
 
 const NO_SEARCH = { query: '', regex: false, caseSensitive: false, searching: false }
+let searchSeq = 0
 
 /**
  * Source control, search and quick open for the editor's project. Every git
@@ -133,9 +134,10 @@ export const useScm = create<ScmState>((set, get) => {
       try {
         const status = await ipc('scm:status', { projectId })
         const branches = status.repo ? await ipc('scm:branches', { projectId }) : []
-        set({ status, branches })
+        // The editor switched projects meanwhile: don't show this one's status there.
+        if (project() === projectId) set({ status, branches })
       } catch (err) {
-        set({ error: errorMessage(err) })
+        if (project() === projectId) set({ error: errorMessage(err) })
       }
     },
 
@@ -171,7 +173,7 @@ export const useScm = create<ScmState>((set, get) => {
       if (!projectId) return
       try {
         const diff = await ipc('scm:diff', { projectId, path: file.path, target: target.kind === 'commit' && file.from ? { ...target, from: file.from } : target })
-        set({ diff: { ...diff, title } })
+        if (project() === projectId) set({ diff: { ...diff, title } })
       } catch (err) {
         set({ error: errorMessage(err) })
       }
@@ -183,6 +185,7 @@ export const useScm = create<ScmState>((set, get) => {
       if (!projectId) return
       try {
         const log = await ipc('scm:log', { projectId })
+        if (project() !== projectId) return
         set({ log })
         if (!get().selected && log[0]) await get().select(log[0].hash)
       } catch (err) {
@@ -196,7 +199,8 @@ export const useScm = create<ScmState>((set, get) => {
       set({ selected: hash })
       try {
         const detail = await ipc('scm:show', { projectId, hash })
-        set({ detail })
+        // Only the commit still selected (clicks can outrun the answers).
+        if (project() === projectId && get().selected === hash) set({ detail })
       } catch (err) {
         set({ error: errorMessage(err) })
       }
@@ -207,7 +211,7 @@ export const useScm = create<ScmState>((set, get) => {
       const projectId = project()
       if (!open || !projectId) return
       ipc('scm:files', { projectId }).then(
-        (files) => set({ files }),
+        (files) => project() === projectId && set({ files }),
         (err: unknown) => set({ error: errorMessage(err) })
       )
     },
@@ -220,11 +224,15 @@ export const useScm = create<ScmState>((set, get) => {
       const projectId = project()
       const { query, regex, caseSensitive } = get().search
       if (!projectId || !query.trim()) return set((s) => ({ search: { ...s.search, result: undefined } }))
+      const seq = ++searchSeq
       set((s) => ({ search: { ...s.search, searching: true } }))
       try {
         const result = await ipc('scm:search', { projectId, query, regex, caseSensitive })
+        // A newer search (typing is debounced, not serialized) or another project wins.
+        if (seq !== searchSeq || project() !== projectId) return
         set((s) => ({ search: { ...s.search, result, searching: false } }))
       } catch (err) {
+        if (seq !== searchSeq || project() !== projectId) return
         set((s) => ({ search: { ...s.search, searching: false }, error: errorMessage(err) }))
       }
     },

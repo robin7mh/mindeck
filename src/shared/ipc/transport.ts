@@ -86,6 +86,7 @@ export function createRemoteTransport(opts: RemoteTransportOptions): RemoteTrans
   let retry: ReturnType<typeof setTimeout> | null = null
   let closed = false
   let unauthorized = false
+  let socketOpen = false
 
   const setLink = (state: LinkState) => opts.onLinkState?.(state)
   const listenerCount = () => [...listeners.values()].reduce((n, s) => n + s.size, 0)
@@ -103,8 +104,15 @@ export function createRemoteTransport(opts: RemoteTransportOptions): RemoteTrans
     const ws = new Socket(eventsUrl(base, opts.token, origin))
     socket = ws
     let opened = false
+    // A blocked SYN can keep a socket "connecting" for a minute or more — give up
+    // after 10 s so the reconnect loop gets a fresh attempt.
+    const connectTimer = setTimeout(() => {
+      if (!opened) ws.close()
+    }, 10_000)
     ws.onopen = () => {
+      clearTimeout(connectTimer)
       opened = true
+      socketOpen = true
       delay = minDelay
       setLink('online')
     }
@@ -119,7 +127,11 @@ export function createRemoteTransport(opts: RemoteTransportOptions): RemoteTrans
     }
     ws.onerror = () => {}
     ws.onclose = (ev) => {
-      socket = null
+      clearTimeout(connectTimer)
+      if (socket === ws) {
+        socket = null
+        socketOpen = false
+      }
       const code = (ev as { code?: number } | undefined)?.code
       if (code === 4401) return rejectToken()
       if (closed) return
@@ -131,7 +143,8 @@ export function createRemoteTransport(opts: RemoteTransportOptions): RemoteTrans
         retry = null
         connect()
       }, delay)
-      delay = Math.min(maxDelay, delay * 2)
+      // Jitter, so many clients do not reconnect in lockstep after a core restart.
+      delay = Math.min(maxDelay, delay * 2 * (0.8 + Math.random() * 0.4))
     }
   }
 
@@ -152,6 +165,9 @@ export function createRemoteTransport(opts: RemoteTransportOptions): RemoteTrans
         return { ok: false, error: { code: 'offline', message: `Mindeck core unreachable: ${(err as Error).message}` } }
       }
       if (res.status === 401) rejectToken()
+      // A failed call marked the link offline; a successful one while the event
+      // socket is up means the core is reachable again.
+      else if (socketOpen) setLink('online')
       const body = (await res.json().catch(() => null)) as IpcResult<unknown> | null
       return body ?? { ok: false, error: { code: 'bad-response', message: `Unexpected response (${res.status})` } }
     },
@@ -169,6 +185,7 @@ export function createRemoteTransport(opts: RemoteTransportOptions): RemoteTrans
       retry = null
       socket?.close()
       socket = null
+      socketOpen = false
     }
   }
 }
@@ -194,11 +211,16 @@ export async function pairDevice(
   name: string,
   fetchImpl: FetchLike = globalThis.fetch as unknown as FetchLike
 ): Promise<PairResult> {
-  const res = await fetchImpl(`${trimSlash(baseUrl)}/api/pair`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ code, name })
-  })
+  let res: Awaited<ReturnType<FetchLike>>
+  try {
+    res = await fetchImpl(`${trimSlash(baseUrl)}/api/pair`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code, name })
+    })
+  } catch (err) {
+    throw Object.assign(new Error(`Mindeck core unreachable: ${(err as Error).message}`), { code: 'offline' })
+  }
   const body = (await res.json().catch(() => null)) as IpcResult<PairResult> | null
   if (!body) throw Object.assign(new Error(`Unexpected response (${res.status})`), { code: 'bad-response' })
   if (!body.ok) throw Object.assign(new Error(body.error.message), { code: body.error.code })

@@ -335,6 +335,18 @@ describe('pull request detail', () => {
     expect(g().detail).toBeUndefined()
   })
 
+  it('links in the description never navigate the app window: http(s) opens outside, others do nothing', () => {
+    const open = vi.spyOn(window, 'open').mockReturnValue(null)
+    useGitHub.setState({ detail: detail({ body: '[site](https://example.com) [bad](file:///etc/passwd)' }) })
+    render(<PullDetail />)
+    const site = screen.getByRole('link', { name: 'site' })
+    expect(fireEvent.click(site)).toBe(false) // default (navigation) prevented
+    expect(open).toHaveBeenCalledWith('https://example.com', '_blank', 'noopener,noreferrer')
+    expect(fireEvent.click(screen.getByText('bad'))).toBe(false)
+    expect(open).toHaveBeenCalledTimes(1)
+    open.mockRestore()
+  })
+
   it('comment, approve, request changes (text needed where GitHub needs it); the box empties when sent', async () => {
     const comment = vi.spyOn(useGitHub.getState(), 'comment').mockResolvedValue(true)
     const review = vi.spyOn(useGitHub.getState(), 'review').mockResolvedValueOnce(false).mockResolvedValue(true)

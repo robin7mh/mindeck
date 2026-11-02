@@ -130,10 +130,23 @@ export class AuthService {
     return store
   }
 
+  private async diskCodes(): Promise<PendingCode[]> {
+    try {
+      const parsed = JSON.parse(await readFile(this.file, 'utf8')) as Partial<Store>
+      return Array.isArray(parsed?.codes) ? parsed.codes : []
+    } catch {
+      return []
+    }
+  }
+
   /** Serialized read-modify-write; expired codes are pruned on every write. */
   private mutate(fresh: boolean, fn: (s: Store) => void): Promise<void> {
     const run = this.writing.then(async () => {
       const store = await this.load(fresh)
+      // Never drop codes another process (`mindeck pair`) wrote since the last read.
+      if (!fresh) {
+        for (const c of await this.diskCodes()) if (!store.codes.some((k) => k.hash === c.hash)) store.codes.push(c)
+      }
       fn(store)
       const now = this.now()
       store.codes = store.codes.filter((c) => Date.parse(c.expiresAt) > now)

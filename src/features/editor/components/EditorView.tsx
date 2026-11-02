@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { AlertTriangle, ArrowUpFromLine, BookOpen, Bug, CircleX, Database, FlaskConical, Radio, Paintbrush, Server, Code2, ExternalLink, Files, FileWarning, FolderGit2, GitBranch, GitGraph as GraphIcon, GitPullRequest, Lock, RefreshCcw, RefreshCw, Search, X, type LucideIcon } from 'lucide-react'
+import { create } from 'zustand'
 import { ipc, isDesktop } from '@shared/ipc/client'
 import { Panel } from '@/components/ui/Panel'
 import { isMac } from '@/lib/platform'
@@ -198,12 +199,30 @@ function debugKey(e: KeyboardEvent): boolean {
   return true
 }
 
-/** The cursor line of the file on screen, for F9. */
-let cursorLine = 1
+/**
+ * The focused editor's cursor. A store of its own, not EditorView state: it
+ * moves on every keystroke, and only the status bar bits showing it should
+ * re-render then — not the whole editor (tree, tabs, panels).
+ */
+const useCursor = create<{ cursor?: CursorInfo }>(() => ({}))
+const setCursor = (cursor: CursorInfo) => useCursor.setState({ cursor })
+
+function CursorPosition() {
+  const t = useT()
+  const cursor = useCursor((s) => s.cursor)
+  return cursor ? <span>{t.editor.lineCol(cursor.line, cursor.col)}</span> : null
+}
+
+function CursorLanguage() {
+  const language = useCursor((s) => s.cursor?.language)
+  return language ? <span>{language}</span> : null
+}
+
+/** F9: a breakpoint on the cursor line of the file on screen. */
 function toggleBreakpointAtCursor(): void {
   const { tabs, focusedId } = useEditor.getState()
   const tab = tabs.find((x) => x.id === focusedId())
-  if (tab) useDebug.getState().toggleBreakpoint(tab.projectId, tab.path, cursorLine)
+  if (tab) useDebug.getState().toggleBreakpoint(tab.projectId, tab.path, useCursor.getState().cursor?.line ?? 1)
 }
 
 /** How often open files are compared with the disk while the editor is visible. */
@@ -327,8 +346,6 @@ export function EditorView({ active, onNavigate }: { active: boolean; onNavigate
   // Writing project files can run code (hooks, scripts) — remote clients may
   // only when the core allows remote shells.
   const readOnly = !desktop && info?.remoteTerminal === false
-  const [cursor, setCursor] = useState<CursorInfo>()
-  cursorLine = cursor?.line ?? 1
   const session = useDebug((s) => s.session)
   const fileLanguage = useLanguages((s) => (focused ? s.files[focused.id] : undefined))
   const live = useLive()
@@ -387,9 +404,14 @@ export function EditorView({ active, onNavigate }: { active: boolean; onNavigate
   useEffect(() => {
     if (!active) return
     // Disk and git both follow edits made elsewhere (agents, terminals, other editors).
+    // One check at a time: a slow core (big repo, remote link) must not pile up polls.
+    let checking = false
     const check = () => {
-      void useEditor.getState().checkDisk()
-      void useScm.getState().refresh()
+      if (checking) return
+      checking = true
+      void Promise.allSettled([useEditor.getState().checkDisk(), useScm.getState().refresh()]).then(() => {
+        checking = false
+      })
     }
     const onKey = (e: KeyboardEvent) => {
       const scm = useScm.getState()
@@ -442,6 +464,8 @@ export function EditorView({ active, onNavigate }: { active: boolean; onNavigate
       offSftp()
     }
   }, [])
+  // The cursor belongs to this view: gone with it.
+  useEffect(() => () => useCursor.setState({ cursor: undefined }), [])
   // Settings, keybindings and snippets taken over from VS Code / Cursor.
   useEffect(() => void useEditorPrefs.getState().load(), [])
 
@@ -459,7 +483,7 @@ export function EditorView({ active, onNavigate }: { active: boolean; onNavigate
   const openExternal = desktop
     ? () => {
         const call = focused
-          ? ipc('projects:openFile', { id: focused.projectId, file: focused.path, line: cursor?.line })
+          ? ipc('projects:openFile', { id: focused.projectId, file: focused.path, line: useCursor.getState().cursor?.line })
           : ipc('projects:openInEditor', { id: projectId! })
         void call.catch(() => {})
       }
@@ -750,15 +774,13 @@ export function EditorView({ active, onNavigate }: { active: boolean; onNavigate
                   <Lock size={11} /> {t.editor.readOnly}
                 </span>
               )}
-              {cursor && (
-                <span>{t.editor.lineCol(cursor.line, cursor.col)}</span>
-              )}
+              <CursorPosition />
               {missingServer && (
                 <button type="button" title={t.languages.noServerHint} onClick={() => onNavigate('settings')} className="shrink-0 text-amber/80 hover:text-amber">
                   {t.languages.noServer(missingServer.name)}
                 </button>
               )}
-              {cursor && <span>{cursor.language}</span>}
+              <CursorLanguage />
               <span className={cn(focused.dirty && 'text-amber')}>{focused.saving ? t.editor.saving : focused.dirty ? t.editor.unsaved : t.editor.saved}</span>
             </>
           )}

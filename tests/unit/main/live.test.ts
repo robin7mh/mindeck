@@ -1,5 +1,5 @@
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
-import { createServer } from 'node:http'
+import { createServer, request } from 'node:http'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { tempDir } from './helpers'
@@ -51,7 +51,27 @@ async function nextEvent(url: string): Promise<string> {
   }
 }
 
+/** GET with an explicit Host header (fetch can't set one). */
+function statusWithHost(port: number, path: string, host: string): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const req = request({ host: '127.0.0.1', port, path, headers: { host } }, (res) => {
+      res.resume()
+      resolve(res.statusCode ?? 0)
+    })
+    req.on('error', reject)
+    req.end()
+  })
+}
+
 describe('Live Server', () => {
+  it('starting twice at once opens one server', async () => {
+    const root = await site()
+    const { service } = make(root, { port: 0, noBrowser: true })
+    const [a, b] = await Promise.all([service.start('p'), service.start('p')])
+    expect(a).toEqual(b)
+    expect(service.status()).toHaveLength(1)
+  })
+
   it('serves a folder with the reload script, index pages, listings, files and 404s', async () => {
     const root = await site()
     const { service, opened, published } = make(root, { root: '/public/', port: 0 })
@@ -77,6 +97,10 @@ describe('Live Server', () => {
     const missing = await fetch(`${status.url}/nope.html`)
     expect(missing.status).toBe(404)
     expect(await (await fetch(`${status.url}/../../etc/passwd`)).text()).toContain('Not found')
+    // A malformed escape is a 400, not an unhandled rejection; a foreign Host (DNS rebinding) is refused.
+    expect((await fetch(`${status.url}/%E0%A4%A`)).status).toBe(400)
+    expect(await statusWithHost(status.port, '/index.html', 'evil.example:5500')).toBe(403)
+    expect(await statusWithHost(status.port, '/index.html', `localhost:${status.port}`)).toBe(200)
 
     // Started again: the same server, the page opens.
     expect(await service.start('p')).toEqual(status)

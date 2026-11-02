@@ -12,7 +12,7 @@ export function WindowControls() {
   const [maximized, setMaximized] = useState(false)
 
   useEffect(() => {
-    window.mindeck?.isMaximized().then(setMaximized)
+    window.mindeck?.isMaximized().then(setMaximized).catch(() => {})
     return window.mindeck?.onMaximizedChange(setMaximized)
   }, [])
 

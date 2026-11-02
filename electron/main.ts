@@ -28,6 +28,20 @@ function broadcast(channel: string, payload: unknown): void {
   }
 }
 
+/**
+ * Web and mail links go to the OS; anything else (file:, smb:, custom app
+ * schemes from a note or a terminal) could launch programs, so it is ignored.
+ */
+function openLink(url: string): void {
+  let protocol = ''
+  try {
+    protocol = new URL(url).protocol
+  } catch {
+    return
+  }
+  if (protocol === 'http:' || protocol === 'https:' || protocol === 'mailto:') void shell.openExternal(url).catch(() => {})
+}
+
 function createWindow(): void {
   const win = new BrowserWindow({
     width: 1440,
@@ -90,8 +104,14 @@ function createWindow(): void {
 
   // Open external links in the OS browser, never in-app.
   win.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url)
+    openLink(url)
     return { action: 'deny' }
+  })
+  // The window keeps the privileged bridge (window.mindeck): it never navigates
+  // away from the app — not by a link, not by a file dropped onto it.
+  win.webContents.on('will-navigate', (event, url) => {
+    event.preventDefault()
+    openLink(url)
   })
 
   if (DEV_SERVER_URL) {
@@ -169,6 +189,11 @@ app.whenReady().then(async () => {
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
+}).catch((err: unknown) => {
+  // Without a core there is no window: say why and quit instead of idling invisibly.
+  console.error('[core] startup failed\n', err)
+  dialog.showErrorBox('Mindeck could not start', String((err as Error)?.message ?? err))
+  app.quit()
 })
 
 // will-quit, not before-quit: closing the windows can still be cancelled (unsaved

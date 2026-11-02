@@ -51,17 +51,24 @@ const panelIn = (delay: number) => ({
   transition: { duration: 0.45, delay, ease: [0.22, 1, 0.36, 1] as const }
 })
 
-export function AppShell() {
-  const { booted, skip } = useBoot(BOOT_TOTAL_MS)
-  const [active, setActive] = useState<ModuleId>('core')
+/**
+ * The top bar with the session uptime ticker (starts once booted). The ticker
+ * lives here, not in AppShell, so the per-second tick re-renders only the bar —
+ * not every module below it.
+ */
+function ShellTopBar({ booted, showClock }: { booted: boolean; showClock: boolean }) {
   const [uptime, setUptime] = useState(0)
-
-  // Session uptime ticker (starts once booted).
   useEffect(() => {
     if (!booted) return
     const id = window.setInterval(() => setUptime((u) => u + 1), 1000)
     return () => window.clearInterval(id)
   }, [booted])
+  return <TopStatusBar uptime={uptime} showClock={showClock} />
+}
+
+export function AppShell() {
+  const { booted, skip } = useBoot(BOOT_TOTAL_MS)
+  const [active, setActive] = useState<ModuleId>('core')
 
   // Terminal and Editor mount on first visit and then stay mounted (hidden), so
   // running shells, open files and their undo history survive switching modules.
@@ -122,7 +129,7 @@ export function AppShell() {
 
       {/* Top bar */}
       <motion.div {...panelIn(0.05)}>
-        <TopStatusBar uptime={uptime} showClock={active !== 'core'} />
+        <ShellTopBar booted={booted} showClock={active !== 'core'} />
       </motion.div>
 
       {/* Body: nav · main · monitor */}

@@ -60,6 +60,8 @@ export function tabLabels(tabs: TerminalTab[]): Map<string, string> {
   )
 }
 
+/** Tabs whose restart is in flight — Enter pressed again meanwhile must not spawn a second shell. */
+const restarting = new Set<string>()
 
 export const useTerminals = create<TerminalState>((set, get) => ({
   tabs: [],
@@ -105,9 +107,12 @@ export const useTerminals = create<TerminalState>((set, get) => ({
 
   restart: async (id) => {
     const tab = get().tabs.find((t) => t.id === id)
-    if (!tab) return
+    if (!tab || restarting.has(id)) return
+    restarting.add(id)
     try {
       const info = await ipc('terminal:create', { projectId: tab.projectId })
+      // The tab was closed while the shell started: don't leave it running unseen.
+      if (!get().tabs.some((t) => t.id === id)) return void (await ipc('terminal:kill', { id: info.id }).catch(() => {}))
       set((s) => ({
         tabs: s.tabs.map((t) => (t.id === id ? info : t)),
         activeId: s.activeId === id ? info.id : s.activeId,
@@ -115,6 +120,8 @@ export const useTerminals = create<TerminalState>((set, get) => ({
       }))
     } catch (err) {
       set({ error: errorMessage(err) })
+    } finally {
+      restarting.delete(id)
     }
   },
 

@@ -319,12 +319,18 @@ describe('EditorView', () => {
     useEditor.setState({ checkDisk, save })
     const { rerender } = render(view(true))
     expect(checkDisk).toHaveBeenCalledTimes(1)
+    // Still in flight: a focus doesn't start a second check on top of it.
+    fireEvent.focus(window)
+    expect(checkDisk).toHaveBeenCalledTimes(1)
+    await act(async () => {})
     act(() => {
       vi.advanceTimersByTime(3000)
     })
     expect(checkDisk).toHaveBeenCalledTimes(2)
+    await act(async () => {})
     fireEvent.focus(window)
     expect(checkDisk).toHaveBeenCalledTimes(3)
+    await act(async () => {})
 
     fireEvent.keyDown(window, { key: 's', metaKey: true })
     fireEvent.keyDown(window, { key: 'S', ctrlKey: true })

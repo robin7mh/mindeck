@@ -100,6 +100,7 @@ const PORT_TRIES = 20
  */
 export class LiveServerService {
   private readonly running = new Map<string, Running>()
+  private readonly starting = new Map<string, Promise<LiveServerStatus>>()
 
   constructor(private readonly opts: LiveServerOptions) {}
 
@@ -110,11 +111,26 @@ export class LiveServerService {
   /** Serve the project (its configured root, or `dir`); opens `page` (a project file) in the browser unless told not to. */
   async start(projectId: string, page?: string): Promise<LiveServerStatus> {
     const settings = this.opts.settings?.() ?? {}
+    // A second start while the first is still binding must not open a second server (leaked with its watcher).
+    const pending = this.starting.get(projectId)
+    if (pending) await pending.catch(() => {})
     const existing = this.running.get(projectId)
     if (existing) {
       await this.browse(existing.status, page, settings)
       return existing.status
     }
+    const launch = this.launch(projectId, settings)
+    this.starting.set(projectId, launch)
+    try {
+      const status = await launch
+      await this.browse(status, page, settings)
+      return status
+    } finally {
+      if (this.starting.get(projectId) === launch) this.starting.delete(projectId)
+    }
+  }
+
+  private async launch(projectId: string, settings: LiveServerSettings): Promise<LiveServerStatus> {
     const configured = this.opts.resolveRoot(projectId)
     if (!configured) throw coded('not-found', `Unknown project: ${projectId}`)
     const project = await realpath(configured)
@@ -126,12 +142,19 @@ export class LiveServerService {
     const server = createServer((req, res) => void this.serve(root, clients, req, res))
     const port = await listen(server, settings.port ?? 5500)
     const status: LiveServerStatus = { projectId, url: `http://127.0.0.1:${port}`, port, root: rootRel }
-    const run: Running = { status, server, clients, watcher: watch(root, { recursive: true }), since: Date.now(), reload: false }
+    let watcher: FSWatcher
+    try {
+      watcher = watch(root, { recursive: true })
+    } catch (err) {
+      // e.g. out of inotify watches: don't leave the port bound.
+      server.close()
+      throw err
+    }
+    const run: Running = { status, server, clients, watcher, since: Date.now(), reload: false }
     run.watcher.on('change', (_event, file) => void this.changed(run, root, String(file), settings))
     run.watcher.on('error', () => {})
     this.running.set(projectId, run)
     this.publish()
-    await this.browse(status, page, settings)
     return status
   }
 
@@ -142,6 +165,8 @@ export class LiveServerService {
     clearTimeout(run.timer)
     run.watcher.close()
     for (const c of run.clients) c.end()
+    // Idle keep-alive connections of the browser would hold close() open for seconds.
+    run.server.closeAllConnections()
     await new Promise<void>((r) => run.server.close(() => r()))
     this.publish()
   }
@@ -176,7 +201,19 @@ export class LiveServerService {
   }
 
   private async serve(root: string, clients: Set<ServerResponse>, req: IncomingMessage, res: ServerResponse): Promise<void> {
-    const path = decodeURIComponent(new URL(req.url!, 'http://x').pathname)
+    // Only for this machine's browser: a page that rebinds its own host name to
+    // 127.0.0.1 (DNS rebinding) must not read the project's files.
+    if (!LOCAL_HOSTS.has(hostName(req.headers.host))) {
+      res.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' })
+      return void res.end('Forbidden')
+    }
+    let path: string
+    try {
+      path = decodeURIComponent(new URL(req.url!, 'http://x').pathname)
+    } catch {
+      res.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' })
+      return void res.end('Bad request')
+    }
     if (path === EVENTS) {
       res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' })
       res.write(': connected\n\n')
@@ -189,7 +226,7 @@ export class LiveServerService {
       let info = await stat(file)
       if (info.isDirectory()) {
         const index = join(file, 'index.html')
-        if (!(await stat(index).catch(() => null))) return this.listing(root, file, res)
+        if (!(await stat(index).catch(() => null))) return await this.listing(root, file, res)
         file = index
         info = await stat(file)
       }
@@ -218,6 +255,13 @@ export class LiveServerService {
   private publish(): void {
     this.opts.publish?.(this.status())
   }
+}
+
+const LOCAL_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]'])
+
+/** `Host: 127.0.0.1:5500` → `127.0.0.1` (lower-cased; '' when absent). */
+export function hostName(host: string | undefined): string {
+  return (host ?? '').trim().toLowerCase().replace(/:\d*$/, '')
 }
 
 const escape = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!)

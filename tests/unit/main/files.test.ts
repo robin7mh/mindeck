@@ -109,6 +109,11 @@ describe('FilesService', () => {
     await expect(service.write('p', 'dir', 'x')).rejects.toMatchObject({ code: 'not-a-file' })
     await expect(service.write('p', 'dir/x/y', 'x')).rejects.toMatchObject({ code: 'ENOTDIR' })
     await expect(service.write('p', '../evil.ts', 'x')).rejects.toMatchObject({ code: 'outside-project' })
+    // A dangling link pointing outside must not create its target.
+    const outside = join(await tempDir('mindeck-outside-'), 'planted.sh')
+    await symlink(outside, join(root, 'trap.sh'))
+    await expect(service.write('p', 'trap.sh', 'x')).rejects.toMatchObject({ code: 'outside-project' })
+    await expect(stat(outside)).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
   it('creates files and folders (with parents); refuses taken names and the project folder', async () => {

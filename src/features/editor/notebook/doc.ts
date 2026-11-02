@@ -1,10 +1,11 @@
 import type { MultiLine, NotebookCell, NotebookDocument, NotebookOutput } from '@shared/types/notebook'
+import { randomId } from '@/lib/id'
 
 /** A cell with the key Mindeck knows it by (its nbformat id, or one made up for older files). */
 export type Cell = NotebookCell & { key: string }
 export type Doc = Omit<NotebookDocument, 'cells'> & { cells: Cell[] }
 
-const newKey = () => crypto.randomUUID().slice(0, 8)
+const newKey = () => randomId().slice(0, 8)
 
 export const joinSource = (source: MultiLine | undefined): string => (Array.isArray(source) ? source.join('') : (source ?? ''))
 

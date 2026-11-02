@@ -72,16 +72,20 @@ interface MemoryState {
 
 let saveTimer: number | undefined
 let searchSeq = 0
+let openSeq = 0
+let indexSeq = 0
 
 export const useMemory = create<MemoryState>((set, get) => {
   const reloadIndex = async () => {
+    const seq = ++indexSeq
     const [status, notes, graph, folders] = await Promise.all([
       ipc('memory:status'),
       ipc('memory:list'),
       ipc('memory:graph'),
       ipc('memory:folders')
     ])
-    set({ status, notes, graph, folders })
+    // Overlapping reloads (a burst of vault changes): an older answer must not replace a newer one.
+    if (seq === indexSeq) set({ status, notes, graph, folders })
     return { status, notes }
   }
 
@@ -190,9 +194,12 @@ export const useMemory = create<MemoryState>((set, get) => {
     },
 
     open: async (path, mode) => {
+      const seq = ++openSeq
       try {
         await get().save()
         const note = await ipc('memory:read', { path })
+        // Clicked on to another note meanwhile: that one wins.
+        if (seq !== openSeq) return
         set({ note, draft: note.body, view: 'note', mode: mode ?? get().mode, error: undefined })
       } catch (err) {
         fail(err)
@@ -223,8 +230,11 @@ export const useMemory = create<MemoryState>((set, get) => {
       try {
         await ipc('memory:writeBody', { path: note.path, body: draft })
         const fresh = await ipc('memory:read', { path: note.path })
-        // Keep typing that happened while the write was in flight.
-        set((s) => ({ note: fresh, draft: s.draft === draft ? fresh.body : s.draft, saving: false }))
+        // Keep typing that happened while the write was in flight — unless another
+        // note opened meanwhile (its draft must never land on this one).
+        set((s) =>
+          s.note?.path === note.path ? { note: fresh, draft: s.draft === draft ? fresh.body : s.draft, saving: false } : { saving: false }
+        )
       } catch (err) {
         fail(err)
       }

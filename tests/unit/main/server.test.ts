@@ -1,5 +1,5 @@
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
-import { createServer } from 'node:net'
+import { connect, createServer } from 'node:net'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -102,6 +102,20 @@ describe('AuthService', () => {
     const cli = new AuthService(file, () => now)
     const fresh = await cli.createPairingCode()
     expect((await auth.pair(fresh.code, 'phone')).device.name).toBe('phone')
+  })
+
+  it('keeps a code another process wrote when it persists lastSeen or a revoke', async () => {
+    let now = 5_000_000
+    const { auth, file } = await setup(() => now)
+    const { code } = await auth.createPairingCode()
+    const { token, device } = await auth.pair(code, 'phone')
+    const cli = new AuthService(file, () => now)
+    const fromCli = await cli.createPairingCode() // `mindeck pair` while the server runs
+    now += 2 * 60_000
+    await auth.verify(token) // persists lastSeen from the cached store
+    await auth.revoke('someone-else')
+    expect((await auth.pair(fromCli.code, 'laptop')).device.name).toBe('laptop')
+    expect((await auth.devices()).map((d) => d.id)).toContain(device.id)
   })
 
   it('treats a corrupt file as empty and keeps working after a failed write', async () => {
@@ -254,6 +268,43 @@ describe('HttpServer — API', () => {
     internals.sweep()
     expect(internals.pairFailures.has('10.0.0.9')).toBe(false)
     expect(internals.pairFailures.size).toBe(1) // the recent ones stay
+  })
+
+  it('counts concurrent pairing attempts before they finish (no burst past the limit)', async () => {
+    const { base } = await startHttp()
+    const statuses = await Promise.all(
+      Array.from({ length: 25 }, () => fetch(`${base}/api/pair`, { method: 'POST', body: JSON.stringify({ code: 'AAAA-AAAA' }) }).then((r) => r.status))
+    )
+    expect(statuses.filter((s) => s === 401)).toHaveLength(10)
+    expect(statuses.filter((s) => s === 429)).toHaveLength(15)
+  })
+})
+
+describe('HttpServer — robustness', () => {
+  it('answers a malformed upgrade with 401 and keeps serving', async () => {
+    const { base, http } = await startHttp()
+    const raw = await new Promise<string>((resolve, reject) => {
+      const socket = connect(http.port, '127.0.0.1', () => {
+        socket.write('GET //[ HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n')
+      })
+      let text = ''
+      socket.on('data', (d) => (text += d.toString()))
+      socket.on('close', () => resolve(text))
+      socket.on('error', reject)
+    })
+    expect(raw).toContain('401')
+    expect((await fetch(`${base}/api/health`)).status).toBe(200)
+  })
+
+  it('drops a WebSocket client that stopped reading instead of buffering without bound', async () => {
+    const { http, hub } = await startHttp()
+    const internals = http as unknown as { clients: Set<unknown> }
+    const slow = { ws: { readyState: 1, OPEN: 1, bufferedAmount: 64 * 1024 * 1024, send: vi.fn(), terminate: vi.fn() }, deviceId: 'x', alive: true }
+    internals.clients.add(slow)
+    hub.publish('memory:changed', { paths: [] })
+    expect(slow.ws.terminate).toHaveBeenCalled()
+    expect(slow.ws.send).not.toHaveBeenCalled()
+    internals.clients.delete(slow)
   })
 })
 

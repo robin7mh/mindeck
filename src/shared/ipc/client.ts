@@ -7,9 +7,22 @@ import { bridgeTransport, type Transport } from './transport'
 
 let remote: Transport | null = null
 
+interface RemoteSub {
+  channel: string
+  cb: (payload: unknown) => void
+  off: () => void
+}
+/** Event subscriptions made in a browser — re-bound whenever the transport changes (re-pairing, reconnect). */
+const remoteSubs = new Set<RemoteSub>()
+const noop = () => {}
+
 /** Install (or clear) the network transport — called by the web session. */
 export function setTransport(transport: Transport | null): void {
   remote = transport
+  for (const sub of remoteSubs) {
+    sub.off()
+    sub.off = transport ? transport.on(sub.channel, sub.cb) : noop
+  }
 }
 
 /** True inside the Electron window (native dialogs, window controls, …). */
@@ -60,14 +73,21 @@ export async function ipc<K extends IpcChannel>(
 }
 
 /**
- * Subscribe to a push event. Returns an unsubscribe function. No-ops (returns
- * a noop unsubscribe) without a transport so callers stay simple.
+ * Subscribe to a push event. Returns an unsubscribe function. In a browser the
+ * subscription outlives the current transport: it is bound to whichever core
+ * the session pairs with next (and stays idle while there is none).
  */
 export function onEvent<K extends IpcEvent>(
   channel: K,
   cb: (payload: IpcEvents[K]) => void
 ): () => void {
-  const transport = currentTransport()
-  if (!transport) return () => {}
-  return transport.on(channel, (payload) => cb(payload as IpcEvents[K]))
+  const bridge = window.mindeck
+  if (bridge?.invoke) return bridgeTransport(bridge).on(channel, (payload) => cb(payload as IpcEvents[K]))
+  const sub: RemoteSub = { channel, cb: (payload) => cb(payload as IpcEvents[K]), off: noop }
+  sub.off = remote ? remote.on(channel, sub.cb) : noop
+  remoteSubs.add(sub)
+  return () => {
+    remoteSubs.delete(sub)
+    sub.off()
+  }
 }

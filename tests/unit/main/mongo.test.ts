@@ -117,6 +117,7 @@ describe('MongoDB', () => {
     const unauthorized = setup(fakeMongo({ failList: true }))
     await expect(unauthorized.svc.add('x', 'mongodb://localhost')).rejects.toMatchObject({ message: 'not authorized' })
     expect(await unauthorized.svc.connections()).toEqual([])
+    expect(unauthorized.closed()).toBe(1) // the refused client is not left open
   })
 
   it('opens saved connections on first use (again after a failure); broken storage is no connections', async () => {
