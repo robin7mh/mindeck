@@ -263,7 +263,9 @@ export class TestService {
       if (children.length) tests.push({ id: path, name: path, kind: 'file', framework, path, children })
     }
     const old = this.projects.get(projectId)
-    this.projects.set(projectId, { root, frameworks, tests, run: old?.run, state: old?.state ?? { projectId, running: false, results: {}, output: '' } })
+    // Updated in place: a run in progress holds this object — a copy would keep "running" (and busy) forever.
+    if (old) Object.assign(old, { root, frameworks, tests })
+    else this.projects.set(projectId, { root, frameworks, tests, state: { projectId, running: false, results: {}, output: '' } })
     return tests
   }
 
@@ -275,7 +277,8 @@ export class TestService {
   /** Run every test, or one file / suite / test. */
   async run(projectId: string, id?: string): Promise<TestRunState> {
     const p = this.projects.get(projectId) ?? (await this.discover(projectId), this.projects.get(projectId)!)
-    if (p.run) throw coded('busy', 'Tests are running already')
+    // `running` is set before the first await below (the process only later): two quick runs can't both start.
+    if (p.run || p.state.running) throw coded('busy', 'Tests are running already')
     const target = id ? find(p.tests, id) : undefined
     if (id && !target) throw coded('not-found', `No test ${id}`)
     const scope = target ? [target] : p.tests

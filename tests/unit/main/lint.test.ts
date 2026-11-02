@@ -125,20 +125,27 @@ describe('ESLint and Prettier from the project', () => {
     procs[0].say(JSON.stringify({ id: 1, ok: true, result: 'formatted' }))
     expect(await pending).toBe('formatted')
     await expect(svc.format('p', 'a.js', 'x')).rejects.toMatchObject({ code: 'lint-timeout' })
+    // A worker that timed out may be stuck for good: it is stopped, the next request gets a fresh one.
+    expect(procs[0].killed).toBe(true)
+    const waiting = svc.format('p', 'a.js', 'x')
+    for (let i = 0; i < 500 && spawned < 2; i++) await new Promise((r) => setImmediate(r)) // answer well within the 50 ms timeout
+    expect(spawned).toBe(2)
+    procs[0].emit('exit') // a stale exit: the new worker and what waits on it stay
+    procs[1].say(JSON.stringify({ id: 3, ok: true, result: 'still here' }))
+    expect(await waiting).toBe('still here')
     const crashing = svc.format('p', 'a.js', 'x')
     await tick()
-    procs[0].emit('exit')
+    procs[1].emit('exit')
     await expect(crashing).rejects.toMatchObject({ message: 'The ESLint / Prettier worker stopped' })
     void svc.format('p', 'a.js', 'x').catch(() => {})
     await tick()
-    expect(spawned).toBe(2)
-    procs[0].emit('exit') // a stale exit: the new worker stays
+    expect(spawned).toBe(3)
     await tick(260) // idle: stopped
-    expect(procs[1].killed).toBe(true)
+    expect(procs[2].killed).toBe(true)
     void svc.format('p', 'a.js', 'x').catch(() => {})
     await tick()
     svc.restart()
-    expect(procs[2].killed).toBe(true)
+    expect(procs[3].killed).toBe(true)
   })
 
   it('Mindeck’s Prettier lies outside the app archive (the worker is its own Node)', () => {

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
-import { dirname } from 'node:path'
+import { readFile } from 'node:fs/promises'
 import type { ApprovalDecision, PermissionGrant, PermissionRequest } from '@shared/types/ai'
+import { writeAtomic } from '../../lib/writeAtomic'
 import type { EventBus } from '../events/EventBus'
 
 const APPROVAL_TIMEOUT_MS = 10 * 60_000
@@ -105,10 +105,9 @@ export class PermissionService {
   }
 
   private async saveGrants(grants: PermissionGrant[]): Promise<void> {
-    await mkdir(dirname(this.deps.file), { recursive: true })
-    const tmp = `${this.deps.file}.tmp`
-    await writeFile(tmp, JSON.stringify({ version: 1, grants }, null, 2), 'utf8')
-    await rename(tmp, this.deps.file)
+    // In memory first: two answers at once each build on the other's grant instead of losing one.
     this.grantList = grants
+    // Queued per file with its own temp file — concurrent writes never race on one `.tmp`.
+    await writeAtomic(this.deps.file, JSON.stringify({ version: 1, grants }, null, 2))
   }
 }

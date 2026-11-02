@@ -139,7 +139,12 @@ export class AgentSessionService {
     }
     const repos = new Map<string, Promise<string | undefined>>()
     for (const r of records) {
-      const messages = JSON.parse(await readFile(this.file(r.session.id), 'utf8').catch(() => '[]')) as ChatMessage[]
+      let messages: ChatMessage[] = []
+      try {
+        messages = JSON.parse(await readFile(this.file(r.session.id), 'utf8').catch(() => '[]')) as ChatMessage[]
+      } catch {
+        /* a damaged transcript loses its messages, never the other sessions */
+      }
       const wasRunning = r.session.status !== 'ended' && r.session.status !== 'error'
       if (!repos.has(r.projectPath)) repos.set(r.projectPath, this.deps.git.webUrl(r.projectPath))
       const session: AgentSession = {
@@ -301,7 +306,8 @@ export class AgentSessionService {
     if (l.session.worktree && l.session.branch) await this.deps.git.removeWorktree(l.projectPath, l.session.worktree, l.session.branch).catch(() => {})
     this.live.delete(id)
     // In the write queue: a save still in flight must not bring the file back.
-    this.writes = this.writes.then(() => rm(this.file(id), { force: true }))
+    // Never rejects: a rejected queue would skip every later save.
+    this.writes = this.writes.then(() => rm(this.file(id), { force: true })).catch(() => {})
     await this.persist()
     this.deps.publish('agents:changed', { removed: id })
   }
@@ -442,6 +448,12 @@ export class AgentSessionService {
     this.deps.server.unregister(id)
     l.acp?.abort.abort()
     l.acp = undefined
+    // A turn the agent never finished (it crashed or was stopped) no longer shows as running.
+    const last = l.messages[l.messages.length - 1]
+    if (last?.role === 'assistant' && last.status === 'streaming') {
+      last.status = 'done'
+      this.deps.publish('agents:message', { sessionId: id, message: last })
+    }
     const failed = code !== 0 && l.session.status === 'starting'
     const name = AGENT_NAMES[l.session.kind]
     this.update(l, {
@@ -511,7 +523,11 @@ export class AgentSessionService {
       turn.status = 'error'
       turn.error = (err as Error).message
     }
-    if (l.acp !== link) return
+    // The agent went away meanwhile: the turn's end still reaches the UI (no spinner forever).
+    if (l.acp !== link) {
+      if (this.live.get(l.session.id) === l) this.applied(l, { changed: [turn] })
+      return
+    }
     this.update(l, { status: 'idle' })
     this.applied(l, { changed: [turn], attention: 'done' })
   }

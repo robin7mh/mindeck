@@ -1,8 +1,11 @@
 import { execFile, spawn } from 'node:child_process'
-import { readFile } from 'node:fs/promises'
+import { readFile, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import type { FileChange } from '@shared/types/agents'
+
+/** Larger new files show without a line count. */
+const MAX_COUNTED_BYTES = 4 * 1024 * 1024
 
 function coded(code: string, message: string): Error {
   return Object.assign(new Error(message), { code })
@@ -18,6 +21,8 @@ function git(cwd: string, args: string[], input?: string): Promise<string> {
     child.stderr.on('data', (d) => (err += d))
     child.on('error', reject)
     child.on('close', (code) => (code === 0 ? resolve(out) : reject(coded('git', err.trim() || `git ${args[0]} failed (${code})`))))
+    // git may exit before reading all of stdin (a patch it rejects): EPIPE, unhandled, would crash the app.
+    child.stdin.on('error', () => {})
     child.stdin.end(input)
   })
 }
@@ -137,7 +142,9 @@ export class GitService {
     const before = new Set(from.untracked)
     for (const path of lines(untracked)) {
       if (before.has(path)) continue
-      const text = await readFile(join(cwd, path), 'utf8').catch(() => '')
+      // Lines are counted for text of a sensible size — never a multi-GB dump read into memory.
+      const size = (await stat(join(cwd, path)).catch(() => null))?.size ?? 0
+      const text = size <= MAX_COUNTED_BYTES ? await readFile(join(cwd, path), 'utf8').catch(() => '') : '\0'
       changes.push({ path, status: 'added', added: text.includes('\0') ? 0 : lines(text).length, removed: 0 })
     }
     return changes.sort((a, b) => a.path.localeCompare(b.path))

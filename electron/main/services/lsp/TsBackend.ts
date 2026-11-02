@@ -78,6 +78,7 @@ export interface TsOptions {
  */
 export class TsBackend {
   private readonly sessions = new Map<string, Session>()
+  private readonly starting = new Map<string, Promise<Session | undefined>>()
   private clock = 0
 
   constructor(private readonly opts: TsOptions) {}
@@ -245,10 +246,21 @@ export class TsBackend {
       existing.used = ++this.clock
       return existing
     }
+    // Files opening at once (restored tabs) share one start — a second tsserver would be orphaned, never stopped.
+    let pending = this.starting.get(projectId)
+    if (!pending) {
+      pending = this.start(projectId).finally(() => this.starting.delete(projectId))
+      this.starting.set(projectId, pending)
+    }
+    return pending
+  }
+
+  private async start(projectId: string): Promise<Session | undefined> {
     const root = this.opts.resolveRoot(projectId)
     if (!root) throw coded('not-found', `Unknown project: ${projectId}`)
     const tsserver = (this.opts.locate ?? ((r: string) => findTsserver(r) ?? bundledTsserver()))(root)
     if (!tsserver) return undefined
+    const rootReal = await realpath(root)
     // Over the limit: the project used longest ago gives its server up.
     if (this.sessions.size >= MAX_SERVERS) {
       const [oldest] = [...this.sessions.entries()].sort((a, b) => a[1].used - b[1].used)[0]
@@ -260,7 +272,7 @@ export class TsBackend {
       if (this.sessions.get(projectId)?.server === server) this.sessions.delete(projectId)
     })
     // Paths go to tsserver resolved (confine follows symlinks); answers are made relative to the same root.
-    const session: Session = { root: await realpath(root), server, open: new Map(), used: ++this.clock }
+    const session: Session = { root: rootReal, server, open: new Map(), used: ++this.clock }
     this.sessions.set(projectId, session)
     await server.request('configure', {
       preferences: {

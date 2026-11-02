@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { readFile, readdir } from 'node:fs/promises'
-import { join, relative, sep } from 'node:path'
+import { join, relative, resolve, sep } from 'node:path'
 import type {
   ScmBranch,
   ScmChange,
@@ -155,7 +155,8 @@ export class ScmService {
       throw err
     }
     const mergeHead = (await git(root, ['rev-parse', '--git-path', 'MERGE_HEAD'])).trim()
-    return { repo: true, merging: existsSync(join(root, mergeHead)), ...parseStatus(raw) }
+    // --git-path is absolute in linked worktrees (`resolve`, not `join`).
+    return { repo: true, merging: existsSync(resolve(root, mergeHead)), ...parseStatus(raw) }
   }
 
   async init(projectId: string): Promise<ScmStatus> {
@@ -290,7 +291,13 @@ export class ScmService {
     const root = this.root(projectId)
     try {
       const raw = await git(root, ['ls-files', '-z', '--cached', '--others', '--exclude-standard'])
-      return [...new Set(raw.split('\0').filter(Boolean))].filter((p) => existsSync(join(root, p))).slice(0, this.limits.files)
+      // Deleted-but-tracked files are dropped with a sync check — stop at the cap, a huge repo must not freeze the main process.
+      const out: string[] = []
+      for (const p of new Set(raw.split('\0').filter(Boolean))) {
+        if (out.length >= this.limits.files) break
+        if (existsSync(join(root, p))) out.push(p)
+      }
+      return out
     } catch {
       const found: string[] = []
       const walk = async (dir: string) => {

@@ -242,6 +242,14 @@ describe('ContextService', () => {
     await expect(none.reindex('nope')).rejects.toThrow('Unknown project: nope')
   })
 
+  it('the cache never reads outside its folder, whatever id a client sends', async () => {
+    const data = await tempDir()
+    await write(data, { 'secret.json': '{"projectId":"leak"}' })
+    const store = new ContextStore(join(data, 'cache'))
+    // The store keeps its files in <dir>/context: two levels up is `secret.json`.
+    expect(await store.get('../../secret')).toBeNull()
+  })
+
   it('reports intermediate progress during large scans', async () => {
     const root = await tempDir()
     const files: Record<string, string> = {}

@@ -35,7 +35,8 @@ export const electronPlatform: Platform = {
     })
     win.on('page-title-updated', (e) => e.preventDefault())
     win.webContents.setWindowOpenHandler(({ url: link }) => {
-      void shell.openExternal(link)
+      // Remote content only gets web links opened — never file:// or other apps' URL schemes on this machine.
+      if (/^(https?|mailto):/i.test(link)) void shell.openExternal(link)
       return { action: 'deny' }
     })
     const closed = new Promise<void>((resolve) => win.on('closed', () => resolve()))

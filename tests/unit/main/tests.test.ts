@@ -308,6 +308,22 @@ describe('TestService', () => {
     }
   })
 
+  it('a run is one at a time; finding the tests again during a run does not leave it busy for good', async () => {
+    const root = await project()
+    // The first runner keeps going until told; every later one ends right away.
+    let finish: (() => void) | undefined
+    const h = harness(root, (_c, _a, proc) => (h.procs.length === 1 ? void (finish = () => proc.emit('close', 0)) : void proc.emit('close', 0)))
+    await h.service.discover('p')
+    const running = h.service.run('p')
+    await expect(h.service.run('p')).rejects.toMatchObject({ code: 'busy' })
+    for (let i = 0; i < 200 && !finish; i++) await new Promise((r) => setTimeout(r, 5))
+    await h.service.discover('p')
+    finish!()
+    await running
+    expect(h.service.state('p').running).toBe(false)
+    await expect(h.service.run('p')).resolves.toMatchObject({ running: false })
+  })
+
   it('runs everything: each runner with its report; tests it never reported settle as skipped', async () => {
     const root = await project()
     await mkdir(join(root, 'node_modules/.bin'), { recursive: true })

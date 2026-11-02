@@ -188,7 +188,11 @@ export class NotebookService {
     let stderr = ''
     let buffer = ''
     const ready = new Promise<void>((ok, fail) => {
-      const timer = setTimeout(() => fail(coded('kernel-timeout', 'The kernel did not start in time')), START_MS)
+      const timer = setTimeout(() => {
+        fail(coded('kernel-timeout', 'The kernel did not start in time'))
+        // Ended, so its session goes too: else every later start would get this failed one back.
+        proc.kill()
+      }, START_MS)
       const settle = (err?: Error) => {
         clearTimeout(timer)
         if (err) fail(err)
@@ -253,7 +257,7 @@ export class NotebookService {
   }
 
   private send(session: Session, message: Record<string, unknown>): void {
-    session.proc.stdin?.write(`${JSON.stringify(message)}\n`)
+    if (session.proc.stdin?.writable) session.proc.stdin.write(`${JSON.stringify(message)}\n`)
   }
 
   private session(projectId: string, path: string): Session {

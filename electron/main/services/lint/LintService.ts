@@ -115,6 +115,8 @@ class Worker {
       const timer = setTimeout(() => {
         this.pending.delete(id)
         reject(coded('lint-timeout', `${op} took too long`))
+        // A worker stuck in a plugin answers nothing ever again: start over on the next request.
+        this.stop()
       }, this.opts.timeoutMs)
       this.pending.set(id, { resolve: resolve as (v: unknown) => void, reject, timer })
       proc.stdin!.write(`${JSON.stringify({ id, op, ...args })}\n`)
@@ -125,6 +127,16 @@ class Worker {
     clearTimeout(this.idle)
     this.proc?.kill()
     this.proc = undefined
+    this.failPending()
+  }
+
+  /** Requests to a worker that is gone end now — not when a later worker's exit comes by. */
+  private failPending(): void {
+    for (const p of this.pending.values()) {
+      clearTimeout(p.timer)
+      p.reject(coded('lint', 'The ESLint / Prettier worker stopped'))
+    }
+    this.pending.clear()
   }
 
   private start(): ChildProcess {
@@ -144,14 +156,15 @@ class Worker {
       else p.reject(coded('lint', msg.error!))
     })
     proc.stderr?.resume()
-    proc.on('exit', () => {
-      if (this.proc === proc) this.proc = undefined
-      for (const [id, p] of this.pending) {
-        clearTimeout(p.timer)
-        p.reject(coded('lint', 'The ESLint / Prettier worker stopped'))
-        this.pending.delete(id)
-      }
-    })
+    // Writes to a worker that just died (EPIPE) and failed starts must not crash the app.
+    proc.stdin?.on('error', () => {})
+    const gone = () => {
+      if (this.proc !== proc) return // stopped on purpose: its requests already ended
+      this.proc = undefined
+      this.failPending()
+    }
+    proc.on('exit', gone)
+    proc.on('error', gone)
     return proc
   }
 }

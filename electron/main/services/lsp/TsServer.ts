@@ -49,6 +49,8 @@ export class TsServer {
     private readonly timeoutMs = REQUEST_TIMEOUT_MS
   ) {
     proc.stdout!.on('data', (chunk: Buffer) => this.read(chunk))
+    // A write racing the server's exit (EPIPE) must not crash the app; 'exit' ends the server.
+    proc.stdin?.on('error', () => {})
     proc.on('exit', () => this.exited())
     proc.on('error', () => this.exited())
   }

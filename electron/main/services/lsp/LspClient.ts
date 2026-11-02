@@ -76,6 +76,8 @@ export class LspClient {
   ) {
     const reader = new FrameReader((msg) => void this.handle(msg as Message))
     proc.stdout!.on('data', (chunk: Buffer) => reader.push(chunk))
+    // A write racing the server's exit (EPIPE) must not crash the app; 'exit' ends the client.
+    proc.stdin?.on('error', () => {})
     proc.on('exit', () => this.exited())
     proc.on('error', () => this.exited())
   }
@@ -133,7 +135,15 @@ export class LspClient {
       else waiting.resolve(msg.result ?? null)
       return
     }
-    if (msg.id === undefined) return this.opts.onNotification?.(msg.method, msg.params)
+    if (msg.id === undefined) {
+      // A malformed notification (a URI we can't map, …) is dropped — never an unhandled rejection.
+      try {
+        this.opts.onNotification?.(msg.method, msg.params)
+      } catch {
+        /* ignored */
+      }
+      return
+    }
     try {
       const result = await (this.opts.onRequest ?? (() => Promise.reject(new Error('unhandled'))))(msg.method, msg.params)
       if (this.alive) this.write({ jsonrpc: '2.0', id: msg.id, result: result ?? null })
