@@ -15,7 +15,7 @@ import {
   type SessionUpdate
 } from '@agentclientprotocol/sdk'
 import { onCleanup, tempDir, tick } from './helpers'
-import { ACP_AGENTS, acpApprovalRisk, acpSpawner, applyAcpUpdate, findAcpTool, isolatedNpx, kindRisk, openTurn, pickOption, spawnAcp, type AcpProcess } from '../../../electron/main/services/agents/acp'
+import { ACP_AGENTS, acpApprovalRisk, acpSpawner, acpStaysInside, applyAcpUpdate, findAcpTool, isolatedNpx, kindRisk, openTurn, pickOption, spawnAcp, type AcpProcess } from '../../../electron/main/services/agents/acp'
 import { AgentSessionService, type AgentSessionDeps } from '../../../electron/main/services/agents/AgentSessionService'
 import { GitService } from '../../../electron/main/services/git/GitService'
 import type { SessionState } from '../../../electron/main/services/agents/transcript'
@@ -71,6 +71,13 @@ describe('ACP updates → chat, tools, plan', () => {
     expect(acpApprovalRisk('search', ['../other'], '/w')).toBe('write')
     expect(acpApprovalRisk('edit', ['/etc/x'], '/w')).toBe('write')
     expect(acpApprovalRisk('execute', [], '/w')).toBe('execute')
+    // What "Always allow" may hold for: inside the folder, as far as the call says — a change has to say.
+    expect(acpStaysInside('edit', ['/w/a.ts'], '/w')).toBe(true)
+    expect(acpStaysInside('edit', [], '/w')).toBe(false)
+    expect(acpStaysInside('edit', ['/home/me/.zshenv'], '/w')).toBe(false)
+    expect(acpStaysInside('read', ['/home/me/.ssh/id_ed25519'], '/w')).toBe(false)
+    expect(acpStaysInside('read', [], '/w')).toBe(true)
+    expect(acpStaysInside('fetch', [], '/w')).toBe(true)
     const options = [
       { optionId: 'a1', name: 'Allow', kind: 'allow_once' as const },
       { optionId: 'aa', name: 'Always', kind: 'allow_always' as const },
@@ -370,7 +377,7 @@ describe('AgentSessionService with ACP agents (Codex, Gemini)', () => {
     }
     t.svc.send(s.id, 'edit it')
     await t.settled(s.id, 'approval')
-    expect(t.asks[0].input).toMatchObject({ agentId: 'gemini', risk: 'write', allowAlways: true })
+    expect(t.asks[0].input).toMatchObject({ agentId: 'gemini', risk: 'write', allowAlways: false }) // it doesn't say where
     t.asks[0].settle('deny')
     while (t.asks.length < 2) await tick(5)
     expect(t.asks[1].input).toMatchObject({ toolName: 'other', toolTitle: 'tool', risk: 'execute' })
@@ -585,9 +592,11 @@ describe('ACP agents in the composer: models, modes, commands, references, image
     const options = [{ optionId: 'ok', name: 'Allow', kind: 'allow_once' as const }]
     t.agents[0].onPrompt = async (conn, req) => {
       await conn.sessionUpdate({ sessionId: req.sessionId, update: { sessionUpdate: 'tool_call', toolCallId: 'w', title: 'Write secrets.env', kind: 'edit' } })
-      await conn.requestPermission({ sessionId: req.sessionId, toolCall: { toolCallId: 'w' }, options })
+      await conn.requestPermission({ sessionId: req.sessionId, toolCall: { toolCallId: 'w', locations: [{ path: 'secrets.txt' }] }, options })
       t.granted.add('edit') // the user chose "Always allow"
-      await conn.requestPermission({ sessionId: req.sessionId, toolCall: { toolCallId: 'w2', title: 'Write b.ts', kind: 'edit' }, options })
+      await conn.requestPermission({ sessionId: req.sessionId, toolCall: { toolCallId: 'w2', title: 'Write b.ts', kind: 'edit', locations: [{ path: 'b.ts' }] }, options })
+      // …which holds inside the session's folder only: this one is asked, and can't be allowed for good.
+      await conn.requestPermission({ sessionId: req.sessionId, toolCall: { toolCallId: 'w3', title: 'Write .zshenv', kind: 'edit', locations: [{ path: '/home/me/.zshenv' }] }, options })
       throw new Error('boom')
     }
     await t.svc.send(s.id, 'go')
@@ -595,8 +604,10 @@ describe('ACP agents in the composer: models, modes, commands, references, image
     expect(t.asks[0].input).toMatchObject({ toolName: 'edit', toolTitle: 'Write secrets.env', risk: 'write', allowAlways: true })
     expect(push).toHaveBeenLastCalledWith({ kind: 'approval', title: 'Codex', body: 'Edit files · Waiting for your approval · Demo', sessionId: s.id })
     t.asks[0].settle('always')
+    await until(() => t.asks.length === 2) // the second edit was not asked, the third is
+    expect(t.asks[1].input).toMatchObject({ toolName: 'edit', risk: 'write', allowAlways: false })
+    t.asks[1].settle('once')
     await t.settled(s.id, 'idle')
-    expect(t.asks).toHaveLength(1) // the second edit was not asked
     expect(push).toHaveBeenLastCalledWith({ kind: 'agent_error', title: 'Codex', body: 'Stopped with an error · Demo', sessionId: s.id })
     expect(t.deps.notify).toHaveBeenLastCalledWith('Codex', 'Stopped with an error', s.id)
 

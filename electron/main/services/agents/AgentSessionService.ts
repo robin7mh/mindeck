@@ -39,12 +39,13 @@ import { readJson, readJsonFile } from '../../lib/jsonFile'
 import { CLAUDE_MODELS, CLAUDE_MODES } from '@shared/types/claude'
 import { CLAUDE_COMMANDS, claudeArgs, claudeEnv, hookSettings, mcpConfig } from './claudeLaunch'
 import { detectAgents, loginShellProbe, type Probe } from './detect'
-import { applyHook, approvalRisk, toolSummary, toolTitle, type Applied, type HookEvent } from './transcript'
+import { applyHook, approvalRisk, staysInside, toolSummary, toolTitle, type Applied, type HookEvent } from './transcript'
 import { journalBody, journalTitle } from './journal'
 import {
   ACP_AGENTS,
   acpApprovalRisk,
   acpCommands,
+  acpStaysInside,
   applyAcpUpdate,
   findAcpTool,
   grantKey,
@@ -731,10 +732,13 @@ export class AgentSessionService {
     // Granted by kind: a title changes with every file or command.
     const kind = call.kind ?? link.kinds.get(call.toolCallId)
     const key = grantKey(kind)
-    const risk = acpApprovalRisk(kind, (call.locations ?? []).map((loc) => loc.path), l.session.cwd)
+    const paths = (call.locations ?? []).map((loc) => loc.path)
+    const risk = acpApprovalRisk(kind, paths, l.session.cwd)
+    // A grant holds in the session's folder: anywhere else it is asked every time.
+    const standing = risk !== 'execute' && acpStaysInside(kind, paths, l.session.cwd)
     if (hit) hit.part.status = 'awaiting-approval'
     let decision: ApprovalDecision = 'once'
-    if (risk === 'execute' || !(await this.deps.permissions.isGranted(agent, key, l.session.projectId))) {
+    if (!standing || !(await this.deps.permissions.isGranted(agent, key, l.session.projectId))) {
       const asked = this.deps.permissions.ask(
         {
           runId: l.session.id,
@@ -747,7 +751,7 @@ export class AgentSessionService {
           summary: name,
           reason: '',
           input: call.rawInput ?? {},
-          allowAlways: risk !== 'execute',
+          allowAlways: standing,
           projectId: l.session.projectId
         },
         link.abort.signal
@@ -773,8 +777,10 @@ export class AgentSessionService {
     // Reading outside the project or fetching from the web: allowed like a change (a device needs remote shells).
     const risk = approvalRisk(name, e.tool_input, l.session.cwd)
     const part = this.tool(l, e.tool_use_id)
+    // A grant holds in the session's folder: anywhere else it is asked every time.
+    const standing = risk !== 'execute' && staysInside(name, e.tool_input, l.session.cwd)
     let decision: ApprovalDecision = 'once'
-    if (risk === 'execute' || !(await this.deps.permissions.isGranted('claude-code', name, l.session.projectId))) {
+    if (!standing || !(await this.deps.permissions.isGranted('claude-code', name, l.session.projectId))) {
       const input = e.tool_input ?? {}
       const asked = this.deps.permissions.ask(
         {
@@ -789,7 +795,7 @@ export class AgentSessionService {
           reason: '',
           input,
           // Commands are asked every time; file and memory tools can be allowed for good (in this project).
-          allowAlways: risk !== 'execute',
+          allowAlways: standing,
           projectId: l.session.projectId
         },
         signal

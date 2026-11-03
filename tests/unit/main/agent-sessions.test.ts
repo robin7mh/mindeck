@@ -493,6 +493,34 @@ describe('AgentSessionService: hooks, approvals, memory', () => {
     expect(await anon).toMatchObject({ hookSpecificOutput: { decision: { behavior: 'allow' } } })
   })
 
+  it('"Always allow" holds inside the session\'s folder: what reaches outside is asked every time, and never offered for good', async () => {
+    const s = await t.svc.create({ kind: 'claude-code', projectId: 'p1' })
+    t.granted.add('Write')
+    t.granted.add('Read')
+    t.granted.add('Glob')
+    const inside = { file_path: join(t.projectPath, 'src/a.ts') }
+    expect(await t.hook(s.id, { hook_event_name: 'PermissionRequest', tool_name: 'Write', tool_use_id: 'w1', tool_input: inside })).toMatchObject({ hookSpecificOutput: { decision: { behavior: 'allow' } } })
+    expect(t.asks).toHaveLength(0)
+
+    const cases: [string, Record<string, unknown>][] = [
+      ['Write', { file_path: '/home/me/.zshenv' }], // a grant from inside the project: run at the next login, without any Bash approval
+      ['Write', { file_path: '../other/a.ts' }],
+      ['Write', { file_path: '.env' }], // keys and credentials, even inside
+      ['Read', { file_path: '/home/me/.ssh/id_ed25519' }],
+      ['Glob', { pattern: '/home/me/.ssh/*' }] // a Glob's pattern names where it looks
+    ]
+    for (const [i, [tool_name, tool_input]] of cases.entries()) {
+      const answer = t.hook(s.id, { hook_event_name: 'PermissionRequest', tool_name, tool_use_id: `o${i}`, tool_input })
+      await tick()
+      expect(t.asks[i].input, JSON.stringify(tool_input)).toMatchObject({ toolName: tool_name, risk: 'write', allowAlways: false })
+      t.asks[i].settle('deny')
+      expect(await answer).toMatchObject({ hookSpecificOutput: { decision: { behavior: 'deny' } } })
+    }
+    // Inside, a Glob's pattern is what it always was.
+    expect(await t.hook(s.id, { hook_event_name: 'PermissionRequest', tool_name: 'Glob', tool_use_id: 'g', tool_input: { pattern: 'src/**/*.ts' } })).toMatchObject({ hookSpecificOutput: { decision: { behavior: 'allow' } } })
+    expect(t.asks).toHaveLength(cases.length)
+  })
+
   it('ignores hooks for unknown sessions and junk; SessionEnd retires the token', async () => {
     const s = await t.svc.create({ kind: 'claude-code', projectId: 'p1' })
     expect(await t.hook('nope', { hook_event_name: 'Stop' })).toBeUndefined()

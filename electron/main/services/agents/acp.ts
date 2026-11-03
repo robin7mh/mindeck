@@ -88,6 +88,15 @@ export function acpApprovalRisk(kind: ToolKind | null | undefined, paths: string
 }
 
 /**
+ * Whether "always allow" may hold for a call: it stays in the session's folder
+ * and away from keys, as far as it says where it acts — and a change has to
+ * say (an edit anywhere on the disk can run code later).
+ */
+export function acpStaysInside(kind: ToolKind | null | undefined, paths: string[], cwd: string): boolean {
+  return !paths.some((p) => reachesOutside(p, cwd)) && (paths.length > 0 || kindRisk(kind) !== 'write')
+}
+
+/**
  * What "always allow" is remembered by: the tool's kind (edit, read, …) —
  * stable, unlike its title, which names the file or command each time.
  */

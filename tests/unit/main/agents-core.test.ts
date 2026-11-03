@@ -14,7 +14,7 @@ import {
   MEMORY_READ_TOOLS,
   SYSTEM_HINT
 } from '../../../electron/main/services/agents/claudeLaunch'
-import { applyHook, approvalRisk, reachesOutside, toolRisk, toolSummary, toolTitle, type SessionState } from '../../../electron/main/services/agents/transcript'
+import { applyHook, approvalRisk, reachesOutside, staysInside, toolRisk, toolSummary, toolTitle, type SessionState } from '../../../electron/main/services/agents/transcript'
 import type { ChatMessage, ToolCallPart } from '../../../src/shared/types/ai'
 import type { AgentSession } from '../../../src/shared/types/agents'
 import { journalBody, journalTitle, vaultJournal } from '../../../electron/main/services/agents/journal'
@@ -235,6 +235,13 @@ describe('hook events → chat, status and plan', () => {
     expect(approvalRisk('Bash', { command: 'ls' }, cwd)).toBe('execute')
     expect(approvalRisk('Edit', { file_path: 'a.ts' }, cwd)).toBe('write')
     expect(approvalRisk('Read')).toBe('read')
+    expect(approvalRisk('Glob', { pattern: '/home/me/.ssh/*' }, cwd)).toBe('write') // a Glob's pattern says where it looks
+    expect(approvalRisk('Glob', { pattern: '**/.env' }, cwd)).toBe('write')
+    expect(approvalRisk('Grep', { pattern: '/home/me/.ssh' }, cwd)).toBe('read') // a Grep's is what it looks for
+    expect(staysInside('Write', { file_path: 'src/a.ts' }, cwd)).toBe(true)
+    expect(staysInside('Write', { file_path: '/home/me/.zshenv' }, cwd)).toBe(false)
+    expect(staysInside('WebFetch', { url: 'https://example.com' }, cwd)).toBe(true)
+    expect(staysInside('Edit', undefined, cwd)).toBe(true)
     // Without a folder to compare with, any absolute path reaches outside.
     expect(reachesOutside('/etc/passwd')).toBe(true)
     expect(reachesOutside('src/a.ts')).toBe(false)

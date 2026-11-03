@@ -61,6 +61,17 @@ export function reachesOutside(path: string, cwd?: string): boolean {
 }
 
 /**
+ * Whether a tool call stays in the session's folder and away from keys. Only
+ * then an "Always allow" holds for it: a grant from `Write src/a.ts` must not
+ * cover `Write ~/.zshenv`, which runs at the next login without any approval
+ * of a command. A Glob's pattern says where it looks; a Grep's is what it looks for.
+ */
+export function staysInside(name: string, input: Record<string, unknown> = {}, cwd?: string): boolean {
+  const keys = ['file_path', 'notebook_path', 'path', ...(name === 'Glob' ? ['pattern'] : [])]
+  return !keys.map((k) => input[k]).some((v) => typeof v === 'string' && reachesOutside(v, cwd))
+}
+
+/**
  * The risk an approval carries: `toolRisk`, except that looking outside the
  * project (Read/Glob/Grep/LS on `~/.ssh`) and fetching from the web (a way out
  * for whatever was read) count as changes — a device allows them only with
@@ -70,8 +81,7 @@ export function approvalRisk(name: string, input: Record<string, unknown> = {}, 
   const risk = toolRisk(name)
   if (risk !== 'read') return risk
   if (name === 'WebFetch') return 'write'
-  const paths = ['file_path', 'notebook_path', 'path'].map((k) => input[k]).filter((v): v is string => typeof v === 'string')
-  return paths.some((p) => reachesOutside(p, cwd)) ? 'write' : 'read'
+  return staysInside(name, input, cwd) ? 'read' : 'write'
 }
 
 const TITLES: Record<string, string> = {
