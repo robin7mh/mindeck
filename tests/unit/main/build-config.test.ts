@@ -81,6 +81,10 @@ describe('Docker', () => {
     const bases = [...dockerfile.matchAll(/^FROM (\S+)/gm)].map((m) => m[1])
     expect(bases).toHaveLength(2)
     for (const base of bases) expect(base).toMatch(/^node:22-bookworm(-slim)?@sha256:[0-9a-f]{64}$/)
+    // The server package too: its node and modules run on the customers' own hosts.
+    const remote = [...readFileSync(join(root, 'remote', 'Dockerfile'), 'utf8').matchAll(/^FROM (\S+)/gm)].map((m) => m[1]).filter((base) => base !== 'scratch')
+    expect(remote).toHaveLength(1)
+    expect(remote[0]).toMatch(/^node:22-bullseye@sha256:[0-9a-f]{64}$/)
   })
 })
 
@@ -96,6 +100,12 @@ describe('Releases', () => {
     expect(release.jobs.publish.needs).toEqual(['build', 'web'])
     // The web bundle goes along, and the check before publishing knows it.
     expect(release.jobs.publish.steps!.find((s) => s.run?.includes('Mindeck-Setup.exe'))!.run).toContain('mindeck-web-${GITHUB_REF_NAME}.tar.gz')
+  })
+
+  it('what a release installs on its builders is a version it names', () => {
+    const steps = workflow('release.yml').jobs.build.steps!.filter((s) => s.run?.includes('gem install'))
+    expect(steps).toHaveLength(1)
+    expect(steps[0].run).toMatch(/gem install .*fpm --version \d+\.\d+\.\d+/)
   })
 
   it('a pre-release tag leaves the image’s :latest where it is', () => {
