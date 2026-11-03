@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { errorMessage, ipc } from '@shared/ipc/client'
+import { errorMessage, ipc, type IpcError } from '@shared/ipc/client'
 import type {
   DailyNotesSettings,
   GraphStyle,
@@ -70,6 +70,8 @@ interface MemoryState {
   /** Editor text (the note body — frontmatter is never shown or edited here). */
   draft: string
   saving: boolean
+  /** The file moved on (or went) under the draft: the user decides, nothing is overwritten by itself. */
+  conflict: boolean
   creating: Creating | null
 
   query: string
@@ -89,8 +91,13 @@ interface MemoryState {
   /** Follow a link by title: open the note, or create it (Obsidian behavior). */
   openOrCreate: (title: string) => Promise<void>
   setDraft: (body: string) => void
-  /** Write the draft. False when it could not be written: it is still only here, so nothing may replace it. */
-  save: () => Promise<boolean>
+  /**
+   * Write the draft (`force`: over a file that moved on). False when it could
+   * not be written: it is still only here, so nothing may replace it.
+   */
+  save: (opts?: { force?: boolean }) => Promise<boolean>
+  /** Give up the draft for what the disk has. */
+  loadDisk: () => Promise<void>
   startCreate: (kind: Creating['kind'], parent?: string, template?: string) => void
   cancelCreate: () => void
   submitCreate: (name: string) => Promise<void>
@@ -123,6 +130,8 @@ let saveTimer: number | undefined
 let searchSeq = 0
 let openSeq = 0
 let indexSeq = 0
+/** Writes run one after the other: each starts from the text and the time the one before left. */
+let writes: Promise<unknown> = Promise.resolve()
 /** Pictures by note + target; dropped on every vault change (a picture may have come or gone). */
 let images = new Map<string, Promise<string | null>>()
 
@@ -142,15 +151,49 @@ export const useMemory = create<MemoryState>((set, get) => {
 
   const fail = (err: unknown) => set({ error: errorMessage(err), loading: false, saving: false })
 
+  /**
+   * The open note as the disk has it now: a clean editor follows. Unsaved text
+   * stays, on the version it was typed on, so that saving it notices the file moved on.
+   */
+  const follow = (path: string, fresh: Note) =>
+    set((s) => {
+      // Another note opened meanwhile: its text must not end up paired with this one (the next save would write it here).
+      if (s.note?.path !== path) return {}
+      return s.draft === s.note.body ? { note: fresh, draft: fresh.body, conflict: false } : { note: { ...fresh, body: s.note.body, modifiedAt: s.note.modifiedAt } }
+    })
+
   /** Re-read the open note (links/backlinks may have changed elsewhere). */
   const refreshNote = async () => {
     const { note } = get()
     if (!note) return
     const fresh = await ipc('memory:read', { path: note.path }).catch(() => undefined)
-    // Another note opened meanwhile: its text must not end up paired with this one (the next save would write it here).
-    if (!fresh || get().note?.path !== note.path) return
-    // Unsaved text in the editor wins over the refreshed body.
-    set((s) => ({ note: fresh, draft: s.draft === note.body ? fresh.body : s.draft }))
+    if (fresh) follow(note.path, fresh)
+  }
+
+  /** What the disk has for the open note now; it may be gone. */
+  const followOpen = async (change: MemoryChanged) => {
+    const { note } = get()
+    if (!note) return
+    const fresh = await ipc('memory:read', { path: note.path }).catch((err: IpcError) => (err.code === 'not-found' ? null : undefined))
+    // Our own rename/move may have opened the note under its new path meanwhile. A read that failed says nothing.
+    if (get().note?.path !== note.path || fresh === undefined) return
+    if (fresh) return follow(note.path, fresh)
+    // Gone: deleted, or renamed/moved outside this view's own actions. Unsaved text stays: saving it will ask.
+    if ((!change.paths || change.paths.includes(note.path)) && get().draft === get().note!.body) set({ note: undefined, draft: '' })
+  }
+
+  const writeDraft = async (force: boolean) => {
+    const { note, draft } = get()
+    if (!note || draft === note.body) return null
+    set({ saving: true })
+    const saved = await ipc('memory:writeBody', { path: note.path, body: draft, ...(force ? {} : { expectedMtime: Date.parse(note.modifiedAt) }) }).catch((err: IpcError) => {
+      // "Keep mine" for a note deleted meanwhile: it is written anew.
+      if (force && err.code === 'not-found') return ipc('memory:write', { path: note.path, raw: draft })
+      throw err
+    })
+    // From here on the disk has this text, at this time (another save, right behind this one, builds on it).
+    set((s) => (s.note?.path === note.path ? { note: { ...s.note, body: draft, modifiedAt: saved.modifiedAt }, conflict: false } : {}))
+    return { path: note.path, draft, modifiedAt: saved.modifiedAt }
   }
 
   return {
@@ -161,6 +204,7 @@ export const useMemory = create<MemoryState>((set, get) => {
     source: loadSource(),
     draft: '',
     saving: false,
+    conflict: false,
     creating: null,
     query: '',
     hits: [],
@@ -172,7 +216,9 @@ export const useMemory = create<MemoryState>((set, get) => {
         const { notes } = await reloadIndex()
         set({ loading: false })
         const { note } = get()
-        if (!note && notes.length) {
+        // Memory was off screen (it follows the vault only while it shows): the note may have moved on.
+        if (note) await followOpen({})
+        else if (notes.length) {
           const first = notes.find((n) => /^willkommen\.md$/i.test(n.path)) ?? notes[0]
           await get().open(first.path)
           set({ view: 'graph' })
@@ -186,21 +232,9 @@ export const useMemory = create<MemoryState>((set, get) => {
       images = new Map()
       try {
         await reloadIndex()
-        const { note, query } = get()
+        const { query } = get()
         if (query) void get().search(query)
-        if (!note) return
-        const fresh = await ipc('memory:read', { path: note.path }).catch(() => undefined)
-        // Our own rename/move may have opened the note under its new path meanwhile.
-        if (get().note?.path !== note.path) return
-        const dirty = get().draft !== get().note?.body
-        if (!fresh) {
-          // Gone: deleted, or renamed/moved outside this view's own actions.
-          if (!change.paths || change.paths.includes(note.path)) set({ note: undefined, draft: '' })
-        } else if (!dirty) {
-          set({ note: fresh, draft: fresh.body }) // follow the file (external edit)
-        } else {
-          set({ note: { ...fresh, body: note.body } }) // keep the user's unsaved text
-        }
+        await followOpen(change)
       } catch (err) {
         fail(err)
       }
@@ -255,7 +289,7 @@ export const useMemory = create<MemoryState>((set, get) => {
         if (!(await get().save())) return
         const note = await ipc('memory:read', { path })
         if (seq !== openSeq) return
-        set({ note, draft: note.body, view: 'note', mode: mode ?? get().mode, error: undefined })
+        set({ note, draft: note.body, view: 'note', mode: mode ?? get().mode, error: undefined, conflict: false })
       } catch (err) {
         fail(err)
       }
@@ -275,21 +309,36 @@ export const useMemory = create<MemoryState>((set, get) => {
       saveTimer = window.setTimeout(() => void get().save(), AUTOSAVE_MS)
     },
 
-    save: async () => {
+    save: async ({ force = false } = {}) => {
       window.clearTimeout(saveTimer)
-      const { note, draft } = get()
-      if (!note || draft === note.body) return true
-      set({ saving: true })
+      const write = writes.then(() => writeDraft(force))
+      writes = write.catch(() => {})
       try {
-        await ipc('memory:writeBody', { path: note.path, body: draft })
-        const fresh = await ipc('memory:read', { path: note.path })
-        // Another note was opened meanwhile: its draft must not land in this one.
+        const written = await write
+        if (!written) return true
+        const fresh = await ipc('memory:read', { path: written.path })
+        // Another note was opened meanwhile (its draft must not land in this one), or a newer write landed.
         // Else keep typing that happened while the write was in flight.
-        set((s) => (s.note?.path !== note.path ? { saving: false } : { note: fresh, draft: s.draft === draft ? fresh.body : s.draft, saving: false }))
+        set((s) => (s.note?.path !== written.path || s.note.modifiedAt !== written.modifiedAt ? { saving: false } : { note: fresh, draft: s.draft === written.draft ? fresh.body : s.draft, saving: false }))
         return true
       } catch (err) {
-        fail(err)
+        if ((err as IpcError).code === 'conflict') set({ conflict: true, saving: false })
+        else fail(err)
         return false
+      }
+    },
+
+    loadDisk: async () => {
+      const { note } = get()
+      if (!note) return
+      window.clearTimeout(saveTimer)
+      try {
+        const fresh = await ipc('memory:read', { path: note.path })
+        set((s) => (s.note?.path === note.path ? { note: fresh, draft: fresh.body, conflict: false } : {}))
+      } catch (err) {
+        // Deleted, and the user lets the text go with it.
+        if ((err as IpcError).code === 'not-found') set({ note: undefined, draft: '', conflict: false })
+        else fail(err)
       }
     },
 

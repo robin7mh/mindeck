@@ -250,6 +250,9 @@ function editorProps(over: Partial<Parameters<typeof NoteEditor>[0]> = {}) {
     mode: 'preview' as const,
     source: false,
     saving: false,
+    conflict: false,
+    onLoadDisk: vi.fn(),
+    onKeepMine: vi.fn(),
     onDraft: vi.fn(),
     onMode: vi.fn(),
     onSource: vi.fn(),
@@ -268,6 +271,19 @@ function editorProps(over: Partial<Parameters<typeof NoteEditor>[0]> = {}) {
 }
 
 describe('NoteEditor', () => {
+  it('a file that moved on under the draft: the user decides', () => {
+    const p = editorProps({ draft: 'mine', conflict: true })
+    const { rerender } = render(<NoteEditor {...p} />)
+    expect(screen.getByRole('alert')).toHaveTextContent(`${p.note.title} changed on disk`)
+    fireEvent.click(screen.getByText('Load disk version'))
+    expect(p.onLoadDisk).toHaveBeenCalled()
+    fireEvent.click(screen.getByText('Keep mine'))
+    expect(p.onKeepMine).toHaveBeenCalled()
+    // Undone back to the file's text: nothing left to decide.
+    rerender(<NoteEditor {...p} draft={p.note.body} />)
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
   it('header: folder path, type, tags, save state; properties formatting', () => {
     const date = new Date(2026, 0, 1, 12, 0)
     const note = baseNote({

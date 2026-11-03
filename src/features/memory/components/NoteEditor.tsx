@@ -19,6 +19,10 @@ interface Props {
   /** Editing shows plain Markdown instead of Live Preview. */
   source: boolean
   saving: boolean
+  /** The file moved on under the draft. */
+  conflict: boolean
+  onLoadDisk: () => void
+  onKeepMine: () => void
   onDraft: (body: string) => void
   onMode: (mode: 'edit' | 'preview') => void
   onSource: (source: boolean) => void
@@ -242,6 +246,18 @@ export function NoteEditor(p: Props) {
           )}
         </div>
       </div>
+
+      {p.conflict && dirty && (
+        <div role="alert" className="flex shrink-0 flex-wrap items-center gap-2 border-b border-amber/30 bg-amber/[0.07] px-5 py-1.5 font-sans text-[12.5px] text-text-primary">
+          <span className="mr-auto">{t.editor.changedOnDisk(note.title)}</span>
+          <button type="button" onClick={p.onLoadDisk} className="rounded-md border border-hud/60 px-2.5 py-1 text-[12px] font-medium text-text-secondary transition-colors hover:border-hud-strong hover:text-text-primary">
+            {t.editor.loadDisk}
+          </button>
+          <button type="button" onClick={p.onKeepMine} className="rounded-md border border-cyan/40 bg-cyan/6 px-2.5 py-1 text-[12px] font-medium text-cyan transition-colors hover:bg-cyan/12">
+            {t.editor.keepMine}
+          </button>
+        </div>
+      )}
 
       {/* body */}
       <div className="min-h-0 flex-1 overflow-y-auto">

@@ -625,6 +625,169 @@ describe('memory store', () => {
     expect(v.calls).toEqual(['link:A.md->B.md']) // nothing written: no text of B into A
   })
 
+  it('back on screen, the open note follows what happened while Memory was away', async () => {
+    const v = vault()
+    await m().open('Willkommen.md')
+    // An agent changes the note while another module is on screen: no event reaches the store.
+    v.files.set('Willkommen.md', note('Willkommen.md', 'by the agent', { modifiedAt: '2026-11-04T10:00:00.000Z' }))
+    await m().init()
+    expect(m()).toMatchObject({ draft: 'by the agent', note: { body: 'by the agent', modifiedAt: '2026-11-04T10:00:00.000Z' } })
+    // Deleted meanwhile: closes.
+    v.files.delete('Willkommen.md')
+    await m().init()
+    expect(m().note).toBeUndefined()
+  })
+
+  it('saving says which version the text is based on; a file that moved on asks instead of overwriting', async () => {
+    const v = vault()
+    const base = '2026-11-04T09:00:00.000Z'
+    v.files.set('Willkommen.md', note('Willkommen.md', 'body', { modifiedAt: base }))
+    const write = v.routes['memory:writeBody']
+    const writes: unknown[] = []
+    let moved = false
+    v.routes['memory:writeBody'] = ((p: { expectedMtime?: number }) => {
+      writes.push(p)
+      if (moved && p.expectedMtime !== undefined) fail('changed on disk', 'conflict')
+      return write(p as never)
+    }) as never
+    await m().open('Willkommen.md')
+    m().setDraft('mine')
+    expect(await m().save()).toBe(true)
+    expect(writes).toEqual([{ path: 'Willkommen.md', body: 'mine', expectedMtime: Date.parse(base) }])
+
+    // The file moves on while the user types: the event keeps the text, on the version it was typed on.
+    const seen = m().note!.modifiedAt
+    m().setDraft('mine, more')
+    moved = true
+    v.files.set('Willkommen.md', note('Willkommen.md', 'theirs', { modifiedAt: '2026-11-04T11:00:00.000Z' }))
+    await m().onChanged({ paths: ['Willkommen.md'] })
+    expect(m()).toMatchObject({ draft: 'mine, more', conflict: false, note: { modifiedAt: seen } })
+
+    expect(await m().save()).toBe(false)
+    expect(m()).toMatchObject({ conflict: true, saving: false, draft: 'mine, more' })
+    expect(m().error).toBeUndefined()
+    expect(v.files.get('Willkommen.md')!.body).toBe('theirs')
+    await m().open('Ich/A.md') // nothing replaces the text until the user decides
+    expect(m().note!.path).toBe('Willkommen.md')
+
+    // Load the disk's version…
+    await m().loadDisk()
+    expect(m()).toMatchObject({ draft: 'theirs', conflict: false, note: { body: 'theirs' } })
+
+    // …or keep theirs out: a forced write says no version.
+    m().setDraft('mine after all')
+    await m().save()
+    expect(m().conflict).toBe(true)
+    writes.length = 0
+    expect(await m().save({ force: true })).toBe(true)
+    expect(writes).toEqual([{ path: 'Willkommen.md', body: 'mine after all' }])
+    expect(m()).toMatchObject({ conflict: false, draft: 'mine after all' })
+    expect(v.files.get('Willkommen.md')!.body).toBe('mine after all')
+  })
+
+  it('a note deleted under unsaved text keeps the text; keeping it writes the note anew', async () => {
+    const v = vault()
+    await m().open('Willkommen.md')
+    m().setDraft('still typing')
+    v.files.delete('Willkommen.md')
+    await m().onChanged({ paths: ['Willkommen.md'] })
+    expect(m()).toMatchObject({ note: { path: 'Willkommen.md' }, draft: 'still typing' })
+    await m().onChanged({}) // a full rescan just the same
+    expect(m().draft).toBe('still typing')
+
+    v.routes['memory:writeBody'] = (({ expectedMtime }: { expectedMtime?: number }) => fail('Gone', expectedMtime === undefined ? 'not-found' : 'conflict')) as never
+    v.routes['memory:write'] = (({ path, raw }: { path: string; raw: string }) => (v.files.set(path, note(path, raw)), meta(path))) as never
+    expect(await m().save()).toBe(false)
+    expect(m().conflict).toBe(true)
+    expect(await m().save({ force: true })).toBe(true)
+    expect(v.files.get('Willkommen.md')!.body).toBe('still typing')
+    expect(m().conflict).toBe(false)
+
+    // Deleted again, and this time the user lets the text go.
+    m().setDraft('more')
+    v.files.delete('Willkommen.md')
+    await m().loadDisk()
+    expect(m().note).toBeUndefined()
+    expect(m().draft).toBe('')
+
+    // A forced write that fails for another reason says so.
+    await m().open('Ich/A.md')
+    v.routes['memory:writeBody'] = (() => fail('disk full')) as never
+    m().setDraft('x')
+    expect(await m().save({ force: true })).toBe(false)
+    expect(m().error).toBe('disk full')
+  })
+
+  it('a read that failed says nothing about the note: it stays open', async () => {
+    const v = vault()
+    await m().open('Willkommen.md')
+    v.routes['memory:read'] = (() => fail('EMFILE')) as never
+    await m().onChanged({})
+    expect(m().note!.path).toBe('Willkommen.md')
+  })
+
+  it('loading the disk’s version: nothing open, another note opened meanwhile, or a failing read', async () => {
+    const v = vault(['A.md', 'B.md'])
+    await m().loadDisk() // nothing open
+    await m().open('A.md')
+    const read = v.routes['memory:read']
+    let answer: () => void = () => {}
+    v.routes['memory:read'] = ((p: never) => new Promise((r) => (answer = () => r(read(p))))) as never
+    const loading = m().loadDisk()
+    useMemory.setState({ note: note('B.md'), draft: 'body' })
+    answer()
+    await loading
+    expect(m().note!.path).toBe('B.md')
+    v.routes['memory:read'] = (() => fail('unreadable')) as never
+    await m().loadDisk()
+    expect(m().error).toBe('unreadable')
+  })
+
+  it('writes run one after the other: the second starts from what the first left, never from an older version', async () => {
+    const v = vault()
+    const stamp = (n: number) => `2026-11-04T09:00:0${n}.000Z`
+    v.files.set('Willkommen.md', note('Willkommen.md', 'body', { modifiedAt: stamp(0) }))
+    const read = v.routes['memory:read']
+    await m().open('Willkommen.md')
+
+    const asked: { body: string; expectedMtime?: number }[] = []
+    let release: () => void = () => {}
+    v.routes['memory:writeBody'] = ((p: { path: string; body: string; expectedMtime?: number }) => {
+      asked.push(p)
+      const n = asked.length
+      const done = () => {
+        v.files.set(p.path, note(p.path, p.body, { modifiedAt: stamp(n) }))
+        return meta(p.path, { modifiedAt: stamp(n) })
+      }
+      return n === 1 ? new Promise((r) => (release = () => r(done()))) : done()
+    }) as never
+    // The first read-back answers late, after the second write.
+    const answers: (() => void)[] = []
+    v.routes['memory:read'] = ((p: never) => {
+      const answer = read(p)
+      return new Promise((r) => answers.push(() => r(answer)))
+    }) as never
+
+    m().setDraft('one')
+    const first = m().save()
+    await settle()
+    m().setDraft('two')
+    const second = m().save()
+    await settle()
+    expect(asked).toHaveLength(1) // the second waits for the first
+    release()
+    await settle()
+    expect(asked.map((a) => a.body)).toEqual(['one', 'two'])
+    expect(asked[1].expectedMtime).toBe(Date.parse(stamp(1)))
+    // Both read-backs answer; the first one (older, a version behind) must not win.
+    answers[0]()
+    await first
+    expect(m().note!.modifiedAt).toBe(stamp(2))
+    answers[1]()
+    await second
+    expect(m()).toMatchObject({ draft: 'two', saving: false, note: { modifiedAt: stamp(2) } })
+  })
+
   it('a save that failed keeps the text: nothing switches away from it, and the error stays', async () => {
     const v = vault()
     await m().open('Willkommen.md')
@@ -673,6 +836,7 @@ describe('memory store', () => {
     v.files.delete('Willkommen.md')
     await m().onChanged({ paths: ['Other.md'] }) // gone, but not reported → keep
     expect(m().note).toBeDefined()
+    m().setDraft(m().note!.body) // nothing unsaved
     await m().onChanged({}) // full rescan → drop
     expect(m().note).toBeUndefined()
     await m().onChanged({}) // no note → nothing to do

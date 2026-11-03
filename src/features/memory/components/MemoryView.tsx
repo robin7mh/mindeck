@@ -200,6 +200,9 @@ export function MemoryView() {
                 mode={m.mode}
                 source={m.source}
                 saving={m.saving}
+                conflict={m.conflict}
+                onLoadDisk={() => void m.loadDisk()}
+                onKeepMine={() => void m.save({ force: true })}
                 onDraft={m.setDraft}
                 onMode={m.setMode}
                 onSource={m.setSource}

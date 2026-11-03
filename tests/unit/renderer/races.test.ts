@@ -220,7 +220,7 @@ describe('answers arriving out of order', () => {
     const saving = useMemory.getState().save()
     // Another note opened while the write is still in flight.
     useMemory.setState({ note: { path: 'B.md', body: 'b' } as never, draft: 'b' })
-    written.resolve(undefined)
+    written.resolve({ path: 'A.md', modifiedAt: '' })
     await saving
     expect(useMemory.getState().note?.path).toBe('B.md')
     expect(useMemory.getState().draft).toBe('b')

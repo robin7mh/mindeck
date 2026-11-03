@@ -309,12 +309,26 @@ export class VaultService {
     return (await scanDirs(root)).sort((a, b) => a.localeCompare(b))
   }
 
-  /** Replace a note's text; its frontmatter block is kept byte-for-byte. */
-  async writeBody(path: string, body: string): Promise<NoteMeta> {
+  /**
+   * Replace a note's text; its frontmatter block is kept byte-for-byte. With
+   * `expectedMtime` (the `modifiedAt` the caller read, in ms) a note that moved
+   * on since, or is gone, fails with `conflict` instead of being overwritten.
+   */
+  async writeBody(path: string, body: string, expectedMtime?: number): Promise<NoteMeta> {
     await this.ensureIndexed()
     if (typeof body !== 'string') throw coded('bad-input', 'Invalid note text')
     const rel = this.normalize(path)
-    const raw = this.index.rawOf(rel) ?? (await readFile(await this.confine(rel), 'utf8'))
+    if (expectedMtime !== undefined) {
+      // The disk decides, not the index, which follows it a moment later.
+      if (await this.load(this.root(), rel)) this.opts.onChange({ paths: [rel] })
+      const known = this.index.get(rel)?.meta.modifiedAt
+      if (!known || Date.parse(known) !== expectedMtime) throw coded('conflict', `${rel} changed on disk since it was opened`)
+    }
+    const raw =
+      this.index.rawOf(rel) ??
+      (await readFile(await this.confine(rel), 'utf8').catch((err: NodeJS.ErrnoException) => {
+        throw err.code === 'ENOENT' ? coded('not-found', `Note not found: ${rel}`) : err
+      }))
     return this.write(rel, frontmatterBlock(raw) + body)
   }
 

@@ -142,7 +142,7 @@ export const REQUEST_SCHEMAS: Schemas = {
   'memory:setGraphStyle': z.object({ mode: z.enum(['colorful', 'single']), color: z.enum(GRAPH_COLORS) }),
   'memory:reveal': none,
   'memory:folders': none,
-  'memory:writeBody': z.object({ path: notePath, body: text(6 * 1024 * 1024) }),
+  'memory:writeBody': z.object({ path: notePath, body: text(6 * 1024 * 1024), expectedMtime: z.number().optional() }),
   'memory:createFolder': z.object({ parent: text(1024), name: title }),
   'memory:rename': z.object({ path: notePath, title }),
   'memory:move': z.object({ path: notePath, folder: text(1024) }),

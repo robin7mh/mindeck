@@ -184,7 +184,7 @@ export interface IpcChannels {
   'memory:setGraphStyle': { request: GraphStyle; response: GraphStyle }
   'memory:reveal': { request: void; response: void }
   'memory:folders': { request: void; response: string[] }
-  'memory:writeBody': { request: { path: string; body: string }; response: NoteMeta }
+  'memory:writeBody': { request: { path: string; body: string; expectedMtime?: number }; response: NoteMeta }
   'memory:createFolder': { request: { parent: string; name: string }; response: string }
   'memory:rename': { request: { path: string; title: string }; response: NoteMeta }
   'memory:move': { request: { path: string; folder: string }; response: NoteMeta }

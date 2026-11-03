@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events'
 import { existsSync } from 'node:fs'
-import { chmod, lstat, mkdir, open, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises'
+import { chmod, lstat, mkdir, open, readFile, readdir, rm, symlink, utimes, writeFile } from 'node:fs/promises'
 import { join, sep } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { tempDir, tick } from './helpers'
@@ -197,6 +197,39 @@ describe('VaultService — notes', () => {
     await v.writeBody('Plain.md', 'replaced')
     expect(await read('Plain.md')).toBe('replaced')
     await expect(v.writeBody('Plain.md', 1 as never)).rejects.toMatchObject({ code: 'bad-input' })
+  })
+
+  it('writeBody with expectedMtime refuses a note that moved on since it was read, and only then', async () => {
+    const { v, root, read, onChange } = await setup()
+    await writeFile(join(root, 'Plain.md'), 'first')
+    const seen = Date.parse((await v.read('Plain.md')).modifiedAt)
+    // Touched but not changed: nothing moved on.
+    await utimes(join(root, 'Plain.md'), new Date(5000), new Date(5000))
+    const saved = await v.writeBody('Plain.md', 'second', seen)
+    expect(await read('Plain.md')).toBe('second')
+    const now = Date.parse(saved.modifiedAt)
+    expect(Date.parse((await v.read('Plain.md')).modifiedAt)).toBe(now)
+
+    // Another program wrote it a moment ago: the index doesn't know yet, the disk does.
+    await writeFile(join(root, 'Plain.md'), 'theirs')
+    await utimes(join(root, 'Plain.md'), new Date(9000), new Date(9000))
+    onChange.mockClear()
+    await expect(v.writeBody('Plain.md', 'mine', now)).rejects.toMatchObject({ code: 'conflict' })
+    expect(await read('Plain.md')).toBe('theirs')
+    expect(onChange).toHaveBeenCalledWith({ paths: ['Plain.md'] })
+
+    // The same stale time keeps being refused; without one the caller means it.
+    await expect(v.writeBody('Plain.md', 'mine', now)).rejects.toMatchObject({ code: 'conflict' })
+    await v.writeBody('Plain.md', 'mine')
+    expect(await read('Plain.md')).toBe('mine')
+
+    // Gone since it was read: refused with a time, "not found" without one (the core's own callers create it anew).
+    const known = Date.parse((await v.read('Plain.md')).modifiedAt)
+    await rm(join(root, 'Plain.md'))
+    await expect(v.writeBody('Plain.md', 'x', known)).rejects.toMatchObject({ code: 'conflict' })
+    await expect(v.writeBody('Plain.md', 'x')).rejects.toMatchObject({ code: 'not-found' })
+    await mkdir(join(root, 'Folder.md'))
+    await expect(v.writeBody('Folder.md', 'x')).rejects.toMatchObject({ code: 'EISDIR' })
   })
 
   it('creates notes named after the title, typed by folder, never overwriting', async () => {

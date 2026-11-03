@@ -48,7 +48,7 @@ function spyActions() {
   const names = [
     'init', 'onChanged', 'save', 'setGraphStyle', 'setView', 'startCreate', 'clearError', 'createVault', 'pickVault',
     'reveal', 'setVault', 'search', 'open', 'cancelCreate', 'submitCreate', 'moveNote', 'moveFolder', 'openOrCreate', 'setDraft',
-    'setMode', 'rename', 'link', 'unlink', 'trash', 'openDaily', 'setDailyNotes', 'setSource', 'renderTemplate', 'attach', 'loadImage'
+    'setMode', 'rename', 'link', 'unlink', 'trash', 'openDaily', 'setDailyNotes', 'setSource', 'renderTemplate', 'attach', 'loadImage', 'loadDisk'
   ] as const
   const spies = Object.fromEntries(names.map((n) => [n, vi.fn(async () => {})])) as Record<(typeof names)[number], ReturnType<typeof vi.fn>>
   useMemory.setState(spies as never)
@@ -165,6 +165,10 @@ describe('MemoryView', () => {
 
     const e = seen.editor as Record<string, (...args: string[]) => void>
     e.onSave()
+    e.onLoadDisk()
+    expect(a.loadDisk).toHaveBeenCalled()
+    e.onKeepMine()
+    expect(a.save).toHaveBeenCalledWith({ force: true })
     e.onRename('B')
     e.onOpen('C.md')
     e.onOpenOrCreate('D')

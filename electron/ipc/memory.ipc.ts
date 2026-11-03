@@ -16,7 +16,7 @@ export function registerMemoryIpc(router: Router, service: VaultService): void {
   router.register('memory:setGraphStyle', (style) => service.setGraphStyle(style))
   router.register('memory:reveal', () => service.reveal())
   router.register('memory:folders', () => service.folders())
-  router.register('memory:writeBody', ({ path, body }) => service.writeBody(path, body))
+  router.register('memory:writeBody', ({ path, body, expectedMtime }) => service.writeBody(path, body, expectedMtime))
   router.register('memory:createFolder', ({ parent, name }) => service.createFolder(parent, name))
   router.register('memory:rename', ({ path, title }) => service.rename(path, title))
   router.register('memory:move', ({ path, folder }) => service.move(path, folder))
