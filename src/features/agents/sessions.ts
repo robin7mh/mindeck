@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import { errorMessage, ipc, onEvent, onResync } from '@shared/ipc/client'
 import type { ChatMessage } from '@shared/types/ai'
 import type { AgentAvailability, AgentInput, AgentSession, CreateSessionRequest, FileChange, FileDiff, SessionBranch, SessionConfigure } from '@shared/types/agents'
-import { upsertMessage } from './store'
+import { CACHED_CHATS, merge, upsertMessage } from './store'
 import { saveDraft } from './composerPrefs'
 
 /** What the center of the Agents module shows. */
@@ -54,6 +54,7 @@ interface AgentsState {
 
 let connections = 0
 let unsubscribe: (() => void) | undefined
+let recentSessions: string[] = []
 
 const upsertSession = (list: AgentSession[], s: AgentSession) => [s, ...list.filter((x) => x.id !== s.id)].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
 
@@ -74,10 +75,22 @@ export const useAgents = create<AgentsState>((set, get) => {
     }
   }
 
-  /** A session with its messages from the core (messages replace the cached ones). */
-  const load = async (id: string) => {
+  /** A session with its messages from the core, merged with what arrived live (the most recently opened stay in memory). */
+  const load = async (id: string, liveWins = true) => {
     const { messages, ...session } = await ipc('agents:get', { id })
-    set((s) => ({ sessions: upsertSession(s.sessions, session), messages: { ...s.messages, [id]: messages } }))
+    recentSessions = [id, ...recentSessions.filter((x) => x !== id)].slice(0, CACHED_CHATS)
+    set((s) => ({
+      sessions: upsertSession(s.sessions, session),
+      messages: Object.fromEntries(Object.entries({ ...s.messages, [id]: merge(messages, s.messages[id], liveWins) }).filter(([key]) => key === s.activeId || recentSessions.includes(key)))
+    }))
+  }
+
+  /** A removed session leaves nothing behind. */
+  const forget = (s: AgentsState, id: string) => {
+    const { [id]: _messages, ...messages } = s.messages
+    const { [id]: _changes, ...changes } = s.changes
+    const { [id]: _branch, ...branches } = s.branches
+    return { messages, changes, branches }
   }
 
   return {
@@ -98,6 +111,7 @@ export const useAgents = create<AgentsState>((set, get) => {
             if (session) set((s) => ({ sessions: upsertSession(s.sessions, session) }))
             if (removed) {
               set((s) => ({
+                ...forget(s, removed),
                 sessions: s.sessions.filter((x) => x.id !== removed),
                 ...(s.activeId === removed ? { activeId: undefined, view: 'empty' as const } : {})
               }))
@@ -105,13 +119,14 @@ export const useAgents = create<AgentsState>((set, get) => {
           }),
           onEvent('agents:message', ({ sessionId, message }) => {
             const list = get().messages[sessionId]
-            if (list) set((s) => ({ messages: { ...s.messages, [sessionId]: upsertMessage(list, message) } }))
+            // The open session may still be loading: `load` merges what came meanwhile.
+            if (list || get().activeId === sessionId) set((s) => ({ messages: { ...s.messages, [sessionId]: upsertMessage(list ?? [], message) } }))
           }),
           // Back after an outage of the push channel: statuses and messages from the gap are missing.
           onResync(() => {
             void get().refresh()
             const id = get().activeId
-            if (id) void load(id).catch(fail)
+            if (id) void load(id, false).catch(fail)
           })
         ]
         unsubscribe = () => offs.forEach((off) => off())
@@ -204,6 +219,7 @@ export const useAgents = create<AgentsState>((set, get) => {
         await ipc('agents:remove', { id: x })
         saveDraft(x, { text: '', refs: [] })
         set((s) => ({
+          ...forget(s, x),
           sessions: s.sessions.filter((v) => v.id !== x),
           ...(s.activeId === x ? { activeId: undefined, view: 'empty' as const } : {})
         }))

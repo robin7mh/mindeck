@@ -38,7 +38,7 @@ vi.mock('@/features/editor/monaco/setup', () => ({
 
 import { xt } from './xtermFake'
 import { useAgents, useActiveSession } from '@/features/agents/sessions'
-import { useAssistant } from '@/features/agents/store'
+import { CACHED_CHATS, useAssistant } from '@/features/agents/store'
 import { describeEvent } from '@/features/agents/format'
 import { AgentsView } from '@/features/agents/components/AgentsView'
 import { NewChatDialog } from '@/features/agents/components/NewChatDialog'
@@ -120,6 +120,44 @@ describe('useAgents store', () => {
     off1()
     off2()
     expect(bridge.listenerCount('agents:changed')).toBe(0)
+  })
+
+  it('opening a running session: what arrives while it loads is kept, the answer doesn’t replace it', async () => {
+    let answer: (v: unknown) => void = () => {}
+    const bridge = installBridge({ 'agents:list': () => [], 'agents:get': () => new Promise((r) => (answer = r)) })
+    const off = ag().connect()
+    await act(settle)
+    const opening = ag().open('s1')
+    // The agent's last answer lands after the snapshot was taken, before it arrives.
+    act(() => bridge.emit('agents:message', { sessionId: 's1', message: msg('last', 'assistant', 'done') }))
+    answer({ ...session(), messages: [msg('m1', 'user', 'hi'), msg('last', 'assistant', 'do')] })
+    await opening
+    expect(ag().messages.s1.map((m) => m.id)).toEqual(['m1', 'last'])
+    expect(ag().messages.s1[1].parts).toEqual(msg('last', 'assistant', 'done').parts)
+    off()
+  })
+
+  it('messages stay in memory for the sessions opened last; a removed session leaves nothing behind', async () => {
+    installBridge({ 'agents:get': ({ id }: { id: string }) => ({ ...session({ id }), messages: [msg('m', 'user', id)] }), 'agents:remove': () => undefined, 'agents:list': () => [] })
+    useAgents.setState({ messages: {}, changes: {}, branches: {} })
+    for (let i = 0; i <= CACHED_CHATS; i += 1) await ag().open(`old${i}`)
+    expect(ag().messages.old0).toBeUndefined()
+    expect(ag().messages.old1).toBeDefined()
+    expect(ag().messages[`old${CACHED_CHATS}`]).toBeDefined()
+
+    useAgents.setState((s) => ({ changes: { ...s.changes, old1: [] }, branches: { ...s.branches, old1: null } }))
+    await ag().remove('old1')
+    expect(ag().messages.old1).toBeUndefined()
+    expect(ag().changes.old1).toBeUndefined()
+    expect('old1' in ag().branches).toBe(false)
+
+    // Removed from elsewhere: just the same.
+    const bridge = installBridge({ 'agents:list': () => [] })
+    const off = ag().connect()
+    await act(settle)
+    act(() => bridge.emit('agents:changed', { removed: 'old2' }))
+    expect(ag().messages.old2).toBeUndefined()
+    off()
   })
 
   it('after an outage of the push channel: statuses and the open session reload', async () => {
