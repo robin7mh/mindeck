@@ -89,7 +89,8 @@ interface MemoryState {
   /** Follow a link by title: open the note, or create it (Obsidian behavior). */
   openOrCreate: (title: string) => Promise<void>
   setDraft: (body: string) => void
-  save: () => Promise<void>
+  /** Write the draft. False when it could not be written: it is still only here, so nothing may replace it. */
+  save: () => Promise<boolean>
   startCreate: (kind: Creating['kind'], parent?: string, template?: string) => void
   cancelCreate: () => void
   submitCreate: (name: string) => Promise<void>
@@ -216,7 +217,7 @@ export const useMemory = create<MemoryState>((set, get) => {
 
     pickVault: async () => {
       try {
-        await get().save()
+        if (!(await get().save())) return
         const status = await ipc('memory:pickVault')
         if (!status) return
         set({ note: undefined, draft: '', query: '', hits: [] })
@@ -228,7 +229,7 @@ export const useMemory = create<MemoryState>((set, get) => {
 
     setVault: async (path) => {
       try {
-        await get().save()
+        if (!(await get().save())) return
         await ipc('memory:setVault', { path })
         set({ note: undefined, draft: '', query: '', hits: [] })
         await get().init()
@@ -249,7 +250,7 @@ export const useMemory = create<MemoryState>((set, get) => {
       // Two quick clicks: the note clicked last wins, not the one answered last.
       const seq = ++openSeq
       try {
-        await get().save()
+        if (!(await get().save())) return
         const note = await ipc('memory:read', { path })
         if (seq !== openSeq) return
         set({ note, draft: note.body, view: 'note', mode: mode ?? get().mode, error: undefined })
@@ -275,7 +276,7 @@ export const useMemory = create<MemoryState>((set, get) => {
     save: async () => {
       window.clearTimeout(saveTimer)
       const { note, draft } = get()
-      if (!note || draft === note.body) return
+      if (!note || draft === note.body) return true
       set({ saving: true })
       try {
         await ipc('memory:writeBody', { path: note.path, body: draft })
@@ -283,8 +284,10 @@ export const useMemory = create<MemoryState>((set, get) => {
         // Another note was opened meanwhile: its draft must not land in this one.
         // Else keep typing that happened while the write was in flight.
         set((s) => (s.note?.path !== note.path ? { saving: false } : { note: fresh, draft: s.draft === draft ? fresh.body : s.draft, saving: false }))
+        return true
       } catch (err) {
         fail(err)
+        return false
       }
     },
 
@@ -306,7 +309,7 @@ export const useMemory = create<MemoryState>((set, get) => {
 
     createNote: async (title, folder = '', template) => {
       try {
-        await get().save()
+        if (!(await get().save())) return
         const meta = await ipc('memory:create', { title, folder, ...(template ? { template, now: localNow() } : {}) })
         await reloadIndex()
         await get().open(meta.path, 'edit')
@@ -319,7 +322,7 @@ export const useMemory = create<MemoryState>((set, get) => {
       const { note } = get()
       if (!note || !title.trim() || title.trim() === note.title) return
       try {
-        await get().save()
+        if (!(await get().save())) return
         const meta = await ipc('memory:rename', { path: note.path, title: title.trim() })
         await reloadIndex()
         await get().open(meta.path, get().mode)
@@ -330,7 +333,7 @@ export const useMemory = create<MemoryState>((set, get) => {
 
     moveNote: async (path, folder) => {
       try {
-        await get().save()
+        if (!(await get().save())) return
         const meta = await ipc('memory:move', { path, folder })
         await reloadIndex()
         if (get().note?.path === path) await get().open(meta.path, get().mode)
@@ -341,7 +344,7 @@ export const useMemory = create<MemoryState>((set, get) => {
 
     moveFolder: async (folder, into) => {
       try {
-        await get().save()
+        if (!(await get().save())) return
         const to = await ipc('memory:moveFolder', { folder, into })
         await reloadIndex()
         const open = get().note?.path
@@ -432,7 +435,7 @@ export const useMemory = create<MemoryState>((set, get) => {
 
     openDaily: async () => {
       try {
-        await get().save()
+        if (!(await get().save())) return
         const meta = await ipc('memory:daily', { now: localNow() })
         await reloadIndex()
         await get().open(meta.path, 'edit')

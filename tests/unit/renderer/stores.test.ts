@@ -598,8 +598,40 @@ describe('memory store', () => {
     expect(m()).toMatchObject({ error: 'disk full', saving: false })
     m().clearError()
     expect(m().error).toBeUndefined()
+    m().setDraft(m().note!.body) // nothing unsaved in the way
     await m().open('Nope.md')
     expect(m().error).toBe('Note not found')
+  })
+
+  it('a save that failed keeps the text: nothing switches away from it, and the error stays', async () => {
+    const v = vault()
+    await m().open('Willkommen.md')
+    v.routes['memory:writeBody'] = (() => fail('read-only')) as never
+    m().setDraft('unsaved')
+    const unchanged = { note: { path: 'Willkommen.md' }, draft: 'unsaved', error: 'read-only' }
+    await m().open('Ich/A.md')
+    expect(m()).toMatchObject(unchanged)
+    await m().pickVault()
+    expect(m()).toMatchObject(unchanged)
+    await m().setVault('/elsewhere')
+    expect(v.calls).not.toContain('setVault:/elsewhere')
+    expect(m()).toMatchObject(unchanged)
+    await m().createNote('New')
+    expect(v.files.has('New.md')).toBe(false)
+    await m().openDaily()
+    await m().rename('Other')
+    await m().moveNote('Willkommen.md', 'Ich')
+    await m().moveFolder('Ich', 'Archiv')
+    expect([...v.files.keys()]).toEqual(['Willkommen.md', 'Ich/A.md'])
+    expect(m()).toMatchObject(unchanged)
+    expect(v.bridge.invoke).not.toHaveBeenCalledWith('memory:daily', expect.anything())
+
+    // Once it can be written, all is well again.
+    v.routes['memory:writeBody'] = (({ path, body }: { path: string; body: string }) => v.files.set(path, note(path, body))) as never
+    await m().open('Ich/A.md')
+    expect(v.files.get('Willkommen.md')!.body).toBe('unsaved')
+    expect(m()).toMatchObject({ note: { path: 'Ich/A.md' }, draft: 'body' })
+    expect(m().error).toBeUndefined()
   })
 
   it('follows file changes: external edits, deletes, unsaved text, renames in flight', async () => {
