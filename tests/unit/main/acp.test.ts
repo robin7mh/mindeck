@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events'
 import { existsSync } from 'node:fs'
+import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
 import { pathToFileURL } from 'node:url'
@@ -492,6 +493,54 @@ describe('ACP agents in the composer: models, modes, commands, references, image
     { id: 'model', name: 'Model', type: 'select', category: 'model', currentValue: 'gpt-5', options: [{ value: 'gpt-5', name: 'GPT-5' }, { value: 'gpt-5-mini', name: 'GPT-5 mini' }] },
     { id: 'approval', name: 'Approval', type: 'select', category: 'mode', currentValue: 'ask', options: [{ value: 'ask', name: 'Ask' }, { value: 'auto', name: 'Auto' }] }
   ]
+
+  it('streamed text reaches the clients and the disk in batches: each push is the whole message, each save the whole transcript, on the main thread', async () => {
+    const t = await acpSetup()
+    const s = await t.svc.create({ kind: 'codex', projectId: 'p1' })
+    await t.settled(s.id, 'idle')
+    const saves = vi.spyOn(JSON, 'stringify')
+    const transcripts = () => saves.mock.calls.filter(([value]) => Array.isArray(value) && value.some((m: { role?: string }) => m.role)).length
+    const pushes = () => t.published.filter((p) => p.channel === 'agents:message').length
+    const before = pushes()
+    const chunks = 300
+    const answer = () => t.svc.get(s.id).messages.at(-1)!.parts[0] as { text: string } | undefined
+    t.agents[0].onPrompt = async (conn, req) => {
+      for (let i = 0; i < chunks; i += 1) await conn.sessionUpdate({ sessionId: req.sessionId, update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'x' } } })
+      return { stopReason: 'end_turn' }
+    }
+    await t.svc.send(s.id, 'go')
+    await until(() => answer()?.text.length === chunks)
+    expect(pushes() - before).toBeLessThan(30)
+    expect(transcripts()).toBeLessThan(10)
+    await t.settled(s.id, 'idle')
+    // The turn's end goes out at once: nothing streamed waits for the next batch.
+    expect(answer()!.text).toHaveLength(chunks)
+    const last = t.published.filter((p) => p.channel === 'agents:message').at(-1)!.payload as { message: { parts: { text: string }[] } }
+    expect(last.message.parts[0].text).toHaveLength(chunks)
+    await t.svc.dispose()
+    expect(JSON.parse(await readFile(join(t.deps.dir, `${s.id}.json`), 'utf8')).at(-1).parts[0].text).toHaveLength(chunks)
+  })
+
+  it('what streamed last is on the disk when Mindeck quits, and a batch still waiting goes with a removed session', async () => {
+    const t = await acpSetup()
+    const a = await t.svc.create({ kind: 'codex', projectId: 'p1' })
+    const b = await t.svc.create({ kind: 'codex', projectId: 'p1' })
+    await t.settled(a.id, 'idle')
+    await t.settled(b.id, 'idle')
+    const conn = (i: number) => t.agents[i].conn!
+    await t.svc.send(a.id, 'go')
+    await t.svc.send(b.id, 'go')
+    await conn(0).sessionUpdate({ sessionId: 'acp-1', update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'saved at the end' } } })
+    await conn(1).sessionUpdate({ sessionId: 'acp-2', update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'gone with it' } } })
+    await until(() => t.svc.get(a.id).messages.at(-1)!.parts.length === 1 && t.svc.get(b.id).messages.at(-1)!.parts.length === 1)
+    await t.svc.remove(b.id)
+    const pushes = t.published.length
+    await tick(120)
+    expect(t.published.slice(pushes).some((p) => (p.payload as { sessionId?: string }).sessionId === b.id)).toBe(false)
+    await t.svc.dispose()
+    const saved = JSON.parse(await readFile(join(t.deps.dir, `${a.id}.json`), 'utf8')) as { parts: { text?: string }[] }[]
+    expect(saved.at(-1)!.parts[0].text).toBe('saved at the end')
+  })
 
   it('offers the agent\'s models, modes and commands, takes the wished model, switches through config options', async () => {
     const t = await acpSetup({ setup: { configOptions }, caps: { image: true } })

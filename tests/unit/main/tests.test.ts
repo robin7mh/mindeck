@@ -288,6 +288,36 @@ async function project() {
 }
 
 describe('TestService', () => {
+  it('a chatty runner reaches the clients in batches: every state carries up to 200 KB of output, on the main thread', async () => {
+    const root = await project()
+    const chunk = Buffer.from('x'.repeat(1000))
+    const { service, published } = harness(root, (_command, _args, proc) => {
+      for (let i = 0; i < 400; i += 1) proc.stdout.emit('data', chunk)
+      proc.stderr.emit('data', chunk)
+      proc.emit('close', 0)
+    })
+    await service.discover('p')
+    const state = await service.run('p')
+    expect(published.length).toBeLessThan(20)
+    expect(state.output.length).toBeGreaterThan(400_000 / 4) // capped, but all there at the end
+    expect(published.at(-1)!.output).toBe(state.output)
+  })
+
+  it('a slow runner\'s output still shows while it runs', async () => {
+    const root = await project()
+    let close!: () => void
+    const { service, published } = harness(root, (_command, _args, proc) => {
+      proc.stdout.emit('data', Buffer.from('first line\n'))
+      close = () => proc.emit('close', 0)
+    })
+    await service.discover('p')
+    const run = service.run('p', 'src/a.test.ts')
+    await vi.waitFor(() => expect(published.at(-1)?.output).toContain('first line'))
+    expect(published.at(-1)?.running).toBe(true)
+    close()
+    await run
+  })
+
   it('finds the tests by file, skipping dependencies, build output and hidden folders', async () => {
     const root = await project()
     const { service } = harness(root)

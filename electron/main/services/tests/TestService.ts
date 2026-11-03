@@ -19,6 +19,8 @@ const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'build', 'out', 'cove
 const MAX_FILES = 3000
 /** What a run keeps of the runner's output. */
 const MAX_OUTPUT = 200_000
+/** How often that output reaches the clients while it streams: every state carries all of it. */
+const OUTPUT_PUSH_MS = 100
 
 const slash = (p: string) => p.split(sep).join('/')
 const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -375,9 +377,18 @@ export class TestService {
       const proc = (this.opts.start ?? spawnInShell)(command, args, p.root)
       p.run = proc
       let stdout = ''
+      let push: NodeJS.Timeout | undefined
       const append = (text: string) => {
         p.state = { ...p.state, output: (p.state.output + text).slice(-MAX_OUTPUT) }
-        this.opts.publish(p.state)
+        push ??= setTimeout(() => {
+          push = undefined
+          this.opts.publish(p.state)
+        }, OUTPUT_PUSH_MS)
+      }
+      const finish = () => {
+        clearTimeout(push)
+        push = undefined
+        resolve(stdout)
       }
       append(`$ ${[command, ...args].join(' ')}\n`)
       proc.stdout?.on('data', (d: Buffer) => {
@@ -387,9 +398,9 @@ export class TestService {
       proc.stderr?.on('data', (d: Buffer) => append(d.toString()))
       proc.on('error', (err) => {
         append(`${err.message}\n`)
-        resolve(stdout)
+        finish()
       })
-      proc.on('close', () => resolve(stdout))
+      proc.on('close', finish)
     })
   }
 

@@ -65,6 +65,10 @@ const AGENT_NAMES: Record<AgentKind, string> = { 'claude-code': 'Claude Code', c
 /** Left out of an isolated session's diff: the link to the project's dependencies. */
 const LINKED = ['node_modules']
 const JOURNAL_DELAY_MS = 1500
+/** Streamed text comes a chunk per token: it reaches the clients at most this often (each push carries the whole message)… */
+const STREAM_PUSH_MS = 50
+/** …and the disk at most this often (each save the whole transcript) — all of it on the main thread. */
+const STREAM_SAVE_MS = 1000
 const MAX_NOTES = 30
 
 function coded(code: string, message: string): Error {
@@ -103,6 +107,10 @@ interface Live extends Record_ {
   shellId?: string
   /** Counts the agent's starts: only the current process's exit ends the session — not a late one from before a resume. */
   run?: number
+  /** The next batch of streamed text on its way to the clients… */
+  streamPush?: NodeJS.Timeout
+  /** …and to the disk. */
+  streamSave?: NodeJS.Timeout
 }
 
 export interface AgentSessionDeps {
@@ -407,6 +415,8 @@ export class AgentSessionService {
     this.stop(id)
     this.deps.server.unregister(id)
     clearTimeout(l.journalTimer)
+    clearTimeout(l.streamPush)
+    clearTimeout(l.streamSave)
     if (l.session.worktree && l.session.branch) await this.deps.git.removeWorktree(l.projectPath, l.session.worktree, l.session.branch).catch(() => {})
     await rm(this.imageDir(id), { recursive: true, force: true })
     await rm(this.launchDir(id), { recursive: true, force: true })
@@ -517,6 +527,9 @@ export class AgentSessionService {
       else if (l.session.terminalId) this.deps.terminal.kill(l.session.terminalId)
       if (l.shellId) this.deps.terminal.kill(l.shellId)
       clearTimeout(l.journalTimer)
+      clearTimeout(l.streamPush)
+      if (l.streamSave) void this.persist(l)
+      clearTimeout(l.streamSave)
     }
     await this.writes
   }
@@ -671,6 +684,8 @@ export class AgentSessionService {
   private acpUpdate(l: Live, link: AcpLink, update: SessionUpdate): void {
     if (l.acp !== link) return
     switch (update.sessionUpdate) {
+      case 'agent_message_chunk':
+        return this.streamed(l, applyAcpUpdate(this.state(l), update).changed)
       case 'available_commands_update':
         return this.update(l, { commands: acpCommands(update.availableCommands) })
       case 'current_mode_update':
@@ -681,6 +696,20 @@ export class AgentSessionService {
         if (update.kind) link.kinds.set(update.toolCallId, update.kind)
     }
     this.applied(l, applyAcpUpdate(this.state(l), update))
+  }
+
+  /** Text as it streams: pushed and saved in batches (the end of a turn goes out at once). */
+  private streamed(l: Live, [message]: ChatMessage[]): void {
+    if (!message) return
+    l.streamPush ??= setTimeout(() => {
+      l.streamPush = undefined
+      this.deps.publish('agents:message', { sessionId: l.session.id, message })
+      this.announce(l, {})
+    }, STREAM_PUSH_MS)
+    l.streamSave ??= setTimeout(() => {
+      l.streamSave = undefined
+      void this.persist(l)
+    }, STREAM_SAVE_MS)
   }
 
   /** Models and modes the agent offers, and how to switch them. */
@@ -889,9 +918,13 @@ export class AgentSessionService {
   }
 
   private update(l: Live, patch: Partial<AgentSession>): void {
+    this.announce(l, patch)
+    void this.persist(l)
+  }
+
+  private announce(l: Live, patch: Partial<AgentSession>): void {
     l.session = { ...l.session, ...patch, updatedAt: new Date().toISOString() }
     this.deps.publish('agents:changed', { session: l.session })
-    void this.persist(l)
   }
 
   /** Atomic writes, one after another (hooks can come in bursts). */
