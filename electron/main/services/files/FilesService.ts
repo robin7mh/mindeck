@@ -1,3 +1,4 @@
+import { isUtf8 } from 'node:buffer'
 import { lstat, mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { dirname, join, relative, sep } from 'node:path'
 import ignore from 'ignore'
@@ -61,7 +62,8 @@ export class FilesService {
     const meta = { path, mtimeMs: info.mtimeMs, size: info.size }
     if (info.size > MAX_EDIT_BYTES) return { ...meta, unsupported: 'too-large' }
     const buf = await readFile(abs)
-    if (buf.subarray(0, SNIFF_BYTES).includes(0)) return { ...meta, unsupported: 'binary' }
+    // Text in another encoding (Latin-1, Windows-1252) counts too: decoded as UTF-8 its bytes are gone, for good with the next save.
+    if (buf.subarray(0, SNIFF_BYTES).includes(0) || !isUtf8(buf)) return { ...meta, unsupported: 'binary' }
     return { ...meta, content: buf.toString('utf8') }
   }
 

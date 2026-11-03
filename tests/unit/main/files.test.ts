@@ -81,6 +81,12 @@ describe('FilesService', () => {
     expect(text.mtimeMs).toBe((await stat(join(root, 'a.ts'))).mtimeMs)
     expect(await service.read('p', 'img.png')).toMatchObject({ unsupported: 'binary', size: 4 })
     expect((await service.read('p', 'img.png')).content).toBeUndefined()
+    // Text in another encoding: shown as UTF-8 every non-ASCII byte would be lost, and the next save would make that final.
+    await writeFile(join(root, 'latin1.sql'), Buffer.from('-- Gr\xFC\xDFe aus K\xF6ln\n', 'latin1'))
+    expect(await service.read('p', 'latin1.sql')).toMatchObject({ unsupported: 'binary' })
+    expect((await service.read('p', 'latin1.sql')).content).toBeUndefined()
+    await writeFile(join(root, 'utf8.sql'), '-- Grüße aus Köln €\n')
+    expect((await service.read('p', 'utf8.sql')).content).toBe('-- Grüße aus Köln €\n')
 
     await writeFile(join(root, 'big.txt'), Buffer.alloc(MAX_EDIT_BYTES + 1, 'a'))
     expect(await service.read('p', 'big.txt')).toMatchObject({ unsupported: 'too-large' })
