@@ -534,6 +534,19 @@ describe('AgentSessionService: hooks, approvals, memory', () => {
     expect(t.deps.notify).toHaveBeenLastCalledWith(expect.any(String), 'Waiting for your answer', s.id)
   })
 
+  it('/clear and /resume end a conversation, not the agent: its hooks, approvals and memory go on', async () => {
+    const s = await t.svc.create({ kind: 'claude-code', projectId: 'p1' })
+    await t.hook(s.id, { hook_event_name: 'SessionStart' })
+    for (const reason of ['clear', 'resume']) {
+      await t.hook(s.id, { hook_event_name: 'SessionEnd', reason })
+      expect(t.deps.server.unregister, reason).not.toHaveBeenCalled()
+      expect(t.svc.get(s.id).status, reason).toBe('idle')
+    }
+    await t.hook(s.id, { hook_event_name: 'SessionEnd', reason: 'prompt_input_exit' })
+    expect(t.deps.server.unregister).toHaveBeenCalledWith(s.id)
+    expect(t.svc.get(s.id).status).toBe('ended')
+  })
+
   it('serves MCP scoped to the project and records the notes the agent used', async () => {
     const s = await t.svc.create({ kind: 'claude-code', projectId: 'p1' })
     expect(await t.svc.handleMcp(s.id, { jsonrpc: '2.0', id: 1, method: 'ping' })).toEqual({ echo: { jsonrpc: '2.0', id: 1, method: 'ping' } })

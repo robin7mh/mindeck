@@ -39,7 +39,7 @@ import { readJson, readJsonFile } from '../../lib/jsonFile'
 import { CLAUDE_MODELS, CLAUDE_MODES } from '@shared/types/claude'
 import { CLAUDE_COMMANDS, claudeArgs, claudeEnv, hookSettings, mcpConfig } from './claudeLaunch'
 import { detectAgents, loginShellProbe, type Probe } from './detect'
-import { applyHook, approvalRisk, staysInside, toolSummary, toolTitle, type Applied, type HookEvent } from './transcript'
+import { applyHook, approvalRisk, conversationOnly, staysInside, toolSummary, toolTitle, type Applied, type HookEvent } from './transcript'
 import { journalBody, journalTitle } from './journal'
 import {
   ACP_AGENTS,
@@ -499,7 +499,7 @@ export class AgentSessionService {
     const e = body as HookEvent
     if (e.hook_event_name === 'PermissionRequest') return this.approve(l, e, signal)
     this.applied(l, applyHook(this.state(l), e))
-    if (e.hook_event_name === 'SessionEnd') this.deps.server.unregister(id)
+    if (e.hook_event_name === 'SessionEnd' && !conversationOnly(e)) this.deps.server.unregister(id)
     return undefined
   }
 

@@ -26,6 +26,9 @@ export interface HookEvent {
   reason?: string
 }
 
+/** A SessionEnd the agent goes on after: `/clear` and `/resume` start another conversation in the same process. */
+export const conversationOnly = (e: HookEvent) => e.reason === 'clear' || e.reason === 'resume'
+
 /** The part of a session the hooks change. */
 export interface SessionState {
   status: SessionStatus
@@ -249,7 +252,7 @@ export function applyHook(state: SessionState, e: HookEvent): Applied {
       state.plan = state.plan.map((p) => (p.id === e.task_id ? { ...p, done: true } : p))
       break
     case 'SessionEnd':
-      state.status = 'ended'
+      if (!conversationOnly(e)) state.status = 'ended'
       break
   }
   return { changed: [...changed], attention }
