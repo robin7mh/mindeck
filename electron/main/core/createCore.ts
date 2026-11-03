@@ -258,6 +258,7 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
   const remoteScope = new RemoteScope({
     access: remoteAccess,
     sessionProject: (id) => agents.projectOf(id),
+    sessionFolder: (id) => agents.folderOf(id),
     conversationProject: (id) => conversations.projectOf(id),
     pending: () => permissions.list()
   })

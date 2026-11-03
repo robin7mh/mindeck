@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { readFile, readdir } from 'node:fs/promises'
-import { join, relative, resolve, sep } from 'node:path'
+import { join, posix, relative, resolve, sep } from 'node:path'
 import type {
   BlameCommit,
   ScmBlame,
@@ -363,9 +363,13 @@ export class ScmService {
     return { hash: full, author, email, date: Number(date) * 1000, message: message.trim(), files }
   }
 
-  /** Before → after of one file: working tree vs. index, index vs. HEAD, or a commit vs. its parent. */
-  async diff(projectId: string, path: string, target: ScmDiffTarget): Promise<FileDiff> {
+  /**
+   * Before → after of one file: working tree vs. index, index vs. HEAD, or a commit vs. its parent.
+   * `device`: a paired device's call, which stays in the project.
+   */
+  async diff(projectId: string, path: string, target: ScmDiffTarget, device = false): Promise<FileDiff> {
     const root = this.root(projectId)
+    if (device) await this.inProject(root, 'from' in target && target.from ? [path, target.from] : [path])
     const blob = (spec: string) => this.git(root, ['show', spec]).catch(() => '')
     if (target.kind === 'unstaged') {
       const abs = await confine(root, path)
@@ -462,6 +466,18 @@ export class ScmService {
     await confine(root, path)
     const contents = text === undefined ? [] : ['--contents', '-']
     return parseBlame(await this.git(root, ['blame', '--porcelain', ...contents, '--', path], { input: text }))
+  }
+
+  /**
+   * Paths as `git status` writes them, from the repository's root: all inside
+   * the project, or refused — a shared subfolder doesn't share the rest of its repository.
+   */
+  private async inProject(root: string, paths: string[]): Promise<void> {
+    const prefix = (await this.git(root, ['rev-parse', '--show-prefix'])).trim()
+    for (const path of paths) {
+      const clean = posix.normalize(path.replace(/\\/g, '/'))
+      if (clean === '..' || clean.startsWith('../') || !clean.startsWith(prefix)) throw coded('outside-project', `${path} is not in this project`)
+    }
   }
 
   /** `stash@{n}` for a stash — found by its hash, since the positions shift as stashes come and go. */

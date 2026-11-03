@@ -10,9 +10,11 @@ import type { RemoteAccess } from './RemoteAccess'
 const VERDICT_MS = 2000
 
 export interface RemoteScopeDeps {
-  access: Pick<RemoteAccess, 'check' | 'project' | 'denied' | 'shows'>
+  access: Pick<RemoteAccess, 'check' | 'project' | 'denied' | 'shows' | 'sessionFile'>
   /** The project an agent session works in (undefined: no such session). */
   sessionProject: (id: string) => string | undefined
+  /** The folder it works in (a worktree when isolated). */
+  sessionFolder: (id: string) => string | undefined
   /** The project an assistant conversation belongs to (undefined: none, or no such conversation). */
   conversationProject: (id: string) => Promise<string | undefined>
   /** The approvals waiting now. */
@@ -54,7 +56,12 @@ export class RemoteScope {
   async check(channel: IpcChannel, payload: unknown): Promise<void> {
     const p = (payload ?? {}) as Payload
     const id = typeof p.id === 'string' ? p.id : undefined
-    if (channel.startsWith('agents:') && id) return this.require(this.deps.sessionProject(id))
+    if (channel.startsWith('agents:') && id) {
+      await this.require(this.deps.sessionProject(id))
+      // The file a diff reads: a link to `.env` is `.env`.
+      if (channel === 'agents:diff') await this.deps.access.sessionFile(this.deps.sessionFolder(id), String(p.path))
+      return
+    }
     if ((channel === 'ai:conversation' || channel === 'ai:deleteConversation') && id) return this.require(await this.deps.conversationProject(id))
     if ((channel === 'ai:send' || channel === 'ai:cancel') && typeof p.conversationId === 'string') {
       return this.require(await this.conversation(p.conversationId))

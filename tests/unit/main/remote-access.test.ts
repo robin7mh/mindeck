@@ -203,6 +203,12 @@ describe('RemoteAccess · projects and files', () => {
     await m.access.check('projects:trust', { id: 'desk', trusted: true })
     await expect(m.access.check('projects:trust', { id: 'home', trusted: true })).rejects.toMatchObject({ code: 'remote-forbidden' })
     await expect(m.access.check('agents:diff', { id: 's', path: 'secrets/prod.pem' })).rejects.toThrow('prod.pem')
+    // A diff's earlier name is a file it reads, too: `git show <hash>^:.env`.
+    await expect(m.access.check('scm:diff', { projectId: 'desk', path: 'readme.md', target: { kind: 'commit', hash: 'abcd', from: '.env' } })).rejects.toThrow('.env is off-limits')
+    await expect(m.access.check('scm:diff', { projectId: 'desk', path: 'readme.md', target: { kind: 'stash', hash: 'abcd', from: 'sub/id_rsa' } })).rejects.toThrow('id_rsa is off-limits')
+    await m.access.check('scm:diff', { projectId: 'desk', path: 'readme.md', target: { kind: 'commit', hash: 'abcd', from: 'old.md' } })
+    await m.access.check('scm:diff', { projectId: 'desk', path: 'readme.md', target: { kind: 'staged' } })
+    await m.access.check('sftp:list', { projectId: 'desk', target: 'server' }) // another channel's target: a name
     // Project channels that name their project as `id` (BE-SEC-07).
     for (const channel of ['projects:remove', 'projects:refresh', 'projects:pull'] as const) {
       await m.access.check(channel, { id: 'desk' })
@@ -229,6 +235,11 @@ describe('RemoteAccess · projects and files', () => {
     await expect(m.access.tool({ path: 'config.txt' }, 'desk')).rejects.toThrow('.env is off-limits')
     // The assistant's tools name projects by name too.
     await expect(m.access.tool({ projectId: 'name-desk', path: 'notes.txt' })).rejects.toThrow('.ssh is off-limits')
+    // A file of an agent's session: its folder may be a worktree no project holds.
+    await expect(m.access.sessionFile(m.desk, 'config.txt')).rejects.toThrow('.env is off-limits')
+    await m.access.sessionFile(m.desk, 'readme.md')
+    await m.access.sessionFile(undefined, 'config.txt') // no such session: the handler says so
+    await m.access.sessionFile(join(m.code, 'gone'), 'config.txt') // its folder is gone
     // Plain files, files that don't exist yet, and paths leaving the project (the handler refuses those) pass here.
     await m.access.check('files:read', { projectId: 'desk', path: 'readme.md' })
     await m.access.check('files:write', { projectId: 'desk', path: 'new/file.ts' })

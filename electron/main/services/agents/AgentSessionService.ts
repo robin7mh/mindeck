@@ -218,6 +218,11 @@ export class AgentSessionService {
     return this.live.get(id)?.session.projectId
   }
 
+  /** The folder a session works in (a worktree when isolated; undefined: no such session). */
+  folderOf(id: string): string | undefined {
+    return this.live.get(id)?.session.cwd
+  }
+
   get(id: string): AgentSessionDetail {
     const l = this.require(id)
     return { ...l.session, messages: l.messages }

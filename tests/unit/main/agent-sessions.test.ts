@@ -120,6 +120,7 @@ describe('AgentSessionService: sessions', () => {
     expect(t.svc.list()).toHaveLength(1)
     expect(t.svc.get(s.id)).toMatchObject({ id: s.id, messages: [] })
     expect([t.svc.projectOf(s.id), t.svc.projectOf('nope')]).toEqual(['p1', undefined])
+    expect([t.svc.folderOf(s.id), t.svc.folderOf('nope')]).toEqual([t.projectPath, undefined])
 
     expect((await t.svc.create({ kind: 'claude-code', projectId: 'p1', title: '  Named  ' })).title).toBe('Named')
     expect((await t.svc.create({ kind: 'claude-code', projectId: 'p1', title: 'x'.repeat(120) })).title).toHaveLength(80)

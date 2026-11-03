@@ -17,7 +17,7 @@ export function registerScmIpc(router: Router, service: ScmService): void {
   router.register('scm:createBranch', ({ projectId, name }) => service.createBranch(projectId, name))
   router.register('scm:log', ({ projectId, limit }) => service.log(projectId, limit))
   router.register('scm:show', ({ projectId, hash }) => service.show(projectId, hash))
-  router.register('scm:diff', ({ projectId, path, target }) => service.diff(projectId, path, target))
+  router.register('scm:diff', ({ projectId, path, target }, ctx) => service.diff(projectId, path, target, ctx.transport === 'remote'))
   router.register('scm:original', ({ projectId, path }) => service.original(projectId, path))
   router.register('scm:files', ({ projectId }) => service.files(projectId))
   router.register('scm:abort', ({ projectId }) => service.abort(projectId))

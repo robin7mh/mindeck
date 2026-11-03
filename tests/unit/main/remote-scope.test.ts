@@ -10,6 +10,9 @@ function scope() {
     if (id === 'private') throw Object.assign(new Error('The project private is off-limits for paired devices'), { code: 'remote-forbidden' })
   })
   const check = vi.fn(async () => {})
+  const sessionFile = vi.fn(async (_folder: string | undefined, path: string) => {
+    if (path === 'link-to-env') throw Object.assign(new Error('.env is off-limits for paired devices'), { code: 'remote-forbidden' })
+  })
   const sessions: Record<string, string> = { s1: 'private', s2: 'shared' }
   const conversations: Record<string, string> = { c1: 'private', c2: 'shared' }
   const pending: PermissionRequest[] = [
@@ -17,16 +20,26 @@ function scope() {
     { id: 'r2', conversationId: 'c9', projectId: 'shared' } as unknown as PermissionRequest
   ]
   const s = new RemoteScope({
-    access: { project, check, denied: (path: string) => (/(^|\/)id_rsa$/.test(path) ? 'id_rsa' : undefined), shows: async (path: string) => !path.includes('/Library/') },
+    access: { project, check, sessionFile, denied: (path: string) => (/(^|\/)id_rsa$/.test(path) ? 'id_rsa' : undefined), shows: async (path: string) => !path.includes('/Library/') },
     sessionProject: (id) => sessions[id],
+    sessionFolder: (id) => (sessions[id] ? `/work/${id}` : undefined),
     conversationProject: async (id) => conversations[id],
     pending: () => pending,
     now: () => now
   })
-  return { s, project, check, tick: (ms: number) => (now += ms) }
+  return { s, project, check, sessionFile, tick: (ms: number) => (now += ms) }
 }
 
 describe('RemoteScope · calls', () => {
+  it('judges the file a session diff names by what it really is, in the session\'s folder', async () => {
+    const { s, sessionFile } = scope()
+    await s.guard('agents:diff', { id: 's2', path: 'a.ts' })
+    expect(sessionFile).toHaveBeenCalledWith('/work/s2', 'a.ts')
+    await expect(s.guard('agents:diff', { id: 's2', path: 'link-to-env' })).rejects.toMatchObject({ code: 'remote-forbidden' })
+    await s.guard('agents:get', { id: 's2' })
+    expect(sessionFile).toHaveBeenCalledTimes(2) // only the diff names a file
+  })
+
   it('refuses sessions, conversations and approvals of projects a device may not use', async () => {
     const { s, check } = scope()
     await s.guard('agents:get', { id: 's2' })

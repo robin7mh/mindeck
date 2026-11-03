@@ -38,7 +38,9 @@ function trashDirs(platform: NodeJS.Platform, home: string, path: PlatformPath):
 const FILE_FIELDS = ['path', 'dir', 'from', 'to'] as const
 
 function filePaths(payload: Record<string, unknown>): string[] {
-  const one = FILE_FIELDS.map((k) => payload[k]).filter((v): v is string => typeof v === 'string')
+  // A diff's earlier name (`scm:diff`) is a file it reads, too.
+  const earlier = (payload.target as { from?: unknown } | undefined)?.from
+  const one = [...FILE_FIELDS.map((k) => payload[k]), earlier].filter((v): v is string => typeof v === 'string')
   const many = Array.isArray(payload.paths) ? payload.paths.filter((v): v is string => typeof v === 'string') : []
   return [...one, ...many]
 }
@@ -324,13 +326,21 @@ export class RemoteAccess {
     for (const project of this.deps.projects().filter((p) => p.id === projectId || (byName && p.name === projectId))) {
       const root = await canonical(project.path).catch(() => null)
       if (!root) continue
-      for (const file of paths) {
-        const abs = this.path.resolve(root, file)
-        if (!this.inside(abs, root)) continue
-        const real = await canonical(abs).catch(() => null)
-        if (real) this.file(this.path.relative(root, real))
-      }
+      for (const file of paths) await this.realFile(root, file)
     }
+  }
+
+  /** A file of an agent's session, by what it really is: its folder may be a worktree no project holds. */
+  async sessionFile(folder: string | undefined, path: string): Promise<void> {
+    const root = folder && (await canonical(folder).catch(() => null))
+    if (root) await this.realFile(root, path)
+  }
+
+  private async realFile(root: string, file: string): Promise<void> {
+    const abs = this.path.resolve(root, file)
+    if (!this.inside(abs, root)) return
+    const real = await canonical(abs).catch(() => null)
+    if (real) this.file(this.path.relative(root, real))
   }
 
   private within(abs: string, roots: string[]): boolean {

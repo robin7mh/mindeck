@@ -40,6 +40,49 @@ async function withRemote() {
 
 const service = (root: string | undefined, limits?: ConstructorParameters<typeof ScmService>[1]) => new ScmService(() => root, limits)
 
+describe('a paired device\'s diff', () => {
+  /** A repository of which only `pkg` is the project. */
+  async function monorepo() {
+    const dir = await repo()
+    await mkdir(join(dir, 'pkg'))
+    await mkdir(join(dir, 'other'))
+    await writeFile(join(dir, 'pkg', 'mine.txt'), 'mine\n')
+    await writeFile(join(dir, 'other', 'secret.txt'), 'SECRET\n')
+    sh(dir, 'add', '.')
+    sh(dir, 'commit', '-q', '-m', 'packages')
+    await writeFile(join(dir, 'pkg', 'mine.txt'), 'mine too\n')
+    sh(dir, 'add', '.')
+    sh(dir, 'commit', '-q', '-m', 'change')
+    return { dir, hash: sh(dir, 'rev-parse', 'HEAD').trim(), project: service(join(dir, 'pkg')) }
+  }
+
+  it('reads inside the project only: a shared folder doesn\'t share the rest of its repository', async () => {
+    const { hash, project } = await monorepo()
+    // `git status` names files from the repository's root: so do its diffs.
+    expect(await project.diff('p', 'pkg/mine.txt', { kind: 'commit', hash }, true)).toMatchObject({ original: 'mine\n', modified: 'mine too\n' })
+    expect(await project.diff('p', 'pkg/mine.txt', { kind: 'staged' }, true)).toMatchObject({ original: 'mine too\n', modified: 'mine too\n' })
+    for (const [path, target] of [
+      ['other/secret.txt', { kind: 'staged' }],
+      ['../other/secret.txt', { kind: 'staged' }],
+      ['..', { kind: 'staged' }],
+      ['pkg/../other/secret.txt', { kind: 'commit', hash }],
+      ['pkg/mine.txt', { kind: 'commit', hash, from: 'other/secret.txt' }],
+      ['pkg/mine.txt', { kind: 'stash', hash, from: '../other/secret.txt' }]
+    ] as const) {
+      await expect(project.diff('p', path, target, true), `${path} ${JSON.stringify(target)}`).rejects.toMatchObject({ code: 'outside-project' })
+    }
+    // The desktop's own view of its repository stays as it is.
+    expect(await project.diff('p', 'other/secret.txt', { kind: 'staged' })).toMatchObject({ original: 'SECRET\n' })
+  })
+
+  it('a project at the repository\'s root: everything in it, nothing above', async () => {
+    const { dir, hash } = await monorepo()
+    const whole = service(dir)
+    expect(await whole.diff('p', 'other/secret.txt', { kind: 'commit', hash, from: 'other/secret.txt' }, true)).toMatchObject({ original: 'SECRET\n' })
+    await expect(whole.diff('p', '../up.txt', { kind: 'staged' }, true)).rejects.toMatchObject({ code: 'outside-project' })
+  })
+})
+
 describe('parsers', () => {
   it('status: branch info, ordinary, renamed, conflicted and untracked entries', () => {
     const raw = [
