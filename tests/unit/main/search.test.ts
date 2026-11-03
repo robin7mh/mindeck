@@ -266,6 +266,15 @@ describe('SearchService: the built-in engine', () => {
     expect(Object.keys((await harness(root, { limits: { files: 1 } }).search(q('x'))).files)).toEqual(['a-dir/one.txt'])
   })
 
+  it('a line with more matches than a call can take ends in a truncated result, not an error', async () => {
+    const root = await tempDir()
+    await writeFile(join(root, 'min.js'), `${'e '.repeat(300_000)}\n`)
+    const { files, last } = await harness(root).search(q('e'))
+    expect(files['min.js']).toHaveLength(SEARCH_LIMITS.matches)
+    expect(last).toMatchObject({ done: true, truncated: true })
+    expect(last.error).toBeUndefined()
+  })
+
   it('a runaway regex ends the search with an error instead of freezing the core', async () => {
     const root = await tempDir()
     await writeFile(join(root, 'evil.txt'), `${'a'.repeat(40)}b\n`)
@@ -368,6 +377,31 @@ describe('SearchService: ripgrep', () => {
     const { files } = await h.done('r')
     expect(files).toEqual({ 'ascii.ts': ['1:1:1'], 'src/ä.ts': ['2:0:5', '2:6:5'] })
     expect(rg.args()).toEqual(ripgrepArgs(q('w', { include: ['src'] }), { ...SEARCH_LIMITS }))
+  })
+
+  it('a line with more matches than a call can take (a minified file) ends in a truncated result, not an exception', async () => {
+    const root = await tempDir()
+    const count = 300_000
+    const subs = Array.from({ length: count }, (_, i): [number, number] => [i * 2, i * 2 + 1])
+    const rg = await fakeRg({ stdout: [begin('./min.js'), match('./min.js', 1, `${'e '.repeat(count)}\n`, subs), match('./min.js', 2, 'e\n', [[0, 1]]), end('./min.js')], hang: true })
+    const { files, last } = await harness(root, { ripgrep: rg.bin }).search(q('e'))
+    expect(files['min.js']).toHaveLength(SEARCH_LIMITS.matches)
+    expect(files['min.js'][1]).toBe('1:2:1')
+    expect(last.truncated).toBe(true)
+  })
+
+  it('a long line with non-ASCII text and many matches is converted in one walk, not decoded from its start for each match', async () => {
+    const root = await tempDir()
+    const prefix = 'ü'
+    const count = 15_000
+    const line = `${prefix}${`${'x'.repeat(64)}e`.repeat(count)}\n`
+    const offset = (i: number) => Buffer.byteLength(prefix) + i * 65 + 64
+    const subs = Array.from({ length: count }, (_, i): [number, number] => [offset(i), offset(i) + 1])
+    const rg = await fakeRg({ stdout: [begin('./min.js'), match('./min.js', 1, line, subs), end('./min.js')] })
+    const started = Date.now()
+    const { files } = await harness(root, { ripgrep: rg.bin }).search(q('e'))
+    expect(Date.now() - started).toBeLessThan(5000) // decoding from the start each time takes far longer, all of it on the main thread
+    expect(files['min.js'].slice(0, 2)).toEqual(['1:65:1', '1:130:1']) // string offsets: `ü` is one character, two bytes
   })
 
   it('a search still running sends what it found so far, batch by batch', async () => {

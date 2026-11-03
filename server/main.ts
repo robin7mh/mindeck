@@ -25,6 +25,7 @@
 
 import { delimiter, join } from 'node:path'
 import { DEFAULT_SERVER_CONFIG, type ServerConfig } from '@shared/types/server'
+import { catchCrashes, Logger } from '../electron/main/lib/log'
 import { mindeckPaths } from '../electron/main/lib/paths'
 import { headlessPlatform } from '../electron/main/platform/headless'
 import { createCore, type Core } from '../electron/main/core/createCore'
@@ -115,6 +116,9 @@ export async function run(argv: string[], env: NodeJS.ProcessEnv = process.env):
 
 /* v8 ignore start -- process entry point, exercised by the web E2E suite */
 if (require.main === module) {
+  // A stray exception or rejection is logged and goes no further, as on the desktop: Node would end the
+  // core with every shell and agent in it (in Docker it comes back empty-handed, over ssh not at all).
+  catchCrashes(new Logger({ dir: mindeckPaths().logsDir }))
   run(process.argv.slice(2)).then(
     (core) => {
       if (!core) return

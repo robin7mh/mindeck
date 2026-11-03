@@ -146,13 +146,24 @@ interface RgMatch {
   }
 }
 
-/** Ripgrep's byte offsets in a line as JavaScript string offsets. */
-function rgMatches(msg: RgMatch['data']): TextMatch[] {
+/**
+ * Ripgrep's byte offsets in a line as JavaScript string offsets — at most
+ * `max` of them, in one walk along the line: they come in order, and decoding a
+ * minified file's megabyte again for each of its matches would hold up the core for minutes.
+ */
+function rgMatches(msg: RgMatch['data'], max: number): TextMatch[] {
   const line = stripEol(msg.lines!.text!)
   const bytes = Buffer.from(line)
   const ascii = bytes.length === line.length
-  const offset = (b: number) => (ascii ? b : bytes.subarray(0, b).toString().length)
-  return msg.submatches!.map((s) => {
+  let walked = 0
+  let chars = 0
+  const offset = (b: number) => {
+    if (ascii) return b
+    chars += bytes.subarray(walked, b).toString().length
+    walked = b
+    return chars
+  }
+  return msg.submatches!.slice(0, max).map((s) => {
     const column = offset(s.start)
     const length = offset(s.end) - column
     return { line: msg.line_number!, column, length, ...previewOf(line, column, length) }
@@ -197,7 +208,8 @@ function runRipgrep(rg: string, root: string, q: TextSearchQuery, out: Collector
         const path = msg.data.path?.text
         file = path === undefined ? undefined : { path: rgPath(path), matches: [] }
       } else if (msg.type === 'match' && file && msg.data.lines?.text !== undefined) {
-        file.matches.push(...rgMatches(msg.data))
+        // Never more than a search shows (one line can hold hundreds of thousands: too many to spread into a call).
+        for (const m of rgMatches(msg.data, limits.matches - file.matches.length)) file.matches.push(m)
       } else if (msg.type === 'end' && file) {
         found ||= file.matches.length > 0
         if (!out.add(file.path, file.matches)) child.kill()
@@ -261,10 +273,10 @@ async function runBuiltin(root: string, q: TextSearchQuery, out: Collector, limi
         const found: TextMatch[] = []
         const lines = textLines(text)
         // Like ripgrep's, the per-file cap counts lines, not matches.
-        for (let i = 0, hit = 0; i < lines.length && hit < limits.perFile; i += 1) {
-          const m = matchLine(re, lines[i], i + 1)
+        for (let i = 0, hit = 0; i < lines.length && hit < limits.perFile && found.length < limits.matches; i += 1) {
+          const m = matchLine(re, lines[i], i + 1, limits.matches - found.length)
           if (m.length) hit += 1
-          found.push(...m)
+          for (const one of m) found.push(one)
         }
         return found
       }, limits.regexMs)
