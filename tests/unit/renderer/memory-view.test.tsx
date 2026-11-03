@@ -73,6 +73,37 @@ describe('MemoryView', () => {
     expect(a.save).toHaveBeenCalled()
   })
 
+  it('the window closing flushes what autosave hasn’t written yet (a browser also asks to stay)', () => {
+    const closing = () => {
+      const event = new Event('beforeunload', { cancelable: true })
+      window.dispatchEvent(event)
+      return event
+    }
+    const bridge = installBridge()
+    const a = spyActions()
+    useMemory.setState({ note, draft: '' })
+    const { unmount } = render(<MemoryView />)
+    expect(closing().defaultPrevented).toBe(false)
+    expect(a.save).not.toHaveBeenCalled() // nothing unsaved
+    act(() => useMemory.setState({ draft: 'typed a moment ago' }))
+    expect(closing().defaultPrevented).toBe(false) // the desktop's write goes out before the window does
+    expect(a.save).toHaveBeenCalledTimes(1)
+    unmount()
+    a.save.mockClear()
+    closing()
+    expect(a.save).not.toHaveBeenCalled()
+    expect(bridge.listenerCount('memory:changed')).toBe(0)
+
+    // A browser may drop a request made while the page goes: it asks first.
+    Reflect.deleteProperty(window, 'mindeck')
+    installRemote({})
+    const web = render(<MemoryView />)
+    const asked = closing()
+    expect(asked.defaultPrevented).toBe(true)
+    expect(a.save).toHaveBeenCalledTimes(1)
+    web.unmount()
+  })
+
   it('in a browser: no Finder button, the vault is chosen with the folder browser', async () => {
     installRemote({ 'fs:dirs': () => ({ path: '/srv/notes', parent: '/srv', home: '/root', dirs: [] }) })
     const a = spyActions()
