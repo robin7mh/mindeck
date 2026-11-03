@@ -116,6 +116,26 @@ describe('the notebook format', () => {
     expect(old.metadata).toEqual({})
   })
 
+  it('a cell or output that breaks the format is refused, so nothing tries to draw it', () => {
+    const nb = (cell: object) => JSON.stringify({ cells: [{ cell_type: 'code', source: '', ...cell }], nbformat: 4, nbformat_minor: 5 })
+    for (const bad of [
+      { outputs: [{ output_type: 'error', ename: 'x', evalue: 'y' }] }, // no traceback
+      { outputs: [{ output_type: 'display_data', metadata: {} }] }, // no data
+      { outputs: [{ output_type: 'execute_result', data: 'x', metadata: {} }] },
+      { outputs: [{ output_type: 'stream', name: 'stdout', text: 5 }] },
+      { outputs: [null] },
+      { outputs: 'x' },
+      { source: 5 }
+    ]) {
+      expect(() => parseNotebook(nb(bad)), JSON.stringify(bad)).toThrow('Cell 1')
+    }
+    expect(() => parseNotebook(JSON.stringify({ cells: [null], nbformat: 4 }))).toThrow('Cell 1')
+    // What the format allows stays: no outputs, no source, a stream without text.
+    expect(parseNotebook(nb({})).cells).toHaveLength(1)
+    expect(parseNotebook(nb({ source: undefined, outputs: [{ output_type: 'stream', name: 'stdout' }] })).cells).toHaveLength(1)
+    expect(parseNotebook(nb({ source: ['a'], outputs: [{ output_type: 'error', ename: 'x', evalue: 'y', traceback: [] }, { output_type: 'display_data', data: {}, metadata: {} }] })).cells).toHaveLength(1)
+  })
+
   it('writes as Jupyter does; ids only from nbformat 4.5 on', () => {
     expect(serializeNotebook(parseNotebook(text()))).toBe(text())
     const old = parseNotebook(JSON.stringify({ cells: [{ id: 'x', cell_type: 'code', source: 'x', metadata: {} }], metadata: {}, nbformat: 4, nbformat_minor: 4 }))

@@ -22,10 +22,12 @@ vi.mock('@/features/editor/components/CodeEditor', () => ({
   }
 }))
 
+const notebookCrash = vi.hoisted(() => ({ on: false }))
 vi.mock('@/features/editor/components/NotebookView', () => ({
-  default: ({ tab, readOnly, onRaw }: { tab: EditorTab; readOnly: boolean; onRaw: () => void }) => (
-    <button type="button" onClick={onRaw}>{`notebook ${tab.path}${readOnly ? ' (read-only)' : ''}`}</button>
-  )
+  default: ({ tab, readOnly, onRaw }: { tab: EditorTab; readOnly: boolean; onRaw: () => void }) => {
+    if (notebookCrash.on) throw new Error('bad output')
+    return <button type="button" onClick={onRaw}>{`notebook ${tab.path}${readOnly ? ' (read-only)' : ''}`}</button>
+  }
 }))
 
 import { EditorView } from '@/features/editor/components/EditorView'
@@ -469,6 +471,22 @@ describe('EditorView', () => {
     act(() => e().split('right', 'p:none'))
     expect(press({ key: 'w', metaKey: true })).toBe(true)
     expect(e().groups).toHaveLength(1)
+  })
+
+  it('a notebook that can’t be drawn crashes its own layer, not the Editor', async () => {
+    notebookCrash.on = true
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const trusted = { ...project('p'), trusted: true }
+    installBridge({ 'projects:list': () => [trusted], 'files:list': () => [], 'files:stat': () => [] })
+    useProjects.setState({ projects: [trusted] })
+    useEditor.setState(seed([tab('a.ipynb'), tab('b.ts')]))
+    render(view(false))
+    expect(await screen.findByText(/Something went wrong in a.ipynb/)).toBeInTheDocument()
+    // The tabs are still there: another file comes up, and this one can be closed.
+    fireEvent.click(screen.getByRole('tab', { name: /b\.ts/ }))
+    expect(screen.queryByText(/Something went wrong/)).toBeNull()
+    expect(screen.getByTestId('monaco')).toHaveTextContent('p:b.ts')
+    notebookCrash.on = false
   })
 
   it('unsaved edits veto closing the window', async () => {

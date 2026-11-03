@@ -59,19 +59,30 @@ interface Viewer {
  */
 const buffers = new Map<string, Buffer>()
 const viewers = new Set<Viewer>()
+/** Buffers with unsaved edits stayed behind when the last editor went. */
+let leftBehind = false
 
 /**
  * The last editor went away: the buffers go with it — unless another editor
  * came in the same render (groups closing and opening, another project's
- * layout), which takes them over.
+ * layout), which takes them over. Unsaved edits stay: the next editor (the
+ * module reloaded after a crash) finds them.
  */
 function release(): void {
   queueMicrotask(() => {
     if (viewers.size) return
     setBufferHost(null)
     setEditorActions(null)
-    buffers.forEach((b) => b.model.dispose())
-    buffers.clear()
+    freeBuffers((b) => b.model.getAlternativeVersionId() === b.clean)
+    leftBehind = buffers.size > 0
+  })
+}
+
+function freeBuffers(free: (buffer: Buffer, id: string) => boolean): void {
+  buffers.forEach((b, id) => {
+    if (!free(b, id)) return
+    b.model.dispose()
+    buffers.delete(id)
   })
 }
 
@@ -139,6 +150,9 @@ function ensureBuffer(tab: EditorTab, text: string): Buffer {
 
 /** The buffers' side of saving, closing and renaming — one host, whichever editors show them. */
 function registerBufferHost(): void {
+  // Closed or clean by now: what stayed behind goes after all.
+  if (leftBehind) freeBuffers((_, id) => !useEditor.getState().tabs.find((t) => t.id === id)?.dirty)
+  leftBehind = false
   setBufferHost({
     // Before a save: tidy blank lines, format the document — as the user's settings for the language say.
     prepare: async (id) => {

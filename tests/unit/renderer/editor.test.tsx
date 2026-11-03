@@ -644,8 +644,8 @@ describe('CodeEditor (Monaco view)', () => {
 
     unmount()
     expect(editor().disposed).toBe(true)
-    await act(() => settle(1)) // the buffers go once no other editor took over
-    expect(mon.state.models.every((m) => m.disposed)).toBe(true)
+    await act(() => settle(1)) // the buffers go once no other editor took over (unsaved a.ts stays: another test's subject)
+    expect(model('b.md').disposed).toBe(true)
     expect(await e().save('p:a.ts')).toBe(false) // the buffer host is gone
   })
 
@@ -850,6 +850,33 @@ describe('CodeEditor (Monaco view)', () => {
     expect(model('b.ts').disposed).toBe(false)
     expect(bufferText('p:b.ts')).toBe('B')
     unmount()
+  })
+
+  it('unsaved edits outlive the last editor (a crashed module coming back): only clean buffers go', async () => {
+    useEditor.setState({ tabs: [tab('a.ts', { content: 'A' }), tab('b.ts', { content: 'B' })] })
+    const view = (t: EditorTab) => <CodeEditor group="g1" tab={t} readOnly={false} onCursor={() => {}} />
+    const first = render(view(e().tabs[0]))
+    first.rerender(view(e().tabs[1]))
+    act(() => model('a.ts').type('!'))
+    const edited = model('a.ts')
+    first.unmount()
+    await act(() => settle(1))
+    expect(edited.disposed).toBe(false)
+    expect(model('b.ts').disposed).toBe(true)
+    expect(e().tabs[0].dirty).toBe(true)
+
+    const second = render(view(e().tabs[0]))
+    expect(editor().model).toBe(edited)
+    expect(edited.getValue()).toBe('A!')
+    expect(bufferText('p:a.ts')).toBe('A!')
+
+    // Closed while no editor was there to free it: the next editor does.
+    second.unmount()
+    await act(() => settle(1))
+    act(() => useEditor.setState({ tabs: [tab('c.ts', { content: 'C' })] }))
+    render(view(e().tabs[0]))
+    expect(edited.disposed).toBe(true)
+    expect(bufferText('p:a.ts')).toBeUndefined()
   })
 
   it('a model already there (a peeked definition) becomes the tab’s buffer', () => {

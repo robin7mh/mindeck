@@ -3,6 +3,7 @@ import { AlertTriangle, BookOpen, Code2, FileWarning, RefreshCw } from 'lucide-r
 import { isMac } from '@/lib/platform'
 import { cn } from '@/lib/cn'
 import { useT } from '@/lib/i18n'
+import { ModuleBoundary } from '@/components/shell/ErrorBoundary'
 import { useEditor, type EditorTab } from '../store'
 import type { Side } from '../groups'
 import { EditorTabs, copyDrag, draggedTab, isTabDrag } from './EditorTabs'
@@ -97,10 +98,13 @@ function NotebookLayer({ tab, readOnly }: { tab: EditorTab; readOnly: boolean })
       </button>
     )
   return (
-    <div className="absolute inset-0 z-5">
-      <Suspense fallback={null}>
-        <NotebookView key={tab.id} tab={tab} readOnly={readOnly} onRaw={toggle} />
-      </Suspense>
+    <div className="absolute inset-0 z-5 flex flex-col">
+      {/* What a file makes the view trip over stays here: the tabs (and every other file's unsaved edits) go on. */}
+      <ModuleBoundary id="notebook" name={tab.name}>
+        <Suspense fallback={null}>
+          <NotebookView key={tab.id} tab={tab} readOnly={readOnly} onRaw={toggle} />
+        </Suspense>
+      </ModuleBoundary>
     </div>
   )
 }
