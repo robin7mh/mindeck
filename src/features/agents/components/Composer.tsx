@@ -90,6 +90,8 @@ export function Composer({
   const [text, setText] = useState(draft.text)
   const [refs, setRefs] = useState<ComposerRef[]>(draft.refs)
   const [images, setImages] = useState<Attached[]>([])
+  /** What is attached by now, ahead of the render: pastes being read at the same time see each other. */
+  const attached = useRef<Attached[]>([])
   const [error, setError] = useState<string>()
   const [token, setToken] = useState<ReturnType<typeof tokenAt>>(null)
   const [active, setActive] = useState(0)
@@ -159,10 +161,27 @@ export function Composer({
 
   const command = (c: AgentCommand) => replaceToken(`/${c.name} `)
 
+  const attach = (next: Attached[]) => {
+    attached.current = next
+    setImages(next)
+  }
+
+  /** Whether one more image fits the limits, with what is attached right now. */
+  const fits = (file: File): boolean => {
+    if (attached.current.length >= MAX_IMAGES) {
+      setError(t.agents.tooManyImages(MAX_IMAGES))
+      return false
+    }
+    if (attached.current.reduce((n, i) => n + base64Bytes(i.data), 0) + file.size > MAX_IMAGES_BYTES) {
+      setError(t.agents.imagesTooLarge(MAX_IMAGES_BYTES / 1024 / 1024))
+      return false
+    }
+    return true
+  }
+
   const addImages = async (files: File[]) => {
     setError(undefined)
     if (!agent!.images) return setError(t.agents.noImages)
-    const next = [...images]
     for (const file of files) {
       if (!(IMAGE_TYPES as readonly string[]).includes(file.type)) {
         setError(t.agents.notAnImage(file.name))
@@ -172,22 +191,16 @@ export function Composer({
         setError(t.agents.imageTooLarge(file.name, MB))
         continue
       }
-      if (next.length >= MAX_IMAGES) {
-        setError(t.agents.tooManyImages(MAX_IMAGES))
-        break
-      }
-      if (next.reduce((n, i) => n + base64Bytes(i.data), 0) + file.size > MAX_IMAGES_BYTES) {
-        setError(t.agents.imagesTooLarge(MAX_IMAGES_BYTES / 1024 / 1024))
-        break
-      }
+      if (!fits(file)) break
       try {
         const url = await readImage(file)
-        next.push({ id: (nextImage += 1), name: file.name, mimeType: file.type as ImageType, data: url.slice(url.indexOf(',') + 1) })
+        // Asked again: another paste may have landed while this one was read.
+        if (!fits(file)) break
+        attach([...attached.current, { id: (nextImage += 1), name: file.name, mimeType: file.type as ImageType, data: url.slice(url.indexOf(',') + 1) }])
       } catch {
         setError(t.agents.imageUnreadable(file.name))
       }
     }
-    setImages(next)
   }
 
   const imageFiles = (list: FileList) => [...list].filter((f) => f.type.startsWith('image/'))
@@ -214,7 +227,7 @@ export function Composer({
     rememberPrompt(text)
     setText('')
     setRefs([])
-    setImages([])
+    attach([])
     setToken(null)
     setRecalled(-1)
   }
@@ -308,7 +321,7 @@ export function Composer({
                 <button
                   type="button"
                   aria-label={t.agents.removeImage(img.name)}
-                  onClick={() => setImages((list) => list.filter((x) => x.id !== img.id))}
+                  onClick={() => attach(attached.current.filter((x) => x.id !== img.id))}
                   className="absolute right-0 top-0 flex h-4 w-4 items-center justify-center rounded-bl bg-void/80 text-text-secondary hover:text-text-primary"
                 >
                   <X size={10} />

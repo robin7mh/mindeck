@@ -251,6 +251,50 @@ describe('Composer in an agent session', () => {
     expect(screen.queryAllByRole('img')).toHaveLength(0)
   })
 
+  it('images pasted while others are still being read: all stay, and the limit counts them all', async () => {
+    // FileReader answers by hand, in the order the test wants.
+    const readers: (() => void)[] = []
+    class ManualReader {
+      result = 'data:image/png;base64,AAAA'
+      onload: (() => void) | null = null
+      readAsDataURL() {
+        readers.push(() => this.onload!())
+      }
+    }
+    vi.stubGlobal('FileReader', ManualReader)
+    const png = (name: string) => new File(['x'], name, { type: 'image/png' })
+    const paste = (...files: File[]) => fireEvent.paste(screen.getByLabelText('Message'), { clipboardData: { files } })
+    render(<Composer {...props()} />)
+
+    paste(png('first.png'))
+    paste(png('second.png'))
+    await waitFor(() => expect(readers).toHaveLength(2))
+    readers[1]()
+    readers[0]()
+    await waitFor(() => expect(screen.getAllByRole('img')).toHaveLength(2))
+    expect(screen.getByAltText('first.png')).toBeInTheDocument()
+    expect(screen.getByAltText('second.png')).toBeInTheDocument()
+
+    // Up to five, then two more at the same time: both are read, only the first still fits.
+    readers.length = 0
+    paste(png('c.png'), png('d.png'), png('e.png'))
+    for (let i = 0; i < 3; i += 1) {
+      await waitFor(() => expect(readers).toHaveLength(i + 1))
+      readers[i]()
+    }
+    await waitFor(() => expect(screen.getAllByRole('img')).toHaveLength(5))
+    readers.length = 0
+    paste(png('f.png'))
+    paste(png('g.png'))
+    await waitFor(() => expect(readers).toHaveLength(2))
+    readers[0]()
+    readers[1]()
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('At most 6 images per message.'))
+    expect(screen.getAllByRole('img')).toHaveLength(6)
+    expect(screen.queryByAltText('g.png')).toBeNull()
+    vi.unstubAllGlobals()
+  })
+
   it('an agent without images says so; an unreadable image too', async () => {
     installBridge(routes())
     const { unmount } = render(<Composer {...props({ images: false })} />)
