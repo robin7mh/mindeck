@@ -6,7 +6,7 @@ import type { FinderEntry, FinderListing } from '@shared/types/finder'
 /** Projects `shared` and `private` (off-limits); session s1 works in `private`, s2 in `shared`; conversation c1 belongs to `private`. */
 function scope() {
   let now = 0
-  const project = vi.fn(async (id: string) => {
+  const owner = vi.fn(async (id: string) => {
     if (id === 'private') throw Object.assign(new Error('The project private is off-limits for paired devices'), { code: 'remote-forbidden' })
   })
   const check = vi.fn(async () => {})
@@ -20,14 +20,14 @@ function scope() {
     { id: 'r2', conversationId: 'c9', projectId: 'shared' } as unknown as PermissionRequest
   ]
   const s = new RemoteScope({
-    access: { project, check, sessionFile, denied: (path: string) => (/(^|\/)id_rsa$/.test(path) ? 'id_rsa' : undefined), shows: async (path: string) => !path.includes('/Library/') },
+    access: { owner, check, sessionFile, denied: (path: string) => (/(^|\/)id_rsa$/.test(path) ? 'id_rsa' : undefined), shows: async (path: string) => !path.includes('/Library/') },
     sessionProject: (id) => sessions[id],
     sessionFolder: (id) => (sessions[id] ? `/work/${id}` : undefined),
     conversationProject: async (id) => conversations[id],
     pending: () => pending,
     now: () => now
   })
-  return { s, project, check, sessionFile, tick: (ms: number) => (now += ms) }
+  return { s, owner, check, sessionFile, tick: (ms: number) => (now += ms) }
 }
 
 describe('RemoteScope · calls', () => {
@@ -143,21 +143,21 @@ describe('RemoteScope · events', () => {
   })
 
   it('reuses a project’s verdict for a moment — a stream of deltas asks once', async () => {
-    const { s, project, tick } = scope()
+    const { s, owner, tick } = scope()
     expect(await s.allows('shared')).toBe(true)
     expect(await s.allows('shared')).toBe(true)
     expect(await s.allows(undefined)).toBe(true)
-    expect(project).toHaveBeenCalledTimes(1)
+    expect(owner).toHaveBeenCalledTimes(1)
     tick(2500)
     expect(await s.allows('shared')).toBe(true)
-    expect(project).toHaveBeenCalledTimes(2)
+    expect(owner).toHaveBeenCalledTimes(2)
     // Many projects at once: the memo starts over instead of growing.
     for (let i = 0; i < 502; i += 1) await s.allows(`p${i}`)
     expect(await s.allows('private')).toBe(false)
   })
 
   it('the clock defaults to Date.now', async () => {
-    const s = new RemoteScope({ access: { project: async () => {}, check: async () => {}, denied: () => undefined, shows: async () => true }, sessionProject: () => undefined, conversationProject: async () => undefined, pending: () => [] })
+    const s = new RemoteScope({ access: { owner: async () => {}, check: async () => {}, sessionFile: async () => {}, denied: () => undefined, shows: async () => true }, sessionProject: () => undefined, sessionFolder: () => undefined, conversationProject: async () => undefined, pending: () => [] })
     expect(await s.allows('p')).toBe(true)
   })
 })

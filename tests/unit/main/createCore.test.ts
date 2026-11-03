@@ -438,6 +438,9 @@ describe('createCore — paired devices without remote shells', () => {
       const listed = (await remote('ai:conversations')) as { data: { id: string }[] }
       expect(listed.data.map((x) => x.id)).toEqual([sent.data.conversationId])
       expect(await remote('agents:get', { id: 'none' })).toMatchObject({ ok: false, error: { code: 'not-found' } })
+      // …and it stays so once the project is removed: what nothing can judge any more is no device's.
+      expect(await desktop('projects:remove', { id: hiddenProject.id })).toMatchObject({ ok: true })
+      expect(await remote('ai:conversation', { id: other.data.conversationId })).toMatchObject({ ok: false, error: { code: 'remote-forbidden' } })
 
       // 3. A change the desktop's run wants: the device may deny, not allow.
       let pending: string | undefined

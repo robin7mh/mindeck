@@ -10,7 +10,7 @@ import type { RemoteAccess } from './RemoteAccess'
 const VERDICT_MS = 2000
 
 export interface RemoteScopeDeps {
-  access: Pick<RemoteAccess, 'check' | 'project' | 'denied' | 'shows' | 'sessionFile'>
+  access: Pick<RemoteAccess, 'check' | 'owner' | 'denied' | 'shows' | 'sessionFile'>
   /** The project an agent session works in (undefined: no such session). */
   sessionProject: (id: string) => string | undefined
   /** The folder it works in (a worktree when isolated). */
@@ -150,7 +150,7 @@ export class RemoteScope {
     if (!projectId) return true
     const known = this.verdicts.get(projectId)
     if (known && this.now() - known.at < VERDICT_MS) return known.ok
-    const ok = await this.deps.access.project(projectId).then(
+    const ok = await this.deps.access.owner(projectId).then(
       () => true,
       () => false
     )
@@ -160,7 +160,7 @@ export class RemoteScope {
   }
 
   private async require(projectId: string | undefined): Promise<void> {
-    if (projectId) await this.deps.access.project(projectId)
+    if (projectId) await this.deps.access.owner(projectId)
   }
 
   private async only(payload: unknown, projectId: string | undefined): Promise<unknown> {

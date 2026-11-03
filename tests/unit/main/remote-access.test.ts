@@ -216,6 +216,11 @@ describe('RemoteAccess · projects and files', () => {
       await expect(m.access.check(channel, { id: 'remote-out' }), channel).rejects.toThrow('not in a folder shared')
     }
     await m.access.check('agents:get', { id: 'home' }) // an id that is no project's
+    // What belongs to a project is judged by that project — and a project no longer registered allows nothing.
+    await m.access.owner('desk')
+    await m.access.owner('name-desk') // the assistant's tools name projects by name too
+    await expect(m.access.owner('home')).rejects.toThrow('the home folder')
+    await expect(m.access.owner('removed-since')).rejects.toMatchObject({ code: 'remote-forbidden' })
     await m.access.check('memory:read', { path: '.env.md' }) // a vault note: no project, no file rule
     await m.access.check('app:info', undefined)
   })

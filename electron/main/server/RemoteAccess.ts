@@ -206,6 +206,17 @@ export class RemoteAccess {
     }
   }
 
+  /**
+   * The project something belongs to (a session, a conversation, a run), as
+   * the device may see it. Unlike a call naming a project, this one fails
+   * closed: what is left of a removed project stays on disk, and nothing can
+   * say any more whether its folder was ever a device's.
+   */
+  async owner(idOrName: string): Promise<void> {
+    if (!this.deps.projects().some((p) => p.id === idOrName || p.name === idOrName)) throw refused('This belongs to a project that is no longer in Mindeck')
+    await this.project(idOrName, true)
+  }
+
   /** The projects a device may use (for its project list). */
   async visible(projects: Project[]): Promise<Project[]> {
     const ok = await Promise.all(projects.map((p) => this.project(p.id).then(() => true, () => false)))
