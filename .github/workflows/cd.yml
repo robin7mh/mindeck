@@ -1,6 +1,7 @@
-# Merges (push to main/develop) and releases (tags v*) build and publish — only
-# after typecheck and unit tests pass here too: a direct push never reaches the
-# public image untested (E2E stays on the pull request, ci.yml).
+# Merges (push to main/develop) and releases (tags v*) build and publish the
+# core image — only after typecheck and unit tests pass here too: a direct push
+# never reaches the public image untested (E2E stays on the pull request, ci.yml).
+# The GitHub release of a tag comes from release.yml alone, once everything is built.
 name: CD
 
 on:
@@ -83,8 +84,9 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=sha
+          # v1.2.3-rc.1 is no :latest.
           flavor: |
-            latest=${{ startsWith(github.ref, 'refs/tags/v') }}
+            latest=${{ startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-') }}
       - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: .
@@ -97,31 +99,3 @@ jobs:
             MINDECK_CLOUD_KEY=${{ secrets.MINDECK_CLOUD_KEY }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
-  release:
-    name: GitHub Release
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: image
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
-      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
-        with:
-          node-version: 22
-          cache: npm
-      - name: Build the web bundle
-        run: |
-          npm ci --ignore-scripts
-          npm run web:build
-          tar -czf mindeck-web-${GITHUB_REF_NAME}.tar.gz -C out/web .
-        env:
-          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
-      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
-        with:
-          generate_release_notes: true
-          files: mindeck-web-*.tar.gz
-          body: |
-            Docker image: `${{ env.IMAGE }}:latest` (also tagged with this version)

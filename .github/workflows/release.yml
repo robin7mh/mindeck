@@ -9,6 +9,8 @@
 # and a tag without the signing secrets fails instead of shipping unsigned
 # installers. A manual run builds everything and keeps it as workflow
 # artifacts — no release (unsigned is allowed there). Secrets: docs/RELEASE.md.
+# This is the one workflow that publishes a tag's release, and only once all of
+# it is built: `releases/latest` is what every updater and download link reads.
 name: Release
 
 on:
@@ -48,6 +50,33 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm run test:coverage
+
+  # The web UI on its own, for serving it elsewhere.
+  web:
+    name: Web bundle
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 22
+          cache: npm
+      - name: Build the web bundle
+        run: |
+          npm ci --ignore-scripts
+          npm run web:build
+          tar -czf "mindeck-web-${GITHUB_REF_NAME}.tar.gz" -C out/web .
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: web
+          retention-days: 14
+          if-no-files-found: error
+          path: mindeck-web-*.tar.gz
 
   remote:
     name: Server package linux-${{ matrix.arch }}
@@ -265,7 +294,7 @@ jobs:
   publish:
     name: GitHub release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: build
+    needs: [build, web]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -282,6 +311,10 @@ jobs:
           pattern: remote-*
           path: release
           merge-multiple: true
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: web
+          path: release
 
       # The website links releases/latest/download/<name>, the updaters read latest*.yml.
       - name: Every download and feed is there
@@ -292,7 +325,8 @@ jobs:
           for file in Mindeck-mac-arm64.dmg Mindeck-mac-x64.dmg Mindeck-mac-arm64.zip Mindeck-mac-x64.zip \
                       Mindeck-Setup.exe Mindeck.AppImage Mindeck.deb Mindeck-arm64.AppImage Mindeck-arm64.deb \
                       latest-mac.yml latest.yml latest-linux.yml latest-linux-arm64.yml \
-                      "mindeck-server-${version}-linux-x64.tar.gz" "mindeck-server-${version}-linux-arm64.tar.gz"; do
+                      "mindeck-server-${version}-linux-x64.tar.gz" "mindeck-server-${version}-linux-arm64.tar.gz" \
+                      "mindeck-web-${GITHUB_REF_NAME}.tar.gz"; do
             if [ ! -f "$file" ]; then echo "::error::$file is missing"; missing=1; fi
           done
           ls -l
@@ -304,3 +338,5 @@ jobs:
           fail_on_unmatched_files: true
           prerelease: ${{ contains(github.ref_name, '-') }}
           generate_release_notes: true
+          body: |
+            Docker image: `ghcr.io/${{ github.repository_owner }}/mindeck`, tagged with this version

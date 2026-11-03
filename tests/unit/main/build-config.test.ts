@@ -83,3 +83,23 @@ describe('Docker', () => {
     for (const base of bases) expect(base).toMatch(/^node:22-bookworm(-slim)?@sha256:[0-9a-f]{64}$/)
   })
 })
+
+describe('Releases', () => {
+  type Workflow = { jobs: Record<string, { needs?: string[]; if?: string; steps?: { uses?: string; with?: Record<string, unknown>; run?: string }[] }> }
+  const workflow = (name: string) => parse(readFileSync(join(root, '.github', 'workflows', name), 'utf8')) as Workflow
+  const publishers = (w: Workflow) => Object.entries(w.jobs).filter(([, job]) => job.steps?.some((s) => s.uses?.startsWith('softprops/action-gh-release'))).map(([name]) => name)
+
+  it('one workflow publishes a tag, once everything is built: half a release would be `latest` for every updater and download link', () => {
+    expect(publishers(workflow('cd.yml'))).toEqual([])
+    const release = workflow('release.yml')
+    expect(publishers(release)).toEqual(['publish'])
+    expect(release.jobs.publish.needs).toEqual(['build', 'web'])
+    // The web bundle goes along, and the check before publishing knows it.
+    expect(release.jobs.publish.steps!.find((s) => s.run?.includes('Mindeck-Setup.exe'))!.run).toContain('mindeck-web-${GITHUB_REF_NAME}.tar.gz')
+  })
+
+  it('a pre-release tag leaves the image’s :latest where it is', () => {
+    const meta = workflow('cd.yml').jobs.image.steps!.find((s) => s.uses?.startsWith('docker/metadata-action'))!
+    expect(String(meta.with!.flavor)).toContain("!contains(github.ref_name, '-')")
+  })
+})

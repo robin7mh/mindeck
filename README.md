@@ -173,7 +173,7 @@ npm run test:all         # Typecheck + Abdeckung + E2E: das, was CI bei einem Pu
 | Workflow | Läuft bei | Macht |
 | --- | --- | --- |
 | `ci.yml` | jedem Pull Request (und manuell) | Typecheck · Unit-Tests mit 100-%-Schwelle (Bericht als Artefakt) · E2E (Electron, Web-UI + Core) · Docker-Image-Build |
-| `cd.yml` | Push auf `main`/`develop` (Merges), Tags `v*` (Releases) | **keine Tests**: baut das Core-Image (API + Web-UI) und pusht es nach `ghcr.io/robin7mh/mindeck` (`:develop`, `:main`, `:sha-…`; bei einem Tag zusätzlich `:1.2.3` und `:latest`); ein Tag erstellt außerdem ein GitHub-Release mit dem Web-Bundle |
+| `cd.yml` | Push auf `main`/`develop` (Merges), Tags `v*` (Releases) | **keine Tests**: baut das Core-Image (API + Web-UI) und pusht es nach `ghcr.io/robin7mh/mindeck` (`:develop`, `:main`, `:sha-…`; bei einem Tag zusätzlich `:1.2.3`, ohne Vorabversion auch `:latest`) — das GitHub-Release eines Tags kommt allein aus `release.yml` |
 
 Release: `git tag v0.2.0 && git push origin v0.2.0`.
 
@@ -443,7 +443,7 @@ npm run test:all         # typecheck + coverage + e2e: what CI runs on a pull re
 | Workflow | Runs on | Does |
 | --- | --- | --- |
 | `ci.yml` | every pull request (and manually) | typecheck · unit tests with the 100 % gate (report as artifact) · E2E (Electron, web UI + core) · Docker image build |
-| `cd.yml` | push to `main`/`develop` (merges), tags `v*` (releases) | **no tests**: builds the core image (API + web UI) and pushes it to `ghcr.io/robin7mh/mindeck` (`:develop`, `:main`, `:sha-…`; on a tag also `:1.2.3` and `:latest`); a tag also creates a GitHub Release with the web bundle |
+| `cd.yml` | push to `main`/`develop` (merges), tags `v*` (releases) | **no tests**: builds the core image (API + web UI) and pushes it to `ghcr.io/robin7mh/mindeck` (`:develop`, `:main`, `:sha-…`; on a tag also `:1.2.3`, and `:latest` unless it is a pre-release) — a tag's GitHub Release comes from `release.yml` alone |
 
 To release: `git tag v0.2.0 && git push origin v0.2.0`.
 
