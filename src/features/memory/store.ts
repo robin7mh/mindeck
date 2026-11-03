@@ -121,18 +121,21 @@ interface MemoryState {
 let saveTimer: number | undefined
 let searchSeq = 0
 let openSeq = 0
+let indexSeq = 0
 /** Pictures by note + target; dropped on every vault change (a picture may have come or gone). */
 let images = new Map<string, Promise<string | null>>()
 
 export const useMemory = create<MemoryState>((set, get) => {
   const reloadIndex = async () => {
+    const seq = ++indexSeq
     const [status, notes, graph, folders] = await Promise.all([
       ipc('memory:status'),
       ipc('memory:list'),
       ipc('memory:graph'),
       ipc('memory:folders')
     ])
-    set({ status, notes, graph, folders })
+    // Overlapping reloads (a burst of vault changes): an older answer must not replace a newer one.
+    if (seq === indexSeq) set({ status, notes, graph, folders })
     return { status, notes }
   }
 

@@ -80,6 +80,25 @@ describe('SystemService', () => {
     s.dispose()
   })
 
+  it('skips ticks while a sample is still in flight (a stuck `df`), then carries on', async () => {
+    let release: (v: unknown) => void = () => {}
+    c.collect.mockReturnValueOnce(new Promise((r) => (release = r)))
+    const send = vi.fn()
+    const s = new SystemService(send, 1000, 100)
+    s.subscribe()
+    await flush()
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(c.collect).toHaveBeenCalledTimes(1) // no pile-up behind the stuck one
+    expect(send).not.toHaveBeenCalled()
+    release({ ts: 0, processes: [] })
+    await flush()
+    expect(send).toHaveBeenCalledWith({ ts: 0, processes: [] })
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(c.collect).toHaveBeenCalledTimes(2)
+    expect(send).toHaveBeenCalledTimes(2)
+    s.dispose()
+  })
+
   it('never runs two process scans at once', async () => {
     let release: (v: unknown) => void = () => {}
     c.collectProcesses.mockReturnValueOnce(new Promise((r) => (release = r)))

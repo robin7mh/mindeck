@@ -32,7 +32,11 @@ export async function confine(root: string, rel: string): Promise<string> {
     throw outside()
   })
   let probe = landing
-  while (!existsSync(probe)) probe = dirname(probe)
+  while (!existsSync(probe)) {
+    // dirname() of a root is the root itself: a link to a drive that doesn't exist (Windows `Z:\…`) must not loop forever.
+    if (dirname(probe) === probe) throw outside()
+    probe = dirname(probe)
+  }
   if (!inside(join(await realpath(probe), relative(probe, landing)))) throw outside()
   return target
 }

@@ -351,6 +351,23 @@ describe('starting debug adapters', () => {
     closedPort.emit('exit') // after it listened: nothing more to reject
   })
 
+  it('Go: Delve that neither listens nor exits gives up after 30 s and is stopped', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout'] })
+    try {
+      const stuck = new FakeProc()
+      const started = startAdapter('go', { root: '/r', program: '/r/m.go', args: [], debugger: 'dlv', output: () => {} }, () => stuck as never)
+      const failed = expect(started).rejects.toMatchObject({ code: 'debug', message: 'Delve did not start' })
+      stuck.stdout.write('compiling…\n')
+      await vi.advanceTimersByTimeAsync(29_999)
+      expect(stuck.killed).toBe(0)
+      await vi.advanceTimersByTimeAsync(1)
+      await failed
+      expect(stuck.killed).toBe(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('spawnInShell runs through the user’s shell with extra environment; socket transports', async () => {
     const proc = spawnInShell('node', ['-e', 'process.stdout.write(process.env.MINDECK_X)'], await tempDir(), { MINDECK_X: 'yes' })
     let out = ''
@@ -367,6 +384,12 @@ describe('starting debug adapters', () => {
     expect(got).toBe('win')
     expect(typeof socketTransport).toBe('function')
     expect(typeof stdioTransport).toBe('function')
+  }, 20_000)
+
+  it('spawnInShell: a write to a program that just ended (EPIPE) is no uncaught error', async () => {
+    const proc = spawnInShell('true', [], await tempDir())
+    await new Promise((r) => proc.on('exit', r))
+    expect(() => proc.stdin!.emit('error', Object.assign(new Error('write EPIPE'), { code: 'EPIPE' }))).not.toThrow()
   }, 20_000)
 })
 

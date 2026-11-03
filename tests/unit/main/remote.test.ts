@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { connect } from 'node:net'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
@@ -154,6 +154,7 @@ async function setup(
 }
 
 const tick = (ms = 20) => new Promise((r) => setTimeout(r, ms))
+const epipe = () => Object.assign(new Error('write EPIPE'), { code: 'EPIPE' })
 
 describe('remote helpers', () => {
   it('reads concrete hosts from an ssh config (patterns and Match blocks left out)', () => {
@@ -323,6 +324,8 @@ describe('Remote-SSH', () => {
     await expect(mute.svc.ssh('box')).rejects.toMatchObject({ message: 'The remote Mindeck stopped' })
     const slow = await setup({ machine: machine({ core: (p) => p.stderr.write('warming up\n') }) })
     await expect(slow.svc.ssh('box')).rejects.toMatchObject({ message: 'The remote Mindeck did not start in time' })
+    const unstartable = await setup({ machine: machine({ core: (p) => p.emit('error', new Error('spawn ssh EAGAIN')) }) })
+    await expect(unstartable.svc.ssh('box')).rejects.toMatchObject({ code: 'remote-start', message: 'spawn ssh EAGAIN' })
 
     const unlicensed = await setup({ api: api({ adopt: 'fail' }) })
     await expect(unlicensed.svc.ssh('box')).rejects.toMatchObject({ code: 'remote-license', message: expect.stringContaining('(bad-entitlement)') })
@@ -339,6 +342,17 @@ describe('Remote-SSH', () => {
     expect((await t.svc.ssh('box')).state).toBe('ready')
   })
 
+  it('a package that can’t be read, tar or ssh failing mid-upload: the install fails, no uncaught error', async () => {
+    const unreadable = await setup()
+    await rm(join(unreadable.dir, 'pkg.tar.gz'))
+    await expect(unreadable.svc.ssh('box')).rejects.toMatchObject({ code: 'remote-install', message: 'exit 1' })
+    expect(unreadable.m.find('tar xzf')[0].killed).toBe(true)
+
+    const broken = await setup({ machine: machine({ install: (p) => (p.stdin.emit('error', epipe()), p.finish(2, '', 'tar: Broken pipe\n')) }) })
+    await expect(broken.svc.ssh('box')).rejects.toMatchObject({ code: 'remote-install', message: 'tar: Broken pipe' })
+    expect(broken.svc.list()[0]).toMatchObject({ state: 'failed' })
+  })
+
   it('for real: the user’s ssh (nobody listens on port 1 here) and the default ssh config', async () => {
     const home = process.env.HOME
     process.env.HOME = await tempDir('mindeck-home-')
@@ -351,6 +365,12 @@ describe('Remote-SSH', () => {
       process.env.HOME = home
     }
   }, 30_000)
+
+  it('a target that would be read as an ssh option is refused before ssh runs', async () => {
+    const t = await setup()
+    await expect(t.svc.ssh('-oProxyCommand=touch /tmp/pwned')).rejects.toMatchObject({ code: 'bad-input' })
+    expect(t.m.procs).toEqual([])
+  })
 
   it('a process that never ends is stopped after the timeout', async () => {
     const t = await setup({ machine: machine({ probe: () => {} }) })
@@ -413,6 +433,23 @@ describe('Dev Containers', () => {
 
     await t.svc.disconnect(c.id)
     expect(t.svc.list()[0].state).toBe('closed')
+  })
+
+  it('a pipe into the container failing (docker gone, EPIPE) closes its connection, no uncaught error', async () => {
+    const t = await setup()
+    const c = await t.svc.container(await project())
+    const port = Number(c.url!.split(':')[2])
+    for (const fail of [(pipe: FakeProc) => pipe.emit('error', epipe()), (pipe: FakeProc) => pipe.stdin.emit('error', epipe())]) {
+      const before = t.m.find('-e ').length
+      const socket = connect(port, '127.0.0.1')
+      while (t.m.find('-e ').length === before) await tick(2)
+      const pipe = t.m.find('-e ').at(-1)!
+      const closed = new Promise((r) => socket.once('close', r))
+      fail(pipe)
+      await closed
+      while (!pipe.killed) await tick(2) // its other end goes too
+    }
+    expect(t.svc.list()[0].state).toBe('ready')
   })
 
   it('runs the bundled Dev Containers CLI with the platform’s Node (a utility process on the desktop)', async () => {

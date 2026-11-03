@@ -164,6 +164,20 @@ describe('NotebookService', () => {
     expect(h.procs[2].told).toEqual([{ op: 'shutdown' }])
   })
 
+  it('a kernel that closed its stdin: nothing is written to it (no write after end), it is ended all the same', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const root = await realpath(await tempDir())
+    const h = harness(root)
+    const first = h.service.start('p', 'a.ipynb', 'python3')
+    ;(await proc(h.procs, 0)).say({ type: 'ready' })
+    await first
+    h.procs[0].stdin.end()
+    h.service.shutdown('p', 'a.ipynb')
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(h.procs[0].told).toEqual([])
+    expect(h.procs[0].killed).toBe(1)
+  })
+
   it('a kernel that can’t start says why: Jupyter missing, the kernel failing, Python not there, too slow', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     const root = await realpath(await tempDir())

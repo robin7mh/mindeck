@@ -146,9 +146,10 @@ export const useScm = create<ScmState>((set, get) => {
       try {
         const status = await ipc('scm:status', { projectId })
         const [branches, stashes] = status.repo ? await Promise.all([ipc('scm:branches', { projectId }), ipc('scm:stashes', { projectId })]) : [[], []]
-        set({ status, branches, stashes })
+        // The editor switched projects meanwhile: don't show this one's status there.
+        if (project() === projectId) set({ status, branches, stashes })
       } catch (err) {
-        set({ error: errorMessage(err) })
+        if (project() === projectId) set({ error: errorMessage(err) })
       }
     },
 
@@ -184,7 +185,7 @@ export const useScm = create<ScmState>((set, get) => {
       if (!projectId) return
       try {
         const diff = await ipc('scm:diff', { projectId, path: file.path, target: target.kind === 'commit' && file.from ? { ...target, from: file.from } : target })
-        set({ diff: { ...diff, title } })
+        if (project() === projectId) set({ diff: { ...diff, title } })
       } catch (err) {
         set({ error: errorMessage(err) })
       }
@@ -196,6 +197,7 @@ export const useScm = create<ScmState>((set, get) => {
       if (!projectId) return
       try {
         const log = await ipc('scm:log', { projectId })
+        if (project() !== projectId) return
         set({ log })
         if (!get().selected && log[0]) await get().select(log[0].hash)
       } catch (err) {
@@ -209,7 +211,8 @@ export const useScm = create<ScmState>((set, get) => {
       set({ selected: hash })
       try {
         const detail = await ipc('scm:show', { projectId, hash })
-        set({ detail })
+        // Only the commit still selected (clicks can outrun the answers).
+        if (project() === projectId && get().selected === hash) set({ detail })
       } catch (err) {
         set({ error: errorMessage(err) })
       }
@@ -220,7 +223,7 @@ export const useScm = create<ScmState>((set, get) => {
       const projectId = project()
       if (!open || !projectId) return
       ipc('scm:files', { projectId }).then(
-        (files) => set({ files }),
+        (files) => project() === projectId && set({ files }),
         (err: unknown) => set({ error: errorMessage(err) })
       )
     },

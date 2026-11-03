@@ -1,4 +1,7 @@
+import { EventEmitter } from 'node:events'
+import { existsSync } from 'node:fs'
 import { join } from 'node:path'
+import { PassThrough } from 'node:stream'
 import { pathToFileURL } from 'node:url'
 import { describe, expect, it, vi, type Mock } from 'vitest'
 import {
@@ -125,6 +128,57 @@ describe('spawnAcp', () => {
       proc.kill()
     } finally {
       Object.defineProperty(process, 'platform', { value: platform })
+    }
+  })
+
+  it('an agent that cannot start ends like one that exited — no uncaught error', async () => {
+    const platform = process.platform
+    Object.defineProperty(process, 'platform', { value: 'win32' }) // spawned directly: the spawn itself fails
+    try {
+      const cwd = await tempDir()
+      const proc = spawnAcp({ file: join(cwd, 'no-such-agent'), args: [] }, cwd, { ...process.env } as Record<string, string>)
+      const code = await new Promise<number>((r) => proc.onExit(r))
+      expect(code).not.toBe(0)
+    } finally {
+      Object.defineProperty(process, 'platform', { value: platform })
+    }
+  })
+
+  it('a failed start that reports no exit code still ends as a failure', async () => {
+    // Node reports the errno as the code; should a platform report none, it must not read as success (0).
+    const child = Object.assign(new EventEmitter(), { stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough(), pid: undefined, kill: () => true })
+    vi.resetModules()
+    vi.doMock('node:child_process', async (importOriginal) => ({ ...(await importOriginal<typeof import('node:child_process')>()), spawn: () => child }))
+    try {
+      const { spawnAcp: spawnFailing } = await import('../../../electron/main/services/agents/acp')
+      const proc = spawnFailing({ file: 'missing-agent', args: [] }, await tempDir(), {})
+      const exited = new Promise<number>((r) => proc.onExit(r))
+      child.emit('error', Object.assign(new Error('spawn missing-agent ENOENT'), { code: 'ENOENT' }))
+      child.emit('close', null, null)
+      expect(await exited).toBe(1)
+    } finally {
+      vi.doUnmock('node:child_process')
+      vi.resetModules()
+    }
+  })
+
+  it('an error after a good start (a kill refused, …) is no failed start: only the exit reports, once', async () => {
+    const child = Object.assign(new EventEmitter(), { stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough(), pid: 4242, kill: () => true })
+    vi.resetModules()
+    vi.doMock('node:child_process', async (importOriginal) => ({ ...(await importOriginal<typeof import('node:child_process')>()), spawn: () => child }))
+    try {
+      const { spawnAcp: spawnRunning } = await import('../../../electron/main/services/agents/acp')
+      const proc = spawnRunning({ file: 'agent', args: [] }, await tempDir(), {})
+      const exits: number[] = []
+      proc.onExit((code) => exits.push(code))
+      child.emit('error', new Error('kill EPERM'))
+      expect(exits).toEqual([])
+      child.emit('exit', 0, null)
+      child.emit('close', 0, null)
+      expect(exits).toEqual([0])
+    } finally {
+      vi.doUnmock('node:child_process')
+      vi.resetModules()
     }
   })
 })
@@ -400,6 +454,24 @@ describe('AgentSessionService with ACP agents (Codex, Gemini)', () => {
     failing.svc.stop(s3.id) // stopped before the failed handshake reports
     await tick(20)
     expect(failing.svc.get(s3.id).error).toBeUndefined()
+  })
+
+  it('a session removed during a turn: the turn ending late tells nobody and brings no file back', async () => {
+    const t = await acpSetup()
+    const s = await t.svc.create({ kind: 'codex', projectId: 'p1' })
+    await t.settled(s.id, 'idle')
+    let release!: () => void
+    t.agents[0].onPrompt = () => new Promise((r) => (release = () => r({ stopReason: 'end_turn' })))
+    t.svc.send(s.id, 'long task')
+    while (!t.agents[0].prompts.length) await tick(5)
+    await t.svc.remove(s.id)
+    t.published.length = 0
+    release()
+    await tick(20)
+    await t.svc.dispose()
+    expect(t.published).toEqual([])
+    expect(t.deps.notify).not.toHaveBeenCalled()
+    expect(existsSync(join(t.deps.dir, `${s.id}.json`))).toBe(false)
   })
 })
 

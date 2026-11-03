@@ -2,8 +2,15 @@ import { mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { createServer, request } from 'node:http'
 import { connect } from 'node:net'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { tempDir } from './helpers'
+
+// The real fs.watch, unless a test makes it fail (out of inotify watches).
+const fsHooks = vi.hoisted(() => ({ watch: undefined as undefined | (() => never) }))
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>()
+  return { ...actual, watch: ((...args: Parameters<typeof actual.watch>) => (fsHooks.watch ? fsHooks.watch() : actual.watch(...args))) as typeof actual.watch }
+})
 import { inject, isPrivatePath, listen, LiveServerService, matchesGlob, RELOAD_SCRIPT, unchanged } from '../../../electron/main/services/live/LiveServerService'
 import { outputPath, SassService, type SassCompiler } from '../../../electron/main/services/live/SassService'
 import { liveServerSettings, sassSettings } from '../../../electron/main/services/migrate/MigrateService'
@@ -52,7 +59,91 @@ async function nextEvent(url: string): Promise<string> {
   }
 }
 
+/** GET with an explicit Host header (fetch can't set one). */
+function statusWithHost(port: number, path: string, host: string): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const req = request({ host: '127.0.0.1', port, path, headers: { host } }, (res) => {
+      res.resume()
+      resolve(res.statusCode ?? 0)
+    })
+    req.on('error', reject)
+    req.end()
+  })
+}
+
+/** The status code of a hand-written request (e.g. HTTP/1.0 without a Host header). */
+function rawStatus(port: number, raw: string): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const socket = connect(port, '127.0.0.1', () => socket.write(raw))
+    let text = ''
+    socket.on('data', (d) => (text += d.toString()))
+    socket.on('close', () => resolve(Number(/^HTTP\/1\.\d (\d+)/.exec(text)?.[1] ?? 0)))
+    socket.on('error', reject)
+  })
+}
+
 describe('Live Server', () => {
+  it('starting twice at once opens one server', async () => {
+    const root = await site()
+    const { service } = make(root, { port: 0, noBrowser: true })
+    const [a, b] = await Promise.all([service.start('p'), service.start('p')])
+    expect(a).toEqual(b)
+    expect(service.status()).toHaveLength(1)
+  })
+
+  it('a start waiting for one that fails then tries itself', async () => {
+    const root = await site()
+    let asked = 0
+    const service = new LiveServerService({ resolveRoot: () => (asked++ ? root : undefined), settings: () => ({ port: 0, noBrowser: true }) })
+    services.push(service)
+    const [first, second] = await Promise.allSettled([service.start('p'), service.start('p')])
+    expect(first).toMatchObject({ status: 'rejected', reason: { code: 'not-found' } })
+    expect(second).toMatchObject({ status: 'fulfilled', value: { projectId: 'p' } })
+    expect(service.status()).toHaveLength(1)
+  })
+
+  it('three starts at once, the first failing: the other two share one server, and stop closes it', async () => {
+    const root = await site()
+    let asked = 0
+    const service = new LiveServerService({ resolveRoot: () => (asked++ ? root : undefined), settings: () => ({ port: 0, noBrowser: true }) })
+    services.push(service)
+    const [first, second, third] = await Promise.allSettled([service.start('p'), service.start('p'), service.start('p')])
+    expect(first).toMatchObject({ status: 'rejected', reason: { code: 'not-found' } })
+    expect(second.status).toBe('fulfilled')
+    expect(third).toEqual(second)
+    const { port } = (second as PromiseFulfilledResult<{ port: number }>).value
+    expect((await fetch(`http://127.0.0.1:${port}/`)).status).toBe(200)
+    await service.stop('p')
+    await expect(fetch(`http://127.0.0.1:${port}/`)).rejects.toThrow()
+  })
+
+  it('stopped and started anew while the old start still opens its page: the old start finishing leaves the new one to wait for', async () => {
+    const root = await site()
+    let release!: () => void
+    let asked = 0
+    const opened: string[] = []
+    const service = new LiveServerService({
+      // The old start finishes just as the new one starts binding.
+      resolveRoot: () => (++asked === 2 && release(), root),
+      settings: () => ({ port: 0 }),
+      open: (url) => {
+        opened.push(url)
+        return opened.length === 1 ? new Promise((r) => (release = r)) : Promise.resolve()
+      }
+    })
+    services.push(service)
+    const old = service.start('p')
+    while (!opened.length) await new Promise((r) => setTimeout(r, 2))
+    await service.stop('p')
+    const fresh = service.start('p')
+    await old
+    // Still binding: this one must wait for it, not open a second server (leaked with its watcher).
+    const again = service.start('p')
+    const [a, b] = await Promise.all([fresh, again])
+    expect(a).toEqual(b)
+    expect(service.status()).toEqual([a])
+  })
+
   it('serves a folder with the reload script, index pages, listings, files and 404s', async () => {
     const root = await site()
     const { service, opened, published } = make(root, { root: '/public/', port: 0 })
@@ -80,6 +171,11 @@ describe('Live Server', () => {
     const missing = await fetch(`${status.url}/nope.html`)
     expect(missing.status).toBe(404)
     expect(await (await fetch(`${status.url}/../../etc/passwd`)).text()).toContain('Not found')
+    // A malformed escape is a 400, not an unhandled rejection; a foreign Host (DNS rebinding) is refused.
+    expect((await fetch(`${status.url}/%E0%A4%A`)).status).toBe(400)
+    expect(await statusWithHost(status.port, '/index.html', 'evil.example:5500')).toBe(403)
+    expect(await statusWithHost(status.port, '/index.html', `localhost:${status.port}`)).toBe(200)
+    expect(await rawStatus(status.port, 'GET /index.html HTTP/1.0\r\n\r\n')).toBe(403) // no Host at all: not provably local
 
     // A watch that fails (too many files, say) leaves the server serving.
     ;(service as unknown as { running: Map<string, { watcher: NodeJS.EventEmitter }> }).running.get('p')!.watcher.emit('error', new Error('EMFILE'))
@@ -225,6 +321,24 @@ describe('Live Server', () => {
     await expect(listen(none, port, 1)).rejects.toMatchObject({ code: 'EADDRINUSE' })
     taken.close()
     next.close()
+  })
+
+  it('a folder that can’t be watched fails the start and leaves the port free', async () => {
+    const root = await site()
+    const probe = createServer()
+    const port = await listen(probe, 0)
+    await new Promise((r) => probe.close(r))
+    fsHooks.watch = () => {
+      throw Object.assign(new Error('ENOSPC: System limit for number of file watchers reached'), { code: 'ENOSPC' })
+    }
+    try {
+      await expect(make(root, { root: 'public', port }).service.start('p')).rejects.toMatchObject({ code: 'ENOSPC' })
+    } finally {
+      fsHooks.watch = undefined
+    }
+    const again = createServer()
+    expect(await listen(again, port, 1)).toBe(port) // not left bound by the failed start
+    again.close()
   })
 
   it('injects and matches globs', () => {

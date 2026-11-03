@@ -34,6 +34,7 @@ import { EditorTabs } from '@/features/editor/components/EditorTabs'
 import { oneGroup, tabKey, useEditor, type EditorTab as Tab } from '@/features/editor/store'
 import { useProjects } from '@/features/projects/store'
 import { useSession } from '@/features/session/store'
+import { useDebug } from '@/features/editor/debug'
 import { PaneContext } from '@/features/workspace/pane'
 import { allCommands } from '@/features/palette/registry'
 import { en } from '@/lib/i18n/en'
@@ -321,6 +322,29 @@ describe('EditorView', () => {
     expect(screen.queryByText(/^Ln /)).toBeNull()
   })
 
+  it('F9 sets the breakpoint on the cursor line; the cursor goes with the view', async () => {
+    installBridge({ 'projects:list': () => [project('p')], 'files:list': () => [], 'files:stat': () => [] })
+    useProjects.setState({ projects: [project('p')] })
+    useDebug.setState({ breakpoints: {} })
+    useEditor.setState(seed([tab('a.ts')]))
+    const { unmount } = render(view())
+    await act(settle)
+    expect(screen.getByText('Ln 4, Col 2')).toBeInTheDocument()
+    fireEvent.keyDown(window, { key: 'F9' })
+    expect(useDebug.getState().breakpoints.p).toEqual([{ path: 'a.ts', line: 4 }])
+    unmount()
+
+    // A new view on a file that reported no cursor yet: not the old line 4, the first line.
+    useEditor.setState(seed([tab('notes.txt')]))
+    render(view())
+    await act(settle)
+    fireEvent.keyDown(window, { key: 'F9' })
+    expect(useDebug.getState().breakpoints.p).toEqual([
+      { path: 'a.ts', line: 4 },
+      { path: 'notes.txt', line: 1 }
+    ])
+  })
+
   it('while visible: follows the disk (now, every 3 s, on focus) and saves on ⌘S / Ctrl+S', async () => {
     vi.useFakeTimers()
     installBridge({ 'projects:list': () => [project('p')], 'files:list': () => [] })
@@ -330,12 +354,18 @@ describe('EditorView', () => {
     useEditor.setState({ checkDisk, save })
     const { rerender } = render(view(true))
     expect(checkDisk).toHaveBeenCalledTimes(1)
-    act(() => {
-      vi.advanceTimersByTime(3000)
+    // Still in flight: a focus doesn't start a second check on top of it.
+    fireEvent.focus(window)
+    expect(checkDisk).toHaveBeenCalledTimes(1)
+    await act(async () => {})
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000)
     })
     expect(checkDisk).toHaveBeenCalledTimes(2)
+    await act(async () => {})
     fireEvent.focus(window)
     expect(checkDisk).toHaveBeenCalledTimes(3)
+    await act(async () => {})
 
     fireEvent.keyDown(window, { key: 's', metaKey: true })
     fireEvent.keyDown(window, { key: 'S', ctrlKey: true })
@@ -344,8 +374,8 @@ describe('EditorView', () => {
     expect(save).toHaveBeenCalledTimes(2)
 
     rerender(view(false)) // hidden: no polling, no shortcut
-    act(() => {
-      vi.advanceTimersByTime(9000)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(9000)
     })
     fireEvent.focus(window)
     fireEvent.keyDown(window, { key: 's', metaKey: true })
@@ -355,8 +385,8 @@ describe('EditorView', () => {
     // next to another module, without the focus: it follows the disk, the keys are the other module's
     rerender(<PaneContext.Provider value={{ focused: false }}>{view(true)}</PaneContext.Provider>)
     const polls = checkDisk.mock.calls.length
-    act(() => {
-      vi.advanceTimersByTime(3000)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000)
     })
     expect(checkDisk.mock.calls.length).toBeGreaterThan(polls)
     fireEvent.keyDown(window, { key: 's', metaKey: true })
@@ -365,8 +395,8 @@ describe('EditorView', () => {
     // the window hidden, Mindeck running in the background: no disk and git polling for hours
     const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(true)
     const idle = checkDisk.mock.calls.length
-    act(() => {
-      vi.advanceTimersByTime(9000)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(9000)
     })
     expect(checkDisk).toHaveBeenCalledTimes(idle)
     hidden.mockReturnValue(false)
@@ -384,8 +414,8 @@ describe('EditorView', () => {
     const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(true)
     const visibility = () => fireEvent(document, new Event('visibilitychange'))
     const { unmount } = render(view(true))
-    act(() => {
-      vi.advanceTimersByTime(9000)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(9000)
     })
     visibility() // still hidden
     expect(checkDisk).not.toHaveBeenCalled()
@@ -396,17 +426,17 @@ describe('EditorView', () => {
     expect(checkDisk).toHaveBeenCalledTimes(1)
 
     fireEvent.blur(window) // on screen, without the focus: every 15 s instead of every 3 s
-    act(() => {
-      vi.advanceTimersByTime(12_000)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(12_000)
     })
     expect(checkDisk).toHaveBeenCalledTimes(1)
-    act(() => {
-      vi.advanceTimersByTime(3000)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000)
     })
     expect(checkDisk).toHaveBeenCalledTimes(2)
     fireEvent.focus(window) // in front again: now, and every 3 s
-    act(() => {
-      vi.advanceTimersByTime(3000)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000)
     })
     expect(checkDisk).toHaveBeenCalledTimes(4)
 

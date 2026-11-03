@@ -4,6 +4,7 @@ import { getT } from '@/lib/i18n'
 import { useAssistant } from '@/features/agents/store'
 import { monaco } from './setup'
 import { fileOf } from './uri'
+import { randomId } from '@/lib/id'
 import { useEditor } from '../store'
 
 type Editor = monaco.editor.IStandaloneCodeEditor
@@ -25,7 +26,7 @@ let registered = false
 /** Suggestions while typing: switched on in Settings → AI, with the user's own key (never on the account's credit). */
 export const suggesting = () => (status?.source === 'env' || status?.source === 'stored') && !!status.settings.inline
 
-const newId = () => crypto.randomUUID()
+const newId = randomId
 
 /** The suggestion at the cursor, as Monaco's ghost text (Tab accepts it). */
 export const inlineCompletions: monaco.languages.InlineCompletionsProvider = {

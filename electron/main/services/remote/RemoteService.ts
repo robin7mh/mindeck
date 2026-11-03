@@ -151,6 +151,8 @@ export class RemoteService {
 
   /** Connect to an ssh host (a config entry or user@host[:port]). */
   async ssh(target: string): Promise<RemoteConnection> {
+    // ssh would read a leading '-' as an option (-oProxyCommand…), not a host.
+    if (target.startsWith('-')) throw coded('bad-input', `Not a host: ${target}`)
     const id = `ssh:${target}`
     const ssh = (command: string, extra: string[] = []) => this.start('ssh', [...this.sshArgs(), ...extra, ...hostArgs(target), command])
     return this.connect(id, 'ssh', target, async (live) => {
@@ -197,6 +199,9 @@ export class RemoteService {
       // Each connection to the local port is piped into the container (works without published ports).
       live.proxy = createServer((socket) => {
         const pipe = this.start('docker', ['exec', '-i', '-u', user, cid, 'sh', '-c', `exec "${dirOf(this.opts.version)}/node" -e "${PIPE(remotePort)}"`])
+        // The far end may go away mid-write (EPIPE): never an uncaught 'error' in the core.
+        pipe.on('error', () => socket.destroy())
+        pipe.stdin?.on('error', () => socket.destroy())
         socket.pipe(pipe.stdin!)
         pipe.stdout!.pipe(socket)
         socket.on('error', () => pipe.kill())
@@ -261,7 +266,11 @@ export class RemoteService {
         const bundle = await this.opts.bundle(arch)
         const dir = dirOf(this.opts.version)
         const install = target.install(`rm -rf "${dir}" && mkdir -p "${dir}" && tar xzf - -C "${dir}"`)
-        createReadStream(bundle).pipe(install.stdin!)
+        // tar or ssh failing mid-upload (EPIPE), or an unreadable package: the exit code says so — no uncaught 'error'.
+        const upload = createReadStream(bundle)
+        upload.on('error', () => install.kill())
+        install.stdin?.on('error', () => upload.destroy())
+        upload.pipe(install.stdin!)
         const done = await this.collect(install, 10 * 60_000)
         if (done.code !== 0) throw coded('remote-install', lastLine(done.stderr) ?? `exit ${done.code}`)
       }
@@ -386,6 +395,10 @@ export class RemoteService {
       }
       proc.stdout?.on('data', seen)
       proc.stderr?.on('data', (d: Buffer) => (out += d.toString()))
+      proc.on('error', (err) => {
+        clearTimeout(timer)
+        reject(coded('remote-start', err.message))
+      })
       proc.on('close', () => {
         clearTimeout(timer)
         reject(coded('remote-start', lastLine(out) ?? 'The remote Mindeck stopped'))

@@ -478,6 +478,7 @@ describe('main process boot', () => {
     await boot()
     expect(err.mock.calls[0][0]).toContain('migration from the old data folder failed')
   })
+
 })
 
 describe('window wiring', () => {

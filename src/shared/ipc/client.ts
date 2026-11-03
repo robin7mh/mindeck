@@ -7,9 +7,31 @@ import { bridgeTransport, type Transport } from './transport'
 
 let remote: Transport | null = null
 
+interface RemoteSub {
+  bind: (transport: Transport) => () => void
+  off: () => void
+}
+/** Subscriptions made in a browser — re-bound whenever the transport changes (re-pairing, reconnect). */
+const remoteSubs = new Set<RemoteSub>()
+const noop = () => {}
+
 /** Install (or clear) the network transport — called by the web session. */
 export function setTransport(transport: Transport | null): void {
   remote = transport
+  for (const sub of remoteSubs) {
+    sub.off()
+    sub.off = transport ? sub.bind(transport) : noop
+  }
+}
+
+/** A subscription on whichever transport is current, now and after every change. */
+function follow(bind: RemoteSub['bind']): () => void {
+  const sub: RemoteSub = { bind, off: remote ? bind(remote) : noop }
+  remoteSubs.add(sub)
+  return () => {
+    remoteSubs.delete(sub)
+    sub.off()
+  }
 }
 
 /** True inside the Electron window (native dialogs, window controls, …). */
@@ -76,18 +98,19 @@ export async function ipc<K extends IpcChannel>(
  * Never fires on the desktop, whose bridge cannot drop events.
  */
 export function onResync(cb: () => void): () => void {
-  return currentTransport()?.onResync?.(cb) ?? (() => {})
+  return window.mindeck?.invoke ? noop : follow((transport) => transport.onResync?.(cb) ?? noop)
 }
 
 /**
- * Subscribe to a push event. Returns an unsubscribe function. No-ops (returns
- * a noop unsubscribe) without a transport so callers stay simple.
+ * Subscribe to a push event. Returns an unsubscribe function. In a browser the
+ * subscription outlives the current transport: it is bound to whichever core
+ * the session pairs with next (and stays idle while there is none).
  */
 export function onEvent<K extends IpcEvent>(
   channel: K,
   cb: (payload: IpcEvents[K]) => void
 ): () => void {
-  const transport = currentTransport()
-  if (!transport) return () => {}
-  return transport.on(channel, (payload) => cb(payload as IpcEvents[K]))
+  const bridge = window.mindeck
+  if (bridge?.invoke) return bridgeTransport(bridge).on(channel, (payload) => cb(payload as IpcEvents[K]))
+  return follow((transport) => transport.on(channel, (payload) => cb(payload as IpcEvents[K])))
 }

@@ -601,8 +601,10 @@ export class VaultService {
   private async load(root: string, rel: NotePath): Promise<boolean> {
     try {
       const abs = join(root, ...rel.split('/'))
-      const [raw, st] = await Promise.all([readFile(abs, 'utf8'), stat(abs)])
+      // Size first: a huge .md (a log, a dump) is never read into memory.
+      const st = await stat(abs)
       if (st.size > MAX_NOTE_BYTES) return this.index.remove(rel)
+      const raw = await readFile(abs, 'utf8')
       if (this.index.rawOf(rel) === raw) return false
       this.index.upsert(rel, raw, st.mtime)
       return true

@@ -181,6 +181,32 @@ describe('LspClient', () => {
     expect(stubborn.killed).toBe(true)
   })
 
+  it('a write racing the server’s exit (EPIPE) is no uncaught error; the exit ends the client', () => {
+    const server = new FakeServer()
+    const client = new LspClient(server as unknown as RpcProcess)
+    expect(() => server.stdin.emit('error', Object.assign(new Error('write EPIPE'), { code: 'EPIPE' }))).not.toThrow()
+    expect(client.running).toBe(true)
+    server.emit('exit')
+    expect(client.running).toBe(false)
+  })
+
+  it('a notification the handler chokes on is dropped; the client keeps working', async () => {
+    const server = new FakeServer({ echo: (p) => p })
+    const notes: unknown[] = []
+    const client = new LspClient(server as unknown as RpcProcess, {
+      onNotification: (method, params) => {
+        if (method === 'bad') throw new Error('cannot map file:///?')
+        notes.push([method, params])
+      }
+    })
+    server.send({ jsonrpc: '2.0', method: 'bad', params: { uri: 'file:///?' } })
+    server.send({ jsonrpc: '2.0', method: 'good', params: 1 })
+    await tick()
+    expect(notes).toEqual([['good', 1]])
+    expect(client.running).toBe(true)
+    expect(await client.request('echo', 'still here')).toBe('still here')
+  })
+
   it('a reply to a server request after the server stopped is dropped', async () => {
     let release!: (v: unknown) => void
     const server = new FakeServer()

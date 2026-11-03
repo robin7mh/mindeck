@@ -48,10 +48,18 @@ export function spawnAcp(command: { file: string; args: string[] }, cwd: string,
   const line = [file, ...args].map(shellQuote).join(' ')
   const child = process.platform === 'win32' ? spawnProgram(file, args, { cwd, env }) : spawn(shellCommand().file, ['-lc', `exec ${line}`], { cwd, env })
   child.stderr!.resume() // agents log there; never let the pipe fill up
+  // A start that fails (not on PATH, …) emits 'error' and never 'exit': unhandled, it would take the app down.
+  let spawnError = false
+  child.on('error', () => {
+    if (child.pid === undefined) spawnError = true
+  })
   return {
     stream: ndJsonStream(Writable.toWeb(child.stdin!) as WritableStream<Uint8Array>, Readable.toWeb(child.stdout!) as ReadableStream<Uint8Array>),
     kill: () => void child.kill(),
-    onExit: (cb) => void child.on('exit', (code) => cb(code ?? 0))
+    onExit: (cb) => {
+      child.on('exit', (code) => cb(code ?? 0))
+      child.on('close', (code) => spawnError && cb(code ?? 1))
+    }
   }
 }
 

@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { AlertTriangle, ArrowUpFromLine, Bug, CircleX, CloudUpload, Code2, Database, FlaskConical, Radio, Paintbrush, Server, Files, FolderGit2, GitBranch, GitGraph as GraphIcon, GitPullRequest, ListTree, Lock, RefreshCcw, RefreshCw, Search, X, type LucideIcon } from 'lucide-react'
+import { create } from 'zustand'
 import { isDesktop } from '@shared/ipc/client'
 import { Panel } from '@/components/ui/Panel'
 import { cn } from '@/lib/cn'
@@ -204,12 +205,34 @@ function debugKey(e: KeyboardEvent): boolean {
   return true
 }
 
-/** The cursor line of the file in the focused group, for F9. */
-let cursorLine = 1
+/**
+ * Each editor group's cursor. A store of its own, not EditorView state: it
+ * moves on every keystroke, and only the status bar bits showing it should
+ * re-render then — not the whole editor (tree, tabs, panels).
+ */
+const useCursors = create<Record<string, CursorInfo>>(() => ({}))
+
+const onCursor = (group: string, info: CursorInfo) => {
+  useCursors.setState({ [group]: info })
+  useOutline.getState().setCursor(group, { line: info.line, column: info.col })
+}
+
+function CursorPosition({ group }: { group: string }) {
+  const t = useT()
+  const cursor = useCursors((s) => s[group])
+  return cursor ? <span>{t.editor.lineCol(cursor.line, cursor.col)}</span> : null
+}
+
+function CursorLanguage({ group }: { group: string }) {
+  const language = useCursors((s) => s[group]?.language)
+  return language ? <span>{language}</span> : null
+}
+
+/** F9: a breakpoint on the cursor line of the file in the focused group. */
 function toggleBreakpointAtCursor(): void {
-  const { tabs, focusedId } = useEditor.getState()
+  const { tabs, focusedId, activeGroup } = useEditor.getState()
   const tab = tabs.find((x) => x.id === focusedId())
-  if (tab) useDebug.getState().toggleBreakpoint(tab.projectId, tab.path, cursorLine)
+  if (tab) useDebug.getState().toggleBreakpoint(tab.projectId, tab.path, useCursors.getState()[activeGroup]?.line ?? 1)
 }
 
 /** How often open files are compared with the disk while the editor is visible. */
@@ -246,13 +269,6 @@ export function EditorView({ active, onNavigate }: { active: boolean; onNavigate
   // Writing project files can run code (hooks, scripts) — remote clients may
   // only when the core allows remote shells.
   const readOnly = !desktop && info?.remoteTerminal === false
-  const [cursors, setCursors] = useState<Record<string, CursorInfo>>({})
-  const cursor = cursors[activeGroup]
-  cursorLine = cursor?.line ?? 1
-  const onCursor = (group: string, info: CursorInfo) => {
-    setCursors((c) => ({ ...c, [group]: info }))
-    useOutline.getState().setCursor(group, { line: info.line, column: info.col })
-  }
   const session = useDebug((s) => s.session)
   const fileLanguage = useLanguages((s) => (focused ? s.files[focused.id] : undefined))
   const live = useLive()
@@ -340,10 +356,15 @@ export function EditorView({ active, onNavigate }: { active: boolean; onNavigate
     let blurred = false
     let last = 0
     let returned = -Infinity
+    // One look at a time: a slow core (big repo, remote link) must not pile up polls.
+    let looking = false
     const look = () => {
+      if (looking) return
+      looking = true
       last = Date.now()
-      void useEditor.getState().checkDisk()
-      void useScm.getState().refresh()
+      void Promise.allSettled([useEditor.getState().checkDisk(), useScm.getState().refresh()]).then(() => {
+        looking = false
+      })
     }
     const poll = () => {
       if (document.hidden || (blurred && Date.now() - last < BLURRED_POLL_MS)) return
@@ -429,6 +450,8 @@ export function EditorView({ active, onNavigate }: { active: boolean; onNavigate
       offSftp()
     }
   }, [])
+  // The cursor belongs to this view: gone with it.
+  useEffect(() => () => useCursors.setState({}, true), [])
   // Settings, keybindings and snippets taken over from VS Code / Cursor.
   useEffect(() => void useEditorPrefs.getState().load(), [])
 
@@ -668,15 +691,13 @@ export function EditorView({ active, onNavigate }: { active: boolean; onNavigate
                   <Lock size={11} /> {t.editor.readOnly}
                 </span>
               )}
-              {cursor && (
-                <span>{t.editor.lineCol(cursor.line, cursor.col)}</span>
-              )}
+              <CursorPosition group={activeGroup} />
               {missingServer && (
                 <button type="button" title={t.languages.noServerHint} onClick={() => onNavigate('settings')} className="shrink-0 text-amber/80 hover:text-amber">
                   {t.languages.noServer(missingServer.name)}
                 </button>
               )}
-              {cursor && <span>{cursor.language}</span>}
+              <CursorLanguage group={activeGroup} />
               {status?.repo && (
                 <button type="button" aria-pressed={!!blameShown[focused.id]} title={t.blame.toggle} onClick={() => useBlame.getState().toggle(focused.id)} className={cn('hover:text-text-primary', blameShown[focused.id] && 'text-cyan')}>
                   {t.blame.show}

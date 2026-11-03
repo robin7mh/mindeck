@@ -115,6 +115,7 @@ export function createRemoteTransport(opts: RemoteTransportOptions): RemoteTrans
   let retry: ReturnType<typeof setTimeout> | null = null
   let closed = false
   let unauthorized = false
+  let socketOpen = false
   /** The socket went down (or never came up) since the last open: events may be missing. */
   let dropped = false
   /** Where the core's numbered events stand for this client (its `hello`, then each event's `seq`). */
@@ -152,8 +153,13 @@ export function createRemoteTransport(opts: RemoteTransportOptions): RemoteTrans
     const ws = new Socket(eventsUrl(base, origin, resuming ? { stream: stream!, since: lastSeq } : undefined), eventsProtocols(opts.token))
     socket = ws
     let opened = false
+    // A blocked SYN can keep a socket "connecting" for a minute or more — give up
+    // after 10 s so the reconnect loop gets a fresh attempt.
+    const connectTimer = setTimeout(() => ws.close(), 10_000)
     ws.onopen = () => {
+      clearTimeout(connectTimer)
       opened = true
+      socketOpen = true
       delay = minDelay
       setLink('online')
       if (!dropped) return
@@ -191,7 +197,11 @@ export function createRemoteTransport(opts: RemoteTransportOptions): RemoteTrans
     }
     ws.onerror = () => {}
     ws.onclose = (ev) => {
-      socket = null
+      clearTimeout(connectTimer)
+      if (socket === ws) {
+        socket = null
+        socketOpen = false
+      }
       const code = (ev as { code?: number } | undefined)?.code
       if (code === 4401) return rejectToken()
       if (closed) return
@@ -204,7 +214,8 @@ export function createRemoteTransport(opts: RemoteTransportOptions): RemoteTrans
         retry = null
         connect()
       }, delay)
-      delay = Math.min(maxDelay, delay * 2)
+      // Jitter, so many clients do not reconnect in lockstep after a core restart.
+      delay = Math.min(maxDelay, delay * 2 * (0.8 + Math.random() * 0.4))
     }
   }
 
@@ -225,6 +236,9 @@ export function createRemoteTransport(opts: RemoteTransportOptions): RemoteTrans
         return { ok: false, error: { code: 'offline', message: `Mindeck core unreachable: ${(err as Error).message}` } }
       }
       if (res.status === 401) rejectToken()
+      // A failed call marked the link offline; a successful one while the event
+      // socket is up means the core is reachable again.
+      else if (socketOpen) setLink('online')
       const body = (await res.json().catch(() => null)) as IpcResult<unknown> | null
       return body ?? { ok: false, error: { code: 'bad-response', message: `Unexpected response (${res.status})` } }
     },
@@ -248,6 +262,7 @@ export function createRemoteTransport(opts: RemoteTransportOptions): RemoteTrans
       retry = null
       socket?.close()
       socket = null
+      socketOpen = false
     }
   }
 }
@@ -315,11 +330,16 @@ export async function probeCore(
 
 /** A POST to the core's own endpoints: its data, or a throw with the core's message and code. */
 async function post<T>(fetchImpl: FetchLike, url: string, payload: unknown, headers: Record<string, string> = {}): Promise<T> {
-  const res = await fetchImpl(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...headers },
-    body: JSON.stringify(payload)
-  })
+  let res: Awaited<ReturnType<FetchLike>>
+  try {
+    res = await fetchImpl(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...headers },
+      body: JSON.stringify(payload)
+    })
+  } catch (err) {
+    throw Object.assign(new Error(`Mindeck core unreachable: ${(err as Error).message}`), { code: 'offline' })
+  }
   const body = (await res.json().catch(() => null)) as IpcResult<T> | null
   if (!body) throw Object.assign(new Error(`Unexpected response (${res.status})`), { code: 'bad-response' })
   if (!body.ok) throw Object.assign(new Error(body.error.message), { code: body.error.code })

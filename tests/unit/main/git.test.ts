@@ -1,8 +1,10 @@
 import { execFileSync } from 'node:child_process'
+import { EventEmitter } from 'node:events'
 import { existsSync } from 'node:fs'
-import { mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rm, symlink, truncate, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { PassThrough } from 'node:stream'
+import { describe, expect, it, vi } from 'vitest'
 import { tempDir } from './helpers'
 import { GitService, remoteWebUrl } from '../../../electron/main/services/git/GitService'
 
@@ -60,6 +62,21 @@ describe('GitService', () => {
     ])
     expect(await git.fileAt(dir, start.base, 'a.txt')).toBe('one\ntwo\nmine (before the agent)\n')
     expect(await git.fileAt(dir, start.base, 'src/new.ts')).toBe('')
+  })
+
+  it('new files too big to count, or gone before they are read, count as 0 lines', async () => {
+    const dir = await repo()
+    const start = (await git.baseline(dir))!
+    // A multi-GB dump is not read into memory (sparse here: big, but no disk used).
+    await writeFile(join(dir, 'dump.sql'), '')
+    await truncate(join(dir, 'dump.sql'), 5 * 1024 * 1024)
+    await symlink(join(dir, 'nowhere'), join(dir, 'broken-link'))
+    await writeFile(join(dir, 'small.txt'), 'a\nb\n')
+    expect(await git.changes(dir, start)).toEqual([
+      { path: 'broken-link', status: 'added', added: 0, removed: 0 },
+      { path: 'dump.sql', status: 'added', added: 0, removed: 0 },
+      { path: 'small.txt', status: 'added', added: 2, removed: 0 }
+    ])
   })
 
   it('a clean tree uses HEAD; binary diffs count as 0 lines', async () => {
@@ -201,6 +218,31 @@ describe('GitService', () => {
       await expect(git.addWorktree(await tempDir(), '/x', 'b')).rejects.toMatchObject({ code: 'ENOENT' })
     } finally {
       process.env.PATH = saved
+    }
+  })
+
+  it('git leaving before it read the patch (EPIPE) is no uncaught error: its exit code says the patch failed', async () => {
+    const fakeGit = (_file: string, args: string[]) => {
+      const child = Object.assign(new EventEmitter(), { stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough() })
+      setImmediate(() => {
+        if (args.includes('diff')) child.stdout.write('a patch\n')
+        if (args.includes('apply')) {
+          child.stdin.emit('error', Object.assign(new Error('write EPIPE'), { code: 'EPIPE' }))
+          child.stderr.write('patch does not apply\n')
+        }
+        setImmediate(() => child.emit('close', args.includes('apply') ? 1 : 0))
+      })
+      return child
+    }
+    vi.resetModules()
+    vi.doMock('node:child_process', async (importOriginal) => ({ ...(await importOriginal<typeof import('node:child_process')>()), spawn: fakeGit }))
+    try {
+      const { GitService: Faked } = await import('../../../electron/main/services/git/GitService')
+      const dir = await tempDir()
+      await expect(new Faked().applyTo(dir, dir, 'base')).rejects.toMatchObject({ code: 'conflict', message: expect.stringContaining('patch does not apply') })
+    } finally {
+      vi.doUnmock('node:child_process')
+      vi.resetModules()
     }
   })
 })

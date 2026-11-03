@@ -49,6 +49,10 @@ interface GitHubState {
   clearError: () => void
 }
 
+/** Latest list / pull request asked for — older answers arriving later are dropped. */
+let listSeq = 0
+let openSeq = 0
+
 /** GitHub pull requests for the editor's project — the GitHub Pull Requests extension. */
 export const useGitHub = create<GitHubState>((set, get) => {
   const project = () => useEditor.getState().projectId
@@ -95,14 +99,16 @@ export const useGitHub = create<GitHubState>((set, get) => {
     list: async () => {
       const projectId = project()
       if (!projectId) return
+      const seq = ++listSeq
       set({ loading: true })
       try {
         const pulls = await ipc('github:list', { projectId, filter: get().filter, state: get().state })
-        if (project() === projectId) set({ pulls })
+        // Only the latest list (filter / state switched meanwhile, another project).
+        if (seq === listSeq && project() === projectId) set({ pulls })
       } catch (err) {
-        set({ error: errorMessage(err) })
+        if (seq === listSeq) set({ error: errorMessage(err) })
       } finally {
-        set({ loading: false })
+        if (seq === listSeq) set({ loading: false })
       }
     },
 
@@ -118,15 +124,18 @@ export const useGitHub = create<GitHubState>((set, get) => {
     open: async (number) => {
       const projectId = project()
       if (!projectId) return
+      const seq = ++openSeq
       set({ opening: number, creating: false })
       try {
         const detail = await ipc('github:view', { projectId, number })
+        // Another pull request (or project) was opened meanwhile: that one wins.
+        if (seq !== openSeq || project() !== projectId) return
         set({ detail })
         useScm.getState().closeDiff()
       } catch (err) {
-        set({ error: errorMessage(err) })
+        if (seq === openSeq) set({ error: errorMessage(err) })
       } finally {
-        set({ opening: undefined })
+        if (seq === openSeq) set({ opening: undefined })
       }
     },
 

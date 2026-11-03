@@ -122,6 +122,12 @@ describe('MongoDB', () => {
     const unauthorized = setup(fakeMongo({ failList: true }))
     await expect(unauthorized.svc.add('x', 'mongodb://localhost')).rejects.toMatchObject({ message: 'not authorized' })
     expect(await unauthorized.svc.connections()).toEqual([])
+    expect(unauthorized.closed()).toBe(1) // the refused client is not left open
+    // ... and when it won't close either, the reason it was refused is still what the user sees
+    const unclosable = setup(fakeMongo({ failList: true, failClose: true }))
+    await expect(unclosable.svc.add('x', 'mongodb://localhost')).rejects.toMatchObject({ message: 'not authorized' })
+    expect(unclosable.closed()).toBe(1)
+    expect(await unclosable.svc.connections()).toEqual([])
     // a client that fails to close is gone all the same
     const stuck = setup(fakeMongo({ failClose: true }))
     const s1 = await stuck.svc.add('x', 'mongodb://localhost')

@@ -540,6 +540,22 @@ describe('AssistantService — limits, stop reasons, cancellation', () => {
     expect(f.events.at(-1)).toMatchObject({ type: 'agent.failed', payload: { error: 'plain failure' } })
   })
 
+  it('a conversation that can’t be saved at the end (disk full): a warning, and the run still finishes', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const h = await harness()
+    h.script.push(async (req, onText) => {
+      vi.spyOn(h.store, 'save').mockRejectedValue(new Error('disk full'))
+      return say('done')(req, onText)
+    })
+    const a = await h.svc.send({ text: 'x' }, ipc)
+    await h.svc.idle()
+    expect(warn).toHaveBeenCalledWith(`[assistant] could not save conversation ${a.conversationId}: disk full`)
+    expect((await h.svc.runs())[0]).toMatchObject({ status: 'completed' })
+    expect(h.events.at(-1)?.type).toBe('agent.completed')
+    expect(h.pushed).toContainEqual({ channel: 'ai:message', payload: { conversationId: a.conversationId, message: expect.objectContaining({ status: 'done' }), running: false } })
+    expect((await h.svc.conversations())[0].running).toBe(false)
+  })
+
   it('removes conversations (stopping a running one) and disposes cleanly', async () => {
     const h = await harness({ script: [say('x'), hang, hang] })
     const a = await h.svc.send({ text: 'x' }, ipc)

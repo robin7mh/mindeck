@@ -147,6 +147,18 @@ describe('shell pieces', () => {
     expect(screen.getByLabelText('Restore')).toBeInTheDocument()
   })
 
+  it('WindowControls: a window that can’t say whether it is maximized still works and follows later changes', async () => {
+    const bridge = installBridge({}, 'win32')
+    bridge.isMaximized.mockRejectedValueOnce(new Error('window is gone'))
+    render(<WindowControls />)
+    await act(settle)
+    expect(bridge.isMaximized).toHaveBeenCalled()
+    fireEvent.click(screen.getByLabelText('Maximize'))
+    expect(bridge.toggleMaximize).toHaveBeenCalled()
+    act(() => bridge.setMaximized(true))
+    expect(screen.getByLabelText('Restore')).toBeInTheDocument()
+  })
+
   it('WindowControls no-op without a bridge', () => {
     render(<WindowControls />)
     fireEvent.click(screen.getByLabelText('Minimize'))

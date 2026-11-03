@@ -133,6 +133,21 @@ describe('GitHub store', () => {
     expect(g().pulls).toEqual([])
   })
 
+  it('a pull request arriving after the editor switched projects is not shown there', async () => {
+    let view!: (d: Detail) => void
+    github({ 'github:view': () => new Promise((r) => (view = r)) })
+    const diff = { path: 'q.ts', original: '', modified: '', title: 'q.ts' }
+    const opening = g().open(8)
+    expect(g().opening).toBe(8)
+    act(() => useEditor.setState({ projectId: 'q' }))
+    useScm.setState({ diff }) // the new project's diff on screen
+    view(detail({ number: 8 }))
+    await opening
+    expect(g()).toMatchObject({ detail: undefined, opening: undefined })
+    expect(g().error).toBeUndefined()
+    expect(useScm.getState().diff).toEqual(diff)
+  })
+
   it('a new project: its pull requests once loaded; the form and the detail close', async () => {
     const bridge = github()
     useGitHub.setState({ creating: true, detail: detail() })
@@ -349,6 +364,18 @@ describe('pull request detail', () => {
     act(() => useGitHub.setState({ busy: undefined }))
     fireEvent.click(screen.getByRole('button', { name: 'Close' }))
     expect(g().detail).toBeUndefined()
+  })
+
+  it('links in the description never navigate the app window: http(s) opens outside, others do nothing', () => {
+    const open = vi.spyOn(window, 'open').mockReturnValue(null)
+    useGitHub.setState({ detail: detail({ body: '[site](https://example.com) [bad](file:///etc/passwd)' }) })
+    render(<PullDetail />)
+    const site = screen.getByRole('link', { name: 'site' })
+    expect(fireEvent.click(site)).toBe(false) // default (navigation) prevented
+    expect(open).toHaveBeenCalledWith('https://example.com', '_blank', 'noopener,noreferrer')
+    expect(fireEvent.click(screen.getByText('bad'))).toBe(false)
+    expect(open).toHaveBeenCalledTimes(1)
+    open.mockRestore()
   })
 
   it('comment, approve, request changes (text needed where GitHub needs it); the box empties when sent', async () => {

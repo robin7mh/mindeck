@@ -1,6 +1,8 @@
 import { chmod, writeFile } from 'node:fs/promises'
 import { execFile } from 'node:child_process'
+import { EventEmitter } from 'node:events'
 import { join } from 'node:path'
+import { PassThrough } from 'node:stream'
 import { promisify } from 'node:util'
 import { describe, expect, it, vi } from 'vitest'
 import { tempDir } from './helpers'
@@ -315,4 +317,20 @@ describe('GitHub through gh', () => {
     platform.mockRestore()
     expect(typeof loginShellGh).toBe('function')
   }, 20_000)
+
+  it('gh leaving before it read its input (EPIPE) is no uncaught error: the exit code reports it', async () => {
+    const child = Object.assign(new EventEmitter(), { stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough(), kill: () => true })
+    vi.resetModules()
+    vi.doMock('node:child_process', async (importOriginal) => ({ ...(await importOriginal<typeof import('node:child_process')>()), spawn: () => child }))
+    try {
+      const { shellRunner: faked } = await import('../../../electron/main/services/github/GitHubService')
+      const running = faked('gh')(['pr', 'comment'], await tempDir(), 'a long comment')
+      child.stdin.emit('error', Object.assign(new Error('write EPIPE'), { code: 'EPIPE' }))
+      child.emit('close', 2)
+      expect(await running).toEqual({ code: 2, stdout: '', stderr: '' })
+    } finally {
+      vi.doUnmock('node:child_process')
+      vi.resetModules()
+    }
+  })
 })

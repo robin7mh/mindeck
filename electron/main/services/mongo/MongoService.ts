@@ -124,7 +124,13 @@ export class MongoService {
     const trimmed = uri.trim()
     if (!/^mongodb(\+srv)?:\/\//.test(trimmed)) throw coded('bad-uri', 'A connection string starts with mongodb:// or mongodb+srv://')
     const client = await this.open(trimmed)
-    await client.db().admin().listDatabases()
+    try {
+      await client.db().admin().listDatabases()
+    } catch (err) {
+      // Not saved: don't keep its connection pool open either.
+      await client.close().catch(() => {})
+      throw err
+    }
     const saved: Saved = { id: randomUUID(), name: name.trim() || hostOf(trimmed), uri: trimmed }
     this.clients.set(saved.id, Promise.resolve(client))
     await this.store([...(await this.saved()), saved])

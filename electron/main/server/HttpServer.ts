@@ -29,6 +29,8 @@ const PAIR_MAX_TRACKED = 1000
 /** Open connections at most (a phone, a browser or two — never thousands). */
 const MAX_CONNECTIONS = 512
 const HEARTBEAT_MS = 30_000
+/** Unsent bytes a WebSocket client may fall behind before it is dropped. */
+const MAX_BUFFERED = 16 * 1024 * 1024
 /** "Stay paired in this browser": the cookie lives as long as browsers let one (400 days) — the token's own idle expiry (90 days) still holds. */
 const COOKIE_MAX_AGE_S = 400 * 24 * 60 * 60
 /** The first byte of a TLS handshake: the connection speaks HTTPS. */
@@ -504,6 +506,7 @@ export class HttpServer {
       return await this.serveStatic(path, res)
     } catch (err) {
       const e = err instanceof HttpError ? err : internal(err)
+      if (res.headersSent) return void res.destroy()
       send(res, e.status, { ok: false, error: { code: e.code, message: e.message } })
     }
   }
@@ -525,6 +528,12 @@ export class HttpServer {
     if (recent.length >= PAIR_MAX_FAILURES) {
       throw new HttpError(429, 'rate-limited', 'Too many failed pairing attempts — try again later')
     }
+    // Counted up front: concurrent attempts must not all pass the check above
+    // before the first failure is recorded. A successful pairing clears it.
+    // Kept in order of the last attempt; past the limit the oldest address is forgotten.
+    this.pairFailures.delete(key)
+    this.pairFailures.set(key, [...recent, now])
+    if (this.pairFailures.size > PAIR_MAX_TRACKED) this.pairFailures.delete(this.pairFailures.keys().next().value!)
     const body = (await readJson(req, MAX_PAIR_BODY)) as { code?: unknown; name?: unknown; cookie?: unknown; remember?: unknown } | undefined
     // The web UI keeps its token in a cookie: only its own page may ask for one (before the code is spent).
     const asCookie = body?.cookie === true
@@ -540,10 +549,6 @@ export class HttpServer {
       this.setCookie(req, res, result.token, body?.remember !== false)
       send(res, 200, { ok: true, data: { device: result.device, ...pins } })
     } catch (err) {
-      // Kept in order of the last failure; past the limit the oldest address is forgotten.
-      this.pairFailures.delete(key)
-      this.pairFailures.set(key, [...recent, now])
-      if (this.pairFailures.size > PAIR_MAX_TRACKED) this.pairFailures.delete(this.pairFailures.keys().next().value!)
       throw new HttpError(401, 'bad-code', (err as Error).message)
     }
   }
@@ -663,12 +668,12 @@ export class HttpServer {
   // --- WebSocket ---
 
   private async upgrade(req: IncomingMessage, socket: Duplex, head: Buffer): Promise<void> {
+    socket.on('error', () => socket.destroy())
     if (!this.hostAllowed(req) || this.refusesPlain(req)) {
       socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n')
       socket.destroy()
       return
     }
-    const url = new URL(req.url as string, 'http://local')
     // The app offers its token as a subprotocol; the web UI's browser sends its cookie — from the web UI only.
     const offered = socketToken(req)
     const fromCookie = offered === null ? cookie(req, this.cookieName()) : undefined
@@ -677,8 +682,16 @@ export class HttpServer {
       socket.destroy()
       return
     }
-    const device = url.pathname === '/api/events' ? await this.opts.auth.verify(offered ?? fromCookie) : null
-    if (!device) {
+    // Nothing here may reject unhandled. A malformed URL is simply not authenticated.
+    const url = URL.canParse(req.url as string, 'http://local') ? new URL(req.url as string, 'http://local') : null
+    const device = url?.pathname === '/api/events' ? await this.opts.auth.verify(offered ?? fromCookie).catch(() => undefined) : null
+    // The device store failed: nothing is known about the token, so the cookie stays for the next attempt.
+    if (device === undefined) {
+      socket.write('HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n')
+      socket.destroy()
+      return
+    }
+    if (!url || !device) {
       const clear = fromCookie !== undefined ? `Set-Cookie: ${this.expiredCookie(req)}\r\n` : ''
       socket.write(`HTTP/1.1 401 Unauthorized\r\n${clear}Connection: close\r\n\r\n`)
       socket.destroy()
@@ -770,7 +783,11 @@ export class HttpServer {
       if (only !== undefined && deviceId !== only) continue
       const message = VOLATILE.includes(channel) ? body : stream.record(body, now)
       for (const client of this.clients) {
-        if (client.deviceId === deviceId && client.ws.readyState === client.ws.OPEN) client.ws.send(message)
+        if (client.deviceId !== deviceId || client.ws.readyState !== client.ws.OPEN) continue
+        // A client that stopped reading (stalled network, suspended phone) would otherwise
+        // buffer every event in memory: drop it, it reconnects and catches up.
+        if (client.ws.bufferedAmount > MAX_BUFFERED) client.ws.terminate()
+        else client.ws.send(message)
       }
     }
   }

@@ -5,13 +5,15 @@ import { tempDir } from './helpers'
 
 // Every path the disk is asked about.
 const probed = vi.hoisted(() => [] as string[])
+// A missing drive: nothing on it exists, not even its root.
+const drive = vi.hoisted(() => ({ gone: false }))
 vi.mock('node:fs', async (importOriginal) => {
   const real = await importOriginal<typeof import('node:fs')>()
   return {
     ...real,
     existsSync: (p: string) => {
       probed.push(String(p))
-      return real.existsSync(p)
+      return !drive.gone && real.existsSync(p)
     }
   }
 })
@@ -84,5 +86,16 @@ describe('confine', () => {
     await writeFile(join(out, 'there.txt'), 'x')
     await symlink('../outside/there.txt', join(root, 'there'))
     await refused('there')
+  })
+
+  it('a link to a drive that isn’t there (Windows `Z:\\…`) is refused — looking for its root must end', async () => {
+    const root = await tempDir()
+    await symlink('/no-such-drive/autostart.desktop', join(root, 'notes.md'))
+    drive.gone = true
+    try {
+      await expect(confine(root, 'notes.md')).rejects.toMatchObject({ code: 'outside-project' })
+    } finally {
+      drive.gone = false
+    }
   })
 })

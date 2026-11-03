@@ -71,6 +71,8 @@ export const shellRunner =
           stderr: Buffer.concat(err).toString()
         })
       })
+      // gh may exit before reading its input (EPIPE): the exit code reports it, not an uncaught 'error'.
+      proc.stdin!.on('error', () => {})
       proc.stdin!.end(input ?? '')
     })
 

@@ -90,10 +90,12 @@ export class InlineService {
   }
 
   private async run(requestId: string, model: string, effort: Effort, system: string, user: string, maxTokens: number, onText: (delta: string) => void = () => {}, kind?: 'edit'): Promise<string> {
-    const provider = await this.deps.ai.provider()
+    // Registered before the first await: a cancel (or a newer suggestion) while the provider resolves still stops it.
     const abort = new AbortController()
     this.running.set(requestId, abort)
     try {
+      const provider = await this.deps.ai.provider()
+      if (abort.signal.aborted) throw aiError('cancelled', 'Cancelled')
       const turn = await provider.stream({ model, effort, system, messages: [{ role: 'user', blocks: [{ type: 'text', text: user }] }], tools: [], webTools: false, maxTokens, signal: abort.signal, kind }, onText)
       if (turn.stopReason === 'refusal') throw aiError('refused', 'The model declined this request')
       return turn.message.blocks.map((b) => (b.type === 'text' ? b.text : '')).join('')

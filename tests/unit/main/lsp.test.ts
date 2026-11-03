@@ -289,6 +289,15 @@ describe('TsServer protocol', () => {
     expect(proc.killed).toBe(true)
   })
 
+  it('a write racing the server’s exit (EPIPE) is no uncaught error; the exit ends the server', () => {
+    const proc = new FakeProc()
+    const server = new TsServer(proc as unknown as TsProcess)
+    expect(() => proc.stdin.emit('error', Object.assign(new Error('write EPIPE'), { code: 'EPIPE' }))).not.toThrow()
+    expect(server.running).toBe(true)
+    proc.emit('exit')
+    expect(server.running).toBe(false)
+  })
+
   it('the service keeps at most three servers (least recently used goes) and restarts a crashed one', async () => {
     const procs: FakeProc[] = []
     const roots = await Promise.all([1, 2, 3, 4].map(() => tempDir()))
@@ -318,6 +327,24 @@ describe('TsServer protocol', () => {
     expect(procs[3].sent.filter((s) => s.command === 'updateOpen')).toHaveLength(3)
   })
 
+
+  it('files of one project opening at once share one tsserver (none is orphaned)', async () => {
+    const procs: FakeProc[] = []
+    const root = await tempDir()
+    await writeFile(join(root, 'a.ts'), '')
+    await writeFile(join(root, 'b.ts'), '')
+    const lsp = make(undefined, {
+      resolveRoot: () => root,
+      locate: () => '/ts.js',
+      start: (_ts, _root, onExit) => {
+        const proc = new FakeProc()
+        procs.push(proc)
+        return new TsServer(proc as unknown as TsProcess, onExit)
+      }
+    })
+    await Promise.all([lsp.open('p', 'a.ts', ''), lsp.open('p', 'b.ts', '')])
+    expect(procs).toHaveLength(1)
+  })
 
   it('odd answers: string docs, tags without text, empty bodies, unknown categories, failures that are not "nothing here"', async () => {
     const root = await tempDir()

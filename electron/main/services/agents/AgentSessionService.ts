@@ -406,7 +406,8 @@ export class AgentSessionService {
     await rm(this.launchDir(id), { recursive: true, force: true })
     this.live.delete(id)
     // In the write queue: a save still in flight must not bring the file back.
-    this.writes = this.writes.then(() => rm(this.file(id), { force: true }))
+    // Never rejects: a rejected queue would skip every later save.
+    this.writes = this.writes.then(() => rm(this.file(id), { force: true })).catch(() => {})
     await this.persist()
     this.deps.publish('agents:changed', { removed: id })
   }
@@ -583,6 +584,12 @@ export class AgentSessionService {
     this.deps.server.unregister(id)
     l.acp?.abort.abort()
     l.acp = undefined
+    // A turn the agent never finished (it crashed or was stopped) no longer shows as running.
+    const last = l.messages[l.messages.length - 1]
+    if (last?.role === 'assistant' && last.status === 'streaming') {
+      last.status = 'done'
+      this.deps.publish('agents:message', { sessionId: id, message: last })
+    }
     const failed = code !== 0 && l.session.status === 'starting'
     const name = AGENT_NAMES[l.session.kind]
     this.update(l, {
@@ -706,7 +713,11 @@ export class AgentSessionService {
       turn.status = 'error'
       turn.error = (err as Error).message
     }
-    if (l.acp !== link) return
+    // The agent went away meanwhile: the turn's end still reaches the UI (no spinner forever).
+    if (l.acp !== link) {
+      if (this.live.get(l.session.id) === l) this.applied(l, { changed: [turn] })
+      return
+    }
     this.update(l, { status: 'idle' })
     this.applied(l, { changed: [turn], attention: turn.status === 'error' ? 'error' : 'done' })
   }

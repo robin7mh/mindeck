@@ -1,8 +1,10 @@
 import { createHash } from 'node:crypto'
 import { lstat, mkdir, readFile, stat, symlink, writeFile } from 'node:fs/promises'
+import { ServerResponse } from 'node:http'
 import { connect, createServer, type Server as NetServer } from 'node:net'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import type { Duplex } from 'node:stream'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { WebSocket } from 'ws'
 import { tempDir, tick } from './helpers'
@@ -206,6 +208,7 @@ describe('AuthService', () => {
     await expect(broken.createPairingCode()).rejects.toThrow()
     await expect(broken.createPairingCode()).rejects.toThrow() // the chain survived
   })
+
 })
 
 describe('FsService', () => {
@@ -371,6 +374,90 @@ describe('HttpServer — API', () => {
     internals.sweep()
     expect(internals.pairFailures.has('10.0.0.9')).toBe(false)
     expect(internals.pairFailures.size).toBe(1) // the recent ones stay
+  })
+
+  it('counts concurrent pairing attempts before they finish (no burst past the limit)', async () => {
+    const { base } = await startHttp()
+    const statuses = await Promise.all(
+      Array.from({ length: 25 }, () => fetch(`${base}/api/pair`, { method: 'POST', body: JSON.stringify({ code: 'AAAA-AAAA' }) }).then((r) => r.status))
+    )
+    expect(statuses.filter((s) => s === 401)).toHaveLength(10)
+    expect(statuses.filter((s) => s === 429)).toHaveLength(15)
+  })
+})
+
+describe('HttpServer — robustness', () => {
+  /** A WebSocket upgrade by hand: what the server answers before any WebSocket code runs. */
+  const rawUpgrade = (port: number, target: string, headers = '') =>
+    new Promise<string>((resolve, reject) => {
+      const socket = connect(port, '127.0.0.1', () => {
+        socket.write(`GET ${target} HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n${headers}\r\n`)
+      })
+      let text = ''
+      socket.on('data', (d) => (text += d.toString()))
+      socket.on('close', () => resolve(text))
+      socket.on('error', reject)
+    })
+
+  it('answers a malformed upgrade with 401 and keeps serving', async () => {
+    const { base, http } = await startHttp()
+    expect(await rawUpgrade(http.port, '//[')).toContain('401')
+    expect((await fetch(`${base}/api/health`)).status).toBe(200)
+  })
+
+  it('a device store that fails during an upgrade: 503, and the web UI keeps its cookie for the next attempt', async () => {
+    const { base, http, auth } = await startHttp()
+    vi.spyOn(auth, 'verify').mockRejectedValueOnce(new Error('EIO'))
+    const raw = await rawUpgrade(http.port, '/api/events', `Origin: ${base}\r\nCookie: mindeck_${http.port}=mindeck_x\r\n`)
+    expect(raw).toContain('503')
+    expect(raw).not.toContain('Set-Cookie')
+    expect((await fetch(`${base}/api/health`)).status).toBe(200)
+  })
+
+  it('a connection that breaks during an upgrade ends only that socket', async () => {
+    const { base, http, auth } = await startHttp()
+    const upgrade = vi.spyOn(http as unknown as { upgrade(req: unknown, socket: Duplex, head: Buffer): Promise<void> }, 'upgrade')
+    // The device check is still running when the connection breaks.
+    let answer: ((device: null) => void) | undefined
+    vi.spyOn(auth, 'verify').mockImplementationOnce(() => new Promise((resolve) => (answer = resolve)))
+    const closed = rawUpgrade(http.port, '/api/events')
+    await vi.waitFor(() => expect(answer).toBeDefined())
+    const socket = upgrade.mock.calls[0][1]
+    socket.emit('error', new Error('read ECONNRESET')) // without a listener: an uncaught exception in the core
+    expect(socket.destroyed).toBe(true)
+    answer!(null)
+    await closed
+    expect((await fetch(`${base}/api/health`)).status).toBe(200)
+  })
+
+  it('a failure after the headers went out drops that connection instead of answering twice', async () => {
+    const { base, token } = await startHttp()
+    const unhandled = vi.fn()
+    process.on('unhandledRejection', unhandled)
+    try {
+      // The response breaks mid-way (headers written, body not): no second response on top of it.
+      vi.spyOn(ServerResponse.prototype, 'end').mockImplementationOnce(() => {
+        throw new Error('stream broke')
+      })
+      await expect(rpc(base, 'projects:list', undefined, token)).rejects.toThrow()
+      await tick(20)
+      expect(unhandled).not.toHaveBeenCalled()
+    } finally {
+      process.off('unhandledRejection', unhandled)
+    }
+    expect(await (await rpc(base, 'projects:list', undefined, token)).json()).toEqual({ ok: true, data: [{ id: 'p' }] })
+  })
+
+  it('drops a WebSocket client that stopped reading instead of buffering without bound', async () => {
+    const { http, hub } = await startHttp()
+    const internals = http as unknown as { clients: Set<unknown>; streams: { open(id: string, now: number): unknown } }
+    const slow = { ws: { readyState: 1, OPEN: 1, bufferedAmount: 64 * 1024 * 1024, send: vi.fn(), terminate: vi.fn() }, deviceId: 'x', alive: true }
+    internals.clients.add(slow)
+    internals.streams.open('x', Date.now())
+    hub.publish('memory:changed', { paths: [] })
+    expect(slow.ws.terminate).toHaveBeenCalled()
+    expect(slow.ws.send).not.toHaveBeenCalled()
+    internals.clients.delete(slow)
   })
 })
 

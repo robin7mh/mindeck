@@ -320,7 +320,8 @@ export class AssistantService {
       closeOpenToolCalls(conv.transcript)
       run.endedAt = new Date().toISOString()
       conv.updatedAt = run.endedAt
-      await this.deps.store.save(conv)
+      // A failed save (disk full, …) must not skip the rest: the run would show as running forever.
+      await this.deps.store.save(conv).catch((err: Error) => console.warn(`[assistant] could not save conversation ${conv.id}: ${err.message}`))
       await this.deps.runs.save(run)
       const type = run.status === 'completed' ? 'agent.completed' : run.status === 'cancelled' ? 'agent.cancelled' : 'agent.failed'
       this.deps.events.emit(type, {

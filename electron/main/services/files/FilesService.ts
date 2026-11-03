@@ -95,6 +95,9 @@ export class FilesService {
     if (current && expectedMtime !== undefined && current.mtimeMs !== expectedMtime) {
       throw coded('conflict', `${path} changed on disk since it was opened`)
     }
+    // "Missing" but present as an entry = a dangling symlink: writing would create
+    // its target, wherever it points (confine only sees the link's folder).
+    if (!current && (await this.exists(abs))) throw coded('outside-project', `${path} is a link to nowhere`)
     if (!current) await mkdir(dirname(abs), { recursive: true })
     await writeFile(abs, content, 'utf8')
     const info = await stat(abs)

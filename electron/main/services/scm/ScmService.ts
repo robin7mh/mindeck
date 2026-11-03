@@ -393,7 +393,13 @@ export class ScmService {
     const root = this.root(projectId)
     try {
       const raw = await this.git(root, ['ls-files', '-z', '--cached', '--others', '--exclude-standard'])
-      return [...new Set(raw.split('\0').filter(Boolean))].filter((p) => existsSync(join(root, p))).slice(0, this.limits.files)
+      // Deleted-but-tracked files are dropped with a sync check — stop at the cap, a huge repo must not freeze the main process.
+      const out: string[] = []
+      for (const p of new Set(raw.split('\0').filter(Boolean))) {
+        if (out.length >= this.limits.files) break
+        if (existsSync(join(root, p))) out.push(p)
+      }
+      return out
     } catch {
       const found: string[] = []
       const walk = async (dir: string) => {

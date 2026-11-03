@@ -174,7 +174,10 @@ export const useMongo = create<MongoState>((set, get) => {
       set({ mode, documents: [], total: 0 })
       if (mode === 'indexes') {
         const open = get().open!
-        void guarded(async () => set({ indexes: await ipc('mongo:indexes', open) }))
+        void guarded(async () => {
+          const indexes = await ipc('mongo:indexes', open)
+          if (get().open === open) set({ indexes })
+        })
       } else if (mode === 'find') void get().run(0)
     },
 
@@ -186,10 +189,12 @@ export const useMongo = create<MongoState>((set, get) => {
       await guarded(async () => {
         if (get().mode === 'aggregate') {
           const documents = await ipc('mongo:aggregate', { ...open, pipeline: get().pipeline })
+          if (get().open !== open) return // another collection opened meanwhile
           return set({ documents, total: documents.length, skip: 0 })
         }
         const { filter, sort, limit } = get()
         const result = await ipc('mongo:find', { ...open, query: { filter, sort, limit, skip } })
+        if (get().open !== open) return // another collection opened meanwhile
         set({ documents: result.documents, total: result.total, skip })
       })
     },

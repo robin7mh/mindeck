@@ -3,6 +3,8 @@ import { join } from 'node:path'
 import { writeAtomic } from '../../lib/writeAtomic'
 import type { ProjectContext } from '@shared/types/context'
 
+const SAFE_ID = /^[a-zA-Z0-9_-]{1,200}$/
+
 /**
  * Per-project context cache as one JSON file each. Treated as a rebuildable
  * cache (the repo is the source of truth) — this is deliberately NOT SQLite yet:
@@ -16,10 +18,13 @@ export class ContextStore {
   }
 
   private file(projectId: string): string {
+    // Ids reach here from clients: never a path out of the cache folder (`../../…`).
+    if (!SAFE_ID.test(projectId)) throw Object.assign(new Error('Invalid project id'), { code: 'bad-id' })
     return join(this.dir, `${projectId}.json`)
   }
 
   async get(projectId: string): Promise<ProjectContext | null> {
+    if (!SAFE_ID.test(projectId)) return null
     try {
       return JSON.parse(await readFile(this.file(projectId), 'utf8')) as ProjectContext
     } catch {

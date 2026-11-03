@@ -206,6 +206,23 @@ describe('AgentSessionService: sessions', () => {
     expect(existsSync(join(plain.deps.dir, `${s.id}.json`))).toBe(false)
   })
 
+  it('a transcript that can’t be deleted stops no later save', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const stuck = await t.svc.create({ kind: 'claude-code', projectId: 'p1' })
+    const kept = await t.svc.create({ kind: 'claude-code', projectId: 'p1' })
+    await t.svc.remove((await t.svc.create({ kind: 'claude-code', projectId: 'p1' })).id) // what is queued so far is on disk
+    const transcript = join(t.deps.dir, `${stuck.id}.json`)
+    await rm(transcript, { force: true })
+    await mkdir(join(transcript, 'not-a-file'), { recursive: true })
+    await t.svc.remove(stuck.id)
+    expect(t.svc.list().map((s) => s.id)).toEqual([kept.id])
+    expect(t.published).toContainEqual({ channel: 'agents:changed', payload: { removed: stuck.id } })
+    t.svc.rename(kept.id, 'Saved all the same')
+    await t.svc.dispose()
+    const { sessions } = JSON.parse(await readFile(join(t.deps.dir, 'sessions.json'), 'utf8')) as { sessions: { session: { title: string } }[] }
+    expect(sessions.map((s) => s.session.title)).toEqual(['Saved all the same'])
+  })
+
   it('remembers sessions across restarts as ended (resumable); survives a broken list', async () => {
     const s = await t.svc.create({ kind: 'claude-code', projectId: 'p1', prompt: 'hi' })
     await t.hook(s.id, { hook_event_name: 'UserPromptSubmit', prompt: 'hi' })
@@ -231,6 +248,15 @@ describe('AgentSessionService: sessions', () => {
     const noTranscript = track(new AgentSessionService(t.deps))
     await noTranscript.init()
     expect(noTranscript.get(s.id)).toMatchObject({ status: 'ended', terminalId: undefined, messages: [] })
+    await noTranscript.dispose()
+
+    // A damaged transcript loses only its own messages, never the other sessions.
+    await writeFile(join(t.deps.dir, 'sessions.json'), JSON.stringify({ version: 1, sessions: [s, failed].map((x) => ({ session: again.get(x.id), baseline: null, projectPath: t.projectPath })) }))
+    await writeFile(join(t.deps.dir, `${s.id}.json`), '[{"role":')
+    const damaged = track(new AgentSessionService(t.deps))
+    await damaged.init()
+    expect(damaged.list().map((x) => x.id).sort()).toEqual([s.id, failed.id].sort())
+    expect(damaged.get(s.id).messages).toEqual([expect.objectContaining({ errorCode: 'transcript-damaged' })])
   })
 
   it('a damaged transcript never stops the start: the session loads with a notice, the file is set aside', async () => {
