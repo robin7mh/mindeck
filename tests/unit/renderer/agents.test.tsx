@@ -355,6 +355,14 @@ describe('assistant store', () => {
     expect(useAssistant.getState().projectId).toBeUndefined()
   })
 
+  it('an approval answered elsewhere or timed out goes, with what the core said', async () => {
+    core({ 'permission:respond': () => fail('This request is no longer pending', 'not-pending') })
+    useAssistant.setState({ pending: [request()] })
+    await useAssistant.getState().respond('req1', 'deny')
+    expect(useAssistant.getState().pending).toEqual([])
+    expect(useAssistant.getState().error).toBe('This request is no longer pending')
+  })
+
   it('reports every failure', async () => {
     const all = ['ai:status', 'ai:conversation', 'ai:send', 'ai:cancel', 'ai:deleteConversation', 'permission:respond', 'ai:setKey', 'ai:clearKey', 'ai:configure']
     core(Object.fromEntries(all.map((ch) => [ch, () => fail(`${ch} failed`)])))
@@ -373,7 +381,7 @@ describe('assistant store', () => {
     await expectError(() => s.remove('c1'), 'ai:deleteConversation failed')
     useAssistant.setState({ pending: [request()] })
     await expectError(() => s.respond('req1', 'deny'), 'permission:respond failed')
-    expect(useAssistant.getState().pending).toEqual([]) // stale request dropped
+    expect(useAssistant.getState().pending.map((p) => p.id)).toEqual(['req1']) // didn't get through: the agent still waits, the card stays
     expect(await s.setKey('x')).toBe(false)
     await expectError(() => s.clearKey(), 'ai:clearKey failed')
     await expectError(() => s.configure({}), 'ai:configure failed')

@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { errorMessage, ipc, onEvent, onResync } from '@shared/ipc/client'
+import { errorMessage, ipc, onEvent, onResync, type IpcError } from '@shared/ipc/client'
 import type {
   AgentInfo,
   AiSettings,
@@ -39,7 +39,7 @@ export function upsertMessage(list: ChatMessage[], message: ChatMessage): ChatMe
  * Fetched history merged with what arrived live. Live wins (it saw every
  * change) — unless the push channel had a gap, then the fetched copy does.
  */
-function merge(fetched: ChatMessage[], live: ChatMessage[] = [], liveWins = true): ChatMessage[] {
+export function merge(fetched: ChatMessage[], live: ChatMessage[] = [], liveWins = true): ChatMessage[] {
   const byId = new Map(live.map((m) => [m.id, m]))
   const merged = fetched.map((m) => (liveWins && byId.get(m.id)) || m)
   for (const m of live) if (!fetched.some((f) => f.id === m.id)) merged.push(m)
@@ -254,7 +254,8 @@ export const useAssistant = create<AssistantState>((set, get) => {
         await ipc('permission:respond', { id, decision })
         set((s) => ({ pending: s.pending.filter((p) => p.id !== id) }))
       } catch (err) {
-        set((s) => ({ pending: s.pending.filter((p) => p.id !== id) }))
+        // Answered elsewhere or timed out: nothing left to answer. Anything else (offline): the agent still waits, the card stays.
+        if ((err as IpcError).code === 'not-pending') set((s) => ({ pending: s.pending.filter((p) => p.id !== id) }))
         fail(err)
       }
     },
