@@ -388,7 +388,7 @@ describe('ipc handler modules bind every channel to its service', () => {
         ['scm:createBranch', { projectId: 'p', name: 'x' }, 'createBranch', ['p', 'x']],
         ['scm:log', { projectId: 'p', limit: 5 }, 'log', ['p', 5]],
         ['scm:show', { projectId: 'p', hash: 'abcd' }, 'show', ['p', 'abcd']],
-        ['scm:diff', { projectId: 'p', path: 'a', target: { kind: 'staged' } }, 'diff', ['p', 'a', { kind: 'staged' }]],
+        ['scm:diff', { projectId: 'p', path: 'a', target: { kind: 'staged' } }, 'diff', ['p', 'a', { kind: 'staged' }, false]],
         ['scm:original', { projectId: 'p', path: 'a' }, 'original', ['p', 'a']],
         ['scm:files', { projectId: 'p' }, 'files', ['p']],
         ['scm:abort', { projectId: 'p' }, 'abort', ['p']],
@@ -546,7 +546,7 @@ describe('ipc handler modules bind every channel to its service', () => {
     ],
     [
       'remote',
-      (router: Router, svc: never) => registerRemoteIpc(router, svc, (id) => (id === 'p' ? '/p' : undefined)),
+      (router: Router, svc: never) => registerRemoteIpc(router, svc, (id) => (id === 'p' ? '/p' : undefined), (id) => id === 'p'),
       [
         ['remote:hosts', undefined, 'hosts', []],
         ['remote:list', undefined, 'list', []],
@@ -604,6 +604,21 @@ describe('ipc handler modules bind every channel to its service', () => {
     for (const [channel, req, method, args] of cases) {
       expect(await router.dispatch(channel, req, { transport: 'ipc' })).toEqual({ ok: true, data: { method, args } })
     }
+  })
+})
+
+describe('Dev Containers', () => {
+  it('opening one runs the project\'s own commands on this computer (initializeCommand): only for a project the user trusts', async () => {
+    const container = vi.fn(async () => ({ id: 'container:/p' }))
+    const hasContainer = vi.fn(() => true)
+    const router = new Router()
+    registerRemoteIpc(router, { container, hasContainer } as never, () => '/p', (id) => id === 'trusted')
+
+    expect(await router.dispatch('remote:container', { projectId: 'new' }, { transport: 'ipc' })).toMatchObject({ ok: false, error: { code: 'untrusted' } })
+    expect(container).not.toHaveBeenCalled()
+    expect(await router.dispatch('remote:hasContainer', { projectId: 'new' }, { transport: 'ipc' })).toEqual({ ok: true, data: true }) // looking runs nothing
+    expect(await router.dispatch('remote:container', { projectId: 'trusted' }, { transport: 'ipc' })).toMatchObject({ ok: true })
+    expect(container).toHaveBeenCalledWith('/p')
   })
 })
 
