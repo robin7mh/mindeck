@@ -603,6 +603,28 @@ describe('memory store', () => {
     expect(m().error).toBe('Note not found')
   })
 
+  it('a link refreshing its note while another opens never pairs one note with the other’s text', async () => {
+    const v = vault(['A.md', 'B.md'])
+    await m().open('A.md')
+    const read = v.routes['memory:read']
+    let answer: () => void = () => {}
+    let held = 0
+    v.routes['memory:read'] = ((p: { path: string }) => {
+      // The link's read of A is the one that answers late.
+      if (p.path !== 'A.md' || (held += 1) > 1) return read(p as never)
+      return new Promise((r) => (answer = () => r(read(p as never))))
+    }) as never
+    const linking = m().link('B.md')
+    await settle()
+    await m().open('B.md')
+    answer()
+    await linking
+    expect(m()).toMatchObject({ note: { path: 'B.md' }, draft: 'body' })
+    m().setDraft(m().note!.body)
+    await m().save()
+    expect(v.calls).toEqual(['link:A.md->B.md']) // nothing written: no text of B into A
+  })
+
   it('a save that failed keeps the text: nothing switches away from it, and the error stays', async () => {
     const v = vault()
     await m().open('Willkommen.md')

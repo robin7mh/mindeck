@@ -147,8 +147,10 @@ export const useMemory = create<MemoryState>((set, get) => {
     const { note } = get()
     if (!note) return
     const fresh = await ipc('memory:read', { path: note.path }).catch(() => undefined)
+    // Another note opened meanwhile: its text must not end up paired with this one (the next save would write it here).
+    if (!fresh || get().note?.path !== note.path) return
     // Unsaved text in the editor wins over the refreshed body.
-    if (fresh) set((s) => ({ note: fresh, draft: s.draft === note.body ? fresh.body : s.draft }))
+    set((s) => ({ note: fresh, draft: s.draft === note.body ? fresh.body : s.draft }))
   }
 
   return {
