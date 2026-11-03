@@ -345,6 +345,11 @@ describe('sorting files', () => {
       entry('/d/a.png', { size: 9, mtimeMs: 2 })
     ]
     const names = (sort: Parameters<typeof sortEntries>[1]) => sortEntries(list, sort).map((e) => e.name)
+    // One collator for all: localeCompare with options builds one per call, ~30× slower on a big folder.
+    const compare = vi.spyOn(String.prototype, 'localeCompare')
+    names({ key: 'name', desc: false })
+    expect(compare).not.toHaveBeenCalled()
+    compare.mockRestore()
     expect(names({ key: 'name', desc: false })).toEqual(['zeta', 'a.png', 'App.app', 'b 2.txt', 'b 10.txt'])
     expect(names({ key: 'name', desc: true })).toEqual(['zeta', 'b 10.txt', 'b 2.txt', 'App.app', 'a.png'])
     expect(names({ key: 'size', desc: true })).toEqual(['zeta', 'a.png', 'b 10.txt', 'b 2.txt', 'App.app'])

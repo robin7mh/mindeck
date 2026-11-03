@@ -65,9 +65,12 @@ function savePrefs(p: Prefs): void {
   }
 }
 
-/** Folders first, then by the chosen column (names compare like Finder: "file 2" before "file 10"). */
+/** Names compare like Finder: "file 2" before "file 10". One for all: `localeCompare` with options builds one per call. */
+const names = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' })
+
+/** Folders first, then by the chosen column. */
 export function sortEntries(entries: FinderEntry[], sort: Prefs['sort']): FinderEntry[] {
-  const byName = (a: FinderEntry, b: FinderEntry) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
+  const byName = (a: FinderEntry, b: FinderEntry) => names.compare(a.name, b.name)
   const by: Record<SortKey, (a: FinderEntry, b: FinderEntry) => number> = {
     name: byName,
     modified: (a, b) => a.mtimeMs - b.mtimeMs || byName(a, b),

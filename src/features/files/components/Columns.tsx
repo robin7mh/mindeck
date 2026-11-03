@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type MouseEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
 import { ChevronRight } from 'lucide-react'
 import type { FinderEntry } from '@shared/types/finder'
 import { cn } from '@/lib/cn'
@@ -11,6 +11,7 @@ import { DRAG_FILES, dropProps } from './Sidebar'
 import { useWindow } from './Virtual'
 
 const ITEM = 26
+const NO_ENTRIES: FinderEntry[] = []
 
 /** One column: a folder's entries, windowed like the list. */
 function Column({ dir, entries, picked, last, handlers }: { dir: string; entries: FinderEntry[]; picked: string[]; last: boolean; handlers: EntryHandlers }) {
@@ -86,6 +87,8 @@ export function Columns({ handlers }: { handlers: EntryHandlers }) {
   const [lists, setLists] = useState<Record<string, FinderEntry[]>>({})
   const strip = useRef<HTMLDivElement>(null)
   const key = `${s.hidden}:${chain.join('\n')}`
+  const current = useMemo(() => visibleEntries({ results: s.results, listing: s.listing, sort: s.sort }), [s.results, s.listing, s.sort])
+  const earlier = useMemo(() => new Map(Object.entries(lists).map(([dir, list]) => [dir, sortEntries(list, s.sort)])), [lists, s.sort])
 
   // The earlier columns' folders (the current one is the store's listing).
   useEffect(() => {
@@ -114,7 +117,7 @@ export function Columns({ handlers }: { handlers: EntryHandlers }) {
             dir={dir}
             last={last}
             handlers={handlers}
-            entries={last ? visibleEntries(s) : sortEntries(lists[dir] ?? [], s.sort)}
+            entries={last ? current : (earlier.get(dir) ?? NO_ENTRIES)}
             picked={last ? s.selected : [chain[i + 1]]}
           />
         )

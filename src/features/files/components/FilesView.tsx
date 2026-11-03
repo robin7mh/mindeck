@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react'
 import {
   AlertTriangle,
   ArrowLeft,
@@ -120,8 +120,12 @@ export function FilesView({ onNavigate }: { onNavigate: (module: ModuleId) => vo
   const [goTo, setGoTo] = useState(false)
   const [query, setQuery] = useState('')
   const main = useRef<HTMLDivElement>(null)
-  const entries = visibleEntries(s)
-  const selectedEntries = entries.filter((e) => s.selected.includes(e.path))
+  // The store changes all the time (selection, previews, progress): sorted only when the entries or the order did.
+  const entries = useMemo(() => visibleEntries({ results: s.results, listing: s.listing, sort: s.sort }), [s.results, s.listing, s.sort])
+  const selectedEntries = useMemo(() => {
+    const picked = new Set(s.selected)
+    return entries.filter((e) => picked.has(e.path))
+  }, [entries, s.selected])
 
   useEffect(() => {
     void useFiles.getState().init()
