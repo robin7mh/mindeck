@@ -4,7 +4,13 @@ import type { VaultService } from '../main/services/memory/VaultService'
 /** Binds the memory:* contract channels to VaultService. */
 export function registerMemoryIpc(router: Router, service: VaultService): void {
   router.register('memory:status', () => service.status())
-  router.register('memory:createVault', () => service.createVault())
+  router.register('memory:createVault', async (_req, ctx) => {
+    // It also selects the default vault: away from the one the desktop's user chose, which is an admin's to change (memory:setVault).
+    if (ctx.transport === 'remote' && ctx.role !== 'admin' && !(await service.status()).isDefault) {
+      throw Object.assign(new Error('Switching the vault needs a device with the admin role (or the Mindeck desktop app)'), { code: 'admin-only' })
+    }
+    return service.createVault()
+  })
   router.register('memory:pickVault', () => service.pickVault())
   router.register('memory:list', () => service.list())
   router.register('memory:read', ({ path }) => service.read(path))

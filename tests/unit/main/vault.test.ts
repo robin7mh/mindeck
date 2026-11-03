@@ -568,6 +568,29 @@ describe('VaultService — daily notes, templates, pictures', () => {
     await expect(v.attach('busy.png', '')).rejects.toMatchObject({ code: 'exists' })
   })
 
+  it('a link in the vault that leads out of it is no note and no picture: reading stays in the vault, like writing', async () => {
+    const { v, root } = await setup({ create: true })
+    const outside = await tempDir()
+    await writeFile(join(outside, 'credentials'), 'aws_secret_access_key=KEY')
+    await writeFile(join(outside, 'id_rsa'), 'PRIVATE KEY')
+    await mkdir(join(root, 'inside'))
+    await writeFile(join(root, 'inside', 'real.md'), 'real note\n')
+    await writeFile(join(root, 'inside', 'real.png'), 'real picture')
+    await symlink(join(outside, 'credentials'), join(root, 'notes.md'))
+    await symlink(join(outside, 'id_rsa'), join(root, 'photo.png'))
+    await symlink(outside, join(root, 'away'))
+    await writeFile(join(outside, 'deep.md'), 'outside\n')
+    await symlink(join(root, 'inside', 'real.md'), join(root, 'alias.md'))
+    await symlink(join(root, 'inside', 'real.png'), join(root, 'alias.png'))
+
+    await expect(v.read('notes.md')).rejects.toMatchObject({ code: 'not-found' })
+    await expect(v.read('away/deep.md')).rejects.toMatchObject({ code: 'not-found' })
+    await expect(v.attachment('photo.png')).rejects.toMatchObject({ code: 'not-found' })
+    // Links that stay inside are fine.
+    expect((await v.read('alias.md')).body).toBe('real note\n')
+    expect((await v.attachment('alias.png')).dataUrl).toContain(Buffer.from('real picture').toString('base64'))
+  })
+
   it('finds pictures like Obsidian: next to the note, by vault path, in attachments/, then anywhere by name', async () => {
     const { v, root, base } = await setup()
     const put = async (rel: string, bytes = 'x') => {

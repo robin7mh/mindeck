@@ -410,6 +410,14 @@ describe('createCore — paired devices without remote shells', () => {
       expect(await remote('fs:dirs', {})).toMatchObject({ ok: false, error: { code: 'remote-forbidden' } })
       expect(await remote('memory:setVault', { path: hidden })).toMatchObject({ ok: false, error: { code: 'admin-only' } }) // the desktop's vault: an admin's to switch
       expect(await c.router.dispatch('memory:setVault', { path: hidden }, { ...phone, role: 'admin' })).toMatchObject({ ok: false, error: { code: 'remote-forbidden' } })
+      // …and "create the default vault" must not be the way around that: it selects the default vault, too.
+      const chosen = join(process.env.MINDECK_HOME!, 'obsidian')
+      await mkdir(chosen, { recursive: true })
+      await desktop('memory:setVault', { path: chosen })
+      expect(await remote('memory:createVault')).toMatchObject({ ok: false, error: { code: 'admin-only' } })
+      expect(await remote('memory:status')).toMatchObject({ ok: true, data: { root: chosen, isDefault: false } })
+      expect(await c.router.dispatch('memory:createVault', undefined, { ...phone, role: 'admin' })).toMatchObject({ ok: true, data: { isDefault: true } })
+      expect(await remote('memory:createVault')).toMatchObject({ ok: true, data: { isDefault: true } }) // nothing chosen to lose: anyone may set it up
 
       // A project added at the desktop is the device's to read — but not its keys.
       const work = join(process.env.MINDECK_HOME!, 'work')

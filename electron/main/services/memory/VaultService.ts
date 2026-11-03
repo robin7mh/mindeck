@@ -577,7 +577,7 @@ export class VaultService {
       return null
     }
     const st = await stat(abs).catch(() => null)
-    if (!st?.isFile() || st.size > MAX_ATTACHMENT_BYTES) return null
+    if (!st?.isFile() || st.size > MAX_ATTACHMENT_BYTES || !(await this.inVault(this.root(), abs))) return null
     const mime = IMAGE_TYPES[imageExt(rel)!]
     return { path: rel, mime, dataUrl: `data:${mime};base64,${(await readFile(abs)).toString('base64')}` }
   }
@@ -615,6 +615,7 @@ export class VaultService {
   private async load(root: string, rel: NotePath): Promise<boolean> {
     try {
       const abs = join(root, ...rel.split('/'))
+      if (!(await this.inVault(root, abs))) return this.index.remove(rel)
       // Size first: a huge .md (a log, a dump) is never read into memory.
       const st = await stat(abs)
       if (st.size > MAX_NOTE_BYTES) return this.index.remove(rel)
@@ -658,6 +659,12 @@ export class VaultService {
       throw coded('bad-path', 'Path escapes the vault')
     }
     return abs
+  }
+
+  /** Whether what `abs` leads to is in the vault: a link in it can point anywhere (`notes.md -> ~/.aws/credentials`). */
+  private async inVault(root: string, abs: string): Promise<boolean> {
+    const [rootReal, real] = await Promise.all([realpath(root), realpath(abs)])
+    return real.startsWith(rootReal + sep)
   }
 
   private async atomicWrite(abs: string, raw: string): Promise<void> {
