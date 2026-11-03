@@ -92,7 +92,7 @@ export const useGitHub = create<GitHubState>((set, get) => {
         set({ status })
         if (status.repo) await get().list()
       } catch (err) {
-        set({ error: errorMessage(err) })
+        if (project() === projectId) set({ error: errorMessage(err) })
       }
     },
 
@@ -106,7 +106,7 @@ export const useGitHub = create<GitHubState>((set, get) => {
         // Only the latest list (filter / state switched meanwhile, another project).
         if (seq === listSeq && project() === projectId) set({ pulls })
       } catch (err) {
-        if (seq === listSeq) set({ error: errorMessage(err) })
+        if (seq === listSeq && project() === projectId) set({ error: errorMessage(err) })
       } finally {
         if (seq === listSeq) set({ loading: false })
       }
@@ -133,7 +133,7 @@ export const useGitHub = create<GitHubState>((set, get) => {
         set({ detail })
         useScm.getState().closeDiff()
       } catch (err) {
-        if (seq === openSeq) set({ error: errorMessage(err) })
+        if (seq === openSeq && project() === projectId) set({ error: errorMessage(err) })
       } finally {
         if (seq === openSeq) set({ opening: undefined })
       }
@@ -145,11 +145,13 @@ export const useGitHub = create<GitHubState>((set, get) => {
       const projectId = project()
       const number = get().detail?.number
       if (!projectId || !number) return
+      // Another pull request or project by the time the answer comes: it's no longer about what is shown.
+      const current = () => project() === projectId && get().detail?.number === number
       try {
         const diff = await ipc('github:fileDiff', { projectId, number, path })
-        useScm.setState({ diff: { ...diff, title: `${path} (#${number})` } })
+        if (current()) useScm.setState({ diff: { ...diff, title: `${path} (#${number})` } })
       } catch (err) {
-        set({ error: errorMessage(err) })
+        if (current()) set({ error: errorMessage(err) })
       }
     },
 

@@ -228,6 +228,95 @@ describe('answers arriving out of order', () => {
   })
 })
 
+describe('a failure of the project left behind says nothing about the one on screen', () => {
+  const scm = () => useScm.getState()
+  const gh = () => useGitHub.getState()
+  const reads: [string, string, () => unknown, () => string | undefined][] = [
+    ['a diff', 'scm:diff', () => scm().openDiff({ path: 'a.ts' } as never, { kind: 'unstaged' } as never, 'a.ts'), () => scm().error],
+    ['the commit log', 'scm:log', () => scm().loadLog(), () => scm().error],
+    ['a commit', 'scm:show', () => scm().select('c1'), () => scm().error],
+    ['a stash', 'scm:stashFiles', () => scm().toggleStash('s1'), () => scm().error],
+    ['the file list', 'scm:files', () => scm().setQuickOpen(true), () => scm().error],
+    ['gh’s state', 'github:status', () => gh().load(), () => gh().error],
+    ['the pull requests', 'github:list', () => gh().list(), () => gh().error],
+    ['a pull request', 'github:view', () => gh().open(1), () => gh().error],
+    ['a pull request’s file', 'github:fileDiff', () => gh().openFile('a.ts'), () => gh().error]
+  ]
+
+  it.each(reads)('%s', async (_what, channel, start, error) => {
+    const answer = deferred<unknown>()
+    installBridge({ [channel]: () => answer.promise, 'scm:status': NO_REPO })
+    useEditor.setState({ projectId: 'a' })
+    useGitHub.setState({ detail: { number: 1 } as never })
+    const pending = start()
+    useEditor.setState({ projectId: 'b' })
+    useGitHub.setState({ detail: { number: 1 } as never })
+    await settle()
+    answer.reject(new Error('gone'))
+    await pending
+    await settle()
+    expect(error()).toBeUndefined()
+  })
+
+  it.each(reads)('… while in the same project: %s shows its error', async (_what, channel, start, error) => {
+    installBridge({ [channel]: () => Promise.reject(new Error('gone')), 'scm:status': NO_REPO })
+    useEditor.setState({ projectId: 'a' })
+    useGitHub.setState({ detail: { number: 1 } as never })
+    await start()
+    await settle()
+    expect(error()).toBe('gone')
+  })
+
+  it('a commit clicked past: its failure is no news; a pull request’s file: only for the one still open', async () => {
+    const answers: Record<string, ReturnType<typeof deferred<unknown>>> = { c1: deferred(), c2: deferred() }
+    installBridge({ 'scm:show': (p: { hash: string }) => answers[p.hash].promise, 'scm:status': NO_REPO })
+    useEditor.setState({ projectId: 'a' })
+    const first = scm().select('c1')
+    const second = scm().select('c2')
+    answers.c1.reject(new Error('gone'))
+    await first
+    expect(scm().error).toBeUndefined()
+    answers.c2.reject(new Error('still'))
+    await second
+    expect(scm().error).toBe('still')
+
+    const file = deferred<unknown>()
+    installBridge({ 'github:fileDiff': () => file.promise, 'scm:status': NO_REPO })
+    useGitHub.setState({ detail: { number: 1 } as never })
+    const opening = gh().openFile('a.ts')
+    useGitHub.setState({ detail: { number: 2 } as never })
+    file.resolve({ path: 'a.ts', original: '', modified: '' })
+    await opening
+    expect(scm().diff).toBeUndefined()
+  })
+
+  it('a stash of the project left behind doesn’t open in the new one', async () => {
+    const files = deferred<unknown>()
+    installBridge({ 'scm:stashFiles': () => files.promise, 'scm:status': NO_REPO })
+    useEditor.setState({ projectId: 'a' })
+    const pending = scm().toggleStash('s1')
+    useEditor.setState({ projectId: 'b' })
+    await settle()
+    files.resolve([{ path: 'a.ts' }])
+    await pending
+    expect(scm().stashFiles).toEqual({})
+  })
+
+  it('a pull request’s file of the project left behind doesn’t show in the new one', async () => {
+    const file = deferred<unknown>()
+    installBridge({ 'github:fileDiff': () => file.promise, 'scm:status': NO_REPO })
+    useEditor.setState({ projectId: 'a' })
+    useGitHub.setState({ detail: { number: 1 } as never })
+    const pending = gh().openFile('a.ts')
+    useEditor.setState({ projectId: 'b' })
+    useGitHub.setState({ detail: { number: 1 } as never })
+    await settle()
+    file.resolve({ path: 'a.ts', original: '', modified: '' })
+    await pending
+    expect(scm().diff).toBeUndefined()
+  })
+})
+
 describe('terminal restart', () => {
   it('Enter pressed twice after exit starts one shell, not two', async () => {
     const create = vi.fn(async () => ({ id: 'new', title: '~', cwdLabel: '~', shell: 'zsh', createdAt: '2026-01-01' }))

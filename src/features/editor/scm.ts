@@ -187,7 +187,7 @@ export const useScm = create<ScmState>((set, get) => {
         const diff = await ipc('scm:diff', { projectId, path: file.path, target: target.kind === 'commit' && file.from ? { ...target, from: file.from } : target })
         if (project() === projectId) set({ diff: { ...diff, title } })
       } catch (err) {
-        set({ error: errorMessage(err) })
+        if (project() === projectId) set({ error: errorMessage(err) })
       }
     },
     closeDiff: () => set({ diff: undefined }),
@@ -201,7 +201,7 @@ export const useScm = create<ScmState>((set, get) => {
         set({ log })
         if (!get().selected && log[0]) await get().select(log[0].hash)
       } catch (err) {
-        set({ error: errorMessage(err) })
+        if (project() === projectId) set({ error: errorMessage(err) })
       }
     },
 
@@ -214,7 +214,7 @@ export const useScm = create<ScmState>((set, get) => {
         // Only the commit still selected (clicks can outrun the answers).
         if (project() === projectId && get().selected === hash) set({ detail })
       } catch (err) {
-        set({ error: errorMessage(err) })
+        if (project() === projectId && get().selected === hash) set({ error: errorMessage(err) })
       }
     },
 
@@ -224,7 +224,7 @@ export const useScm = create<ScmState>((set, get) => {
       if (!open || !projectId) return
       ipc('scm:files', { projectId }).then(
         (files) => project() === projectId && set({ files }),
-        (err: unknown) => set({ error: errorMessage(err) })
+        (err: unknown) => project() === projectId && set({ error: errorMessage(err) })
       )
     },
 
@@ -246,9 +246,9 @@ export const useScm = create<ScmState>((set, get) => {
       }
       try {
         const files = await ipc('scm:stashFiles', { projectId, hash })
-        set((s) => ({ stashFiles: { ...s.stashFiles, [hash]: files } }))
+        if (project() === projectId) set((s) => ({ stashFiles: { ...s.stashFiles, [hash]: files } }))
       } catch (err) {
-        set({ error: errorMessage(err) })
+        if (project() === projectId) set({ error: errorMessage(err) })
       }
     },
 
