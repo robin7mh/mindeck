@@ -88,6 +88,7 @@ const h = vi.hoisted(() => ({
     quitAndInstall: vi.fn()
   },
   packaged: false,
+  switches: new Set<string>(),
   /** app.dock — macOS only. */
   dock: undefined as undefined | { setIcon: ReturnType<typeof vi.fn> },
   appMenu: undefined as unknown,
@@ -127,6 +128,7 @@ vi.mock('electron', () => ({
     whenReady: () => new Promise<void>((r) => (h.ready = r)),
     on: (event: string, fn: (...a: unknown[]) => unknown) => h.appHandlers.set(event, fn),
     getVersion: () => '0.1.0',
+    commandLine: { hasSwitch: (name: string) => h.switches.has(name) },
     get isPackaged() {
       return h.packaged
     },
@@ -316,6 +318,7 @@ beforeEach(() => {
   h.running = { agents: 0, terminals: 0 }
   h.settings = {}
   h.packaged = false
+  h.switches.clear()
   h.dock = undefined
 })
 afterEach(() => {
@@ -462,6 +465,29 @@ describe('main process boot', () => {
     const trusted = h.bound.mock.calls[0][1] as (url: string) => boolean
     expect(trusted(String(win.loadFile.mock.calls[0][0]).replace(/^/, 'file://').replace(/\\/g, '/'))).toBe(true)
     expect(trusted('file:///etc/passwd')).toBe(false)
+  })
+
+  it('a packaged Mindeck takes its page from nothing but its own bundle: no dev server from the environment, no debugging port', async () => {
+    h.packaged = true
+    const win = await boot({ devUrl: 'http://127.0.0.1:9/evil' })
+    expect(win.loadURL).not.toHaveBeenCalled()
+    expect(win.loadFile).toHaveBeenCalledWith(expect.stringMatching(/renderer[\\/]index\.html$/))
+    const trusted = h.bound.mock.calls[0][1] as (url: string) => boolean
+    expect(trusted('http://127.0.0.1:9/evil')).toBe(false)
+    expect(h.exit).not.toHaveBeenCalled()
+
+    for (const name of ['remote-debugging-port', 'remote-debugging-pipe']) {
+      h.exit.mockReset()
+      h.switches.clear()
+      h.switches.add(name)
+      await boot()
+      expect(h.exit, name).toHaveBeenCalledWith(1)
+    }
+    // npm run dev and the E2E tests run unpackaged: their port stays.
+    h.exit.mockReset()
+    h.packaged = false
+    await boot()
+    expect(h.exit).not.toHaveBeenCalled()
   })
 
   it('logs a successful legacy-data copy and survives a failing one', async () => {

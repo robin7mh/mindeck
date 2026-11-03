@@ -27,6 +27,11 @@ const IDLE_SECONDS = 5 * 60
 /** The longest a quit waits for the core to save and stop. */
 const DISPOSE_TIMEOUT_MS = 5000
 
+// The fuses keep a signed Mindeck from running as anyone else's Node (electron-builder.yml) — but
+// Chromium's own debugging switches are no fuse: with one, whoever started the app would drive its
+// window, bridge included, under Mindeck's name and permissions.
+if (app.isPackaged && ['remote-debugging-port', 'remote-debugging-pipe'].some((name) => app.commandLine.hasSwitch(name))) app.exit(1)
+
 // ~/Mindeck/{data,vault,logs} holds everything — every location derives from paths.ts.
 const paths = mindeckPaths()
 
@@ -46,8 +51,9 @@ if (!primary) app.quit()
 // main/preload are bundled as CommonJS (Electron's well-supported default), so
 // __dirname is natively available — no import.meta shim needed.
 
-// electron-vite injects the dev server URL in development.
-const DEV_SERVER_URL = process.env['ELECTRON_RENDERER_URL']
+// electron-vite injects the dev server URL in development. Never in a packaged app: the variable would
+// put anyone's page into the window, with the full bridge, without changing a byte of the signed app.
+const DEV_SERVER_URL = app.isPackaged ? undefined : process.env['ELECTRON_RENDERER_URL']
 
 let mainWindow: BrowserWindow | null = null
 let core: Core | null = null
