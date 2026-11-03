@@ -12,22 +12,28 @@ function coded(code: string, message: string): Error {
   return Object.assign(new Error(message), { code })
 }
 
-/** Run git with array args (never a shell string); optional stdin. Rejects with stderr on failure. */
-async function git(cwd: string, guard: Promise<string[]>, args: string[], input?: string): Promise<string> {
+/**
+ * Run git with array args (never a shell string); optional stdin. Rejects with stderr on failure.
+ * Its output as bytes: a chunk may end inside a character, and a patch may hold text in any encoding.
+ */
+async function gitBytes(cwd: string, guard: Promise<string[]>, args: string[], input?: Buffer): Promise<Buffer> {
   const prefix = await guard
   return new Promise((resolve, reject) => {
     const child = spawn(gitProgram(), [...prefix, ...args], { cwd, windowsHide: true })
-    let out = ''
+    const out: Buffer[] = []
     let err = ''
-    child.stdout.on('data', (d) => (out += d))
+    child.stdout.on('data', (d: Buffer) => out.push(d))
     child.stderr.on('data', (d) => (err += d))
     child.on('error', reject)
-    child.on('close', (code) => (code === 0 ? resolve(out) : reject(coded('git', err.trim() || `git ${args[0]} failed (${code})`))))
+    child.on('close', (code) => (code === 0 ? resolve(Buffer.concat(out)) : reject(coded('git', err.trim() || `git ${args[0]} failed (${code})`))))
     // git may exit before reading all of stdin (a patch it rejects): EPIPE, unhandled, would crash the app.
     child.stdin.on('error', () => {})
     child.stdin.end(input)
   })
 }
+
+/** gitBytes, as text. */
+const git = async (cwd: string, guard: Promise<string[]>, args: string[]): Promise<string> => (await gitBytes(cwd, guard, args)).toString()
 
 /** A network call that only checks something: never asks for credentials, gives up after 15 s. */
 const quietGit = async (cwd: string, guard: Promise<string[]>, args: string[]) =>
@@ -184,9 +190,9 @@ export class GitService {
    */
   async applyTo(repo: string, worktree: string, base: string, exclude: string[] = []): Promise<number> {
     await git(worktree, this.guard(worktree), ['add', '-A', ...except(exclude)])
-    const patch = await git(worktree, this.guard(worktree), ['diff', '--binary', '--cached', base])
-    if (!patch.trim()) return 0
-    await git(repo, this.guard(repo), ['apply', '--whitespace=nowarn', '-'], patch).catch((err: Error) => {
+    const patch = await gitBytes(worktree, this.guard(worktree), ['diff', '--binary', '--cached', base])
+    if (!patch.length) return 0
+    await gitBytes(repo, this.guard(repo), ['apply', '--whitespace=nowarn', '-'], patch).catch((err: Error) => {
       throw coded('conflict', `The changes don't apply cleanly to the project: ${err.message}`)
     })
     return lines(await git(worktree, this.guard(worktree), ['diff', '--cached', '--name-only', base])).length

@@ -126,6 +126,30 @@ describe('GitService', () => {
     expect(existsSync(wt2)).toBe(false)
   })
 
+  it('applies a worktree byte for byte: text in any encoding, a large patch with multibyte characters', async () => {
+    const dir = await repo()
+    const latin1 = Buffer.from('M\xFCller\nGr\xFC\xDFe\n', 'latin1')
+    await writeFile(join(dir, 'old.txt'), latin1)
+    sh(dir, 'add', 'old.txt')
+    sh(dir, 'commit', '-q', '-m', 'latin-1')
+    const wt = join(await tempDir(), 'wt')
+    await git.addWorktree(dir, wt, 'mindeck/bytes')
+    const start = (await git.baseline(wt))!
+
+    const added = Buffer.from('Stra\xDFe\n', 'latin1')
+    const changed = Buffer.concat([latin1, Buffer.from('K\xF6ln\n', 'latin1')])
+    // Far more than one pipe chunk: a character across two of them must arrive whole.
+    const large = Buffer.from(`${'€uro '.repeat(400_000)}\n`)
+    await writeFile(join(wt, 'added.txt'), added)
+    await writeFile(join(wt, 'old.txt'), changed)
+    await writeFile(join(wt, 'large.txt'), large)
+
+    expect(await git.applyTo(dir, wt, start.base)).toBe(3)
+    expect(await readFile(join(dir, 'added.txt'))).toEqual(added)
+    expect(await readFile(join(dir, 'old.txt'))).toEqual(changed)
+    expect((await readFile(join(dir, 'large.txt'))).equals(large)).toBe(true)
+  })
+
   it('refuses a patch that does not apply, touching nothing', async () => {
     const dir = await repo()
     const wt = join(await tempDir(), 'wt')
