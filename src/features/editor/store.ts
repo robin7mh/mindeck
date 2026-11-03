@@ -44,6 +44,8 @@ export interface BufferHost {
   rekey(id: string, next: { id: string; projectId: string; path: string }): void
   /** Replace ranges of the buffer as one undoable edit (search & replace). Columns are 0-based. */
   edit?(id: string, edits: { line: number; column: number; length: number; text: string }[]): void
+  /** `content` was re-read from disk: a buffer no editor shows takes it now (a shown one when its editor renders). */
+  sync?(id: string): void
 }
 
 let host: BufferHost | null = null
@@ -544,6 +546,8 @@ export const useEditor = create<EditorState>((set, get) => ({
           error: undefined
         }))
       )
+      // Not only when it next shows: search & replace, a rename and Save All work on background tabs too.
+      host?.sync?.(id)
     } catch (err) {
       if (opts.restoring) return get().close(id)
       set(update(id, { loading: false, error: errorMessage(err) }))

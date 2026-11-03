@@ -852,6 +852,64 @@ describe('CodeEditor (Monaco view)', () => {
     unmount()
   })
 
+  it('a background tab follows the disk at once: a replace can’t undo an agent’s change on the next save', async () => {
+    const writes: string[] = []
+    let disk: Partial<FileContent> = { content: 'AGENT', mtimeMs: 9 }
+    installBridge({ 'files:read': () => file('b.ts', disk), 'files:write': (req: { content: string }) => (writes.push(req.content), { mtimeMs: 10, size: 1 }) })
+    useEditor.setState({ tabs: [tab('a.ts', { content: 'A' }), tab('b.ts', { content: 'B' })], activeId: 'p:a.ts' })
+    const view = (t: EditorTab) => <CodeEditor group="g1" tab={t} readOnly={false} onCursor={() => {}} />
+    const { rerender } = render(view(e().tabs[1]))
+    rerender(view(e().tabs[0])) // b.ts has a buffer now, and goes to the background
+
+    await act(() => e().reload('p:b.ts', { ifClean: true }))
+    expect(bufferText('p:b.ts')).toBe('AGENT')
+    expect(e().tabs[1].dirty).toBe(false)
+
+    // Search & replace edits the buffer, Save All writes it: the agent's text is what it is based on.
+    act(() => void editBuffer('p:b.ts', [{ line: 1, column: 0, length: 5, text: 'NEW' }]))
+    expect(e().tabs[1].dirty).toBe(true)
+    await act(() => e().saveAll())
+    expect(writes).toEqual(['NEW'])
+
+    // Coming back to the tab keeps it as it is.
+    rerender(view(e().tabs[1]))
+    expect(editor().model).toBe(model('b.ts'))
+    expect(model('b.ts').getValue()).toBe('NEW')
+
+    // A shown tab follows through its editor (which restores the view): the store only says so.
+    disk = { content: 'SHOWN', mtimeMs: 11 }
+    await act(() => e().reload('p:b.ts'))
+    rerender(view(e().tabs[1]))
+    expect(model('b.ts').getValue()).toBe('SHOWN')
+    expect(editor().restoreViewState).toHaveBeenLastCalledWith({ of: '/p/b.ts' })
+
+    // No text any more (it turned binary): the buffer stays as it was.
+    rerender(view(e().tabs[0]))
+    disk = { content: undefined, unsupported: 'binary' }
+    await act(() => e().reload('p:b.ts'))
+    expect(bufferText('p:b.ts')).toBe('SHOWN')
+    // A tab no editor ever showed has no buffer to follow.
+    useEditor.setState((s) => ({ tabs: [...s.tabs, tab('c.ts')] }))
+    disk = { content: 'C' }
+    await act(() => e().reload('p:c.ts'))
+    expect(bufferText('p:c.ts')).toBeUndefined()
+    // Closed while it was being read: nothing to follow either.
+    let answer!: () => void
+    installBridge({ 'files:read': () => new Promise((r) => (answer = () => r(file('c.ts')))) })
+    const reading = e().reload('p:c.ts')
+    await settle(1)
+    act(() => e().close('p:c.ts'))
+    answer()
+    await reading
+    // A host that doesn't follow the disk itself.
+    useEditor.setState((s) => ({ tabs: [...s.tabs, tab('d.ts')] }))
+    setBufferHost(fakeHost())
+    disk = { content: 'D' }
+    installBridge({ 'files:read': () => file('d.ts', disk) })
+    await e().reload('p:d.ts')
+    expect(e().tabs.at(-1)!.content).toBe('D')
+  })
+
   it('unsaved edits outlive the last editor (a crashed module coming back): only clean buffers go', async () => {
     useEditor.setState({ tabs: [tab('a.ts', { content: 'A' }), tab('b.ts', { content: 'B' })] })
     const view = (t: EditorTab) => <CodeEditor group="g1" tab={t} readOnly={false} onCursor={() => {}} />

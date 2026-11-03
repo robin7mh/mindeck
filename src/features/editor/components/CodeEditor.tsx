@@ -195,6 +195,10 @@ function registerBufferHost(): void {
       viewers.forEach((v) => v.shown() === id && v.moved(next.id, model))
       b.model.dispose()
     },
+    sync: (id) => {
+      const tab = useEditor.getState().tabs.find((t) => t.id === id)
+      if (tab?.content !== undefined && buffers.has(id) && !showing(id)) ensureBuffer(tab, tab.content)
+    },
     // Only called for a buffer that exists (editBuffer asks for its snapshot first).
     edit: (id, edits) => {
       const b = buffers.get(id)!
