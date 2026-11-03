@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { installBridge, installRemote, settle } from './bridge'
 import { Composer, type ComposerAgent } from '@/features/agents/components/Composer'
@@ -205,8 +205,7 @@ describe('Composer in an agent session', () => {
     const pasteText = fireEvent.paste(box(), { clipboardData: { files: [] } })
     expect(pasteText).toBe(true)
     fireEvent.paste(box(), { clipboardData: { files: [image()] } })
-    await act(settle)
-    expect(screen.getByAltText('shot.png')).toHaveAttribute('src', 'data:image/png;base64,AQEB')
+    expect(await screen.findByAltText('shot.png')).toHaveAttribute('src', 'data:image/png;base64,AQEB')
     fireEvent.paste(box(), { clipboardData: { files: [image('v.svg', 'image/svg+xml')] } })
     await act(settle)
     expect(screen.getByRole('alert')).toHaveTextContent('v.svg is not a PNG, JPEG, GIF or WebP image.')
@@ -224,13 +223,11 @@ describe('Composer in an agent session', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('huge.png is larger than 5 MB.')
     const third = new File([new Uint8Array(3 * 1024 * 1024)], 'third.png', { type: 'image/png' })
     fireEvent.drop(root, { dataTransfer: { files: [third, third] } })
-    await act(settle)
-    expect(screen.getByRole('alert')).toHaveTextContent('The images together may be at most 5 MB.')
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('The images together may be at most 5 MB.'))
     expect(screen.getAllByRole('img')).toHaveLength(2)
     fireEvent.click(screen.getByLabelText('Remove image third.png'))
     fireEvent.drop(root, { dataTransfer: { files: Array.from({ length: 6 }, (_, i) => image(`n${i}.png`)) } })
-    await act(settle)
-    expect(screen.getByRole('alert')).toHaveTextContent('At most 6 images per message.')
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('At most 6 images per message.'))
     expect(screen.getAllByRole('img')).toHaveLength(6)
 
     // the attach button opens the file picker
@@ -239,8 +236,7 @@ describe('Composer in an agent session', () => {
     expect(click).toHaveBeenCalled()
     for (const img of screen.getAllByRole('img').slice(1)) fireEvent.click(screen.getByLabelText(`Remove image ${img.getAttribute('alt')}`))
     fireEvent.change(screen.getByTestId('image-input'), { target: { files: [image('picked.jpg', 'image/jpeg')] } })
-    await act(settle)
-    expect(screen.getByAltText('picked.jpg')).toBeInTheDocument()
+    expect(await screen.findByAltText('picked.jpg')).toBeInTheDocument()
 
     type('')
     fireEvent.click(screen.getByLabelText('Send'))
