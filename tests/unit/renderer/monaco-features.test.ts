@@ -57,6 +57,10 @@ const mon = vi.hoisted(() => {
     onWillDispose(fn: Fn) {
       return this.willDispose.event(fn)
     }
+    setValue(v: string) {
+      this.value = v
+      this.change.fire()
+    }
     getWordUntilPosition(pos: { column: number }) {
       return { startColumn: pos.column - 2, endColumn: pos.column }
     }
@@ -106,7 +110,8 @@ const mon = vi.hoisted(() => {
     models: [] as Model[],
     providers: {} as Record<string, Record<string, Record<string, (...a: never[]) => unknown>>>,
     markers: new Map<string, unknown[]>(),
-    opener: null as null | { openCodeEditor: (src: unknown, uri: Uri, sel?: unknown) => boolean }
+    opener: null as null | { openCodeEditor: (src: unknown, uri: Uri, sel?: unknown) => boolean },
+    commands: {} as Record<string, (...a: unknown[]) => unknown>
   }
   const register = (kind: string) => (lang: string, provider: Record<string, (...a: never[]) => unknown>) => {
     state.providers[lang] = { ...state.providers[lang], [kind]: provider }
@@ -129,6 +134,7 @@ const mon = vi.hoisted(() => {
       onDidCreateModel: (fn: Fn) => created.event(fn),
       setModelMarkers: (model: Model, owner: string, markers: unknown[]) => state.markers.set(`${owner}:${model.uri.path}`, markers),
       registerEditorOpener: (o: typeof state.opener) => void (state.opener = o),
+      registerCommand: (id: string, fn: (...a: unknown[]) => unknown) => void (state.commands[id] = fn),
       MouseTargetType: { GUTTER_GLYPH_MARGIN: 2, GUTTER_LINE_DECORATIONS: 4, CONTENT_TEXT: 6 },
       OverviewRulerLane: { Left: 1 },
       MinimapPosition: { Gutter: 2 },
@@ -155,7 +161,7 @@ import { diffLines, lineChanges } from '@/features/editor/gutter'
 import { attachGutter } from '@/features/editor/monaco/gutter'
 import { attachBreakpoints } from '@/features/editor/monaco/breakpoints'
 import { applyEdits, fileOf, refreshDiagnostics, setupLsp } from '@/features/editor/monaco/lsp'
-import { tabKey, useEditor, type EditorTab } from '@/features/editor/store'
+import { setBufferHost, tabKey, useEditor, type EditorTab } from '@/features/editor/store'
 import { useScm } from '@/features/editor/scm'
 import { useDebug } from '@/features/editor/debug'
 import { useProblems } from '@/features/editor/problems'
@@ -377,7 +383,10 @@ describe('TypeScript through tsserver', () => {
     setupLsp() // once is enough
     useEditor.setState({ tabs: [], projectId: 'p' })
   })
+  afterEach(() => setBufferHost(null))
   const calls = (channel: string) => bridge.invoke.mock.calls.filter(([c]) => c === channel).map(([, p]) => p)
+  /** These files are open in tabs: they have buffers. */
+  const tabsOpen = (...ids: string[]) => setBufferHost({ snapshot: (id) => (ids.includes(id) ? { text: '', version: 1 } : undefined), markClean() {}, drop() {}, rekey() {} })
 
   it('finds the project file behind a model', () => {
     expect(fileOf(uri('p', 'src/a.ts') as never)).toEqual({ projectId: 'p', path: 'src/a.ts' })
@@ -566,6 +575,7 @@ describe('TypeScript through tsserver', () => {
   it('rename: open files get editor edits, the rest is written to disk; refusals explain themselves', async () => {
     const m = make('n1', 'a.ts', 'greet()')
     await flush()
+    tabsOpen(tabKey('n1', 'a.ts'))
     routes['files:read'] = ({ path }: { path: string }) => (path === 'gone.ts' ? Promise.reject(new Error('x')) : { path, mtimeMs: 4, size: 1, content: 'import { greet } from "./a"\ngreet()\n' })
     routes['files:write'] = () => ({ mtimeMs: 5, size: 1 })
     routes['lsp:rename'] = () => ({
@@ -593,9 +603,89 @@ describe('TypeScript through tsserver', () => {
     expect(await provider('rename').provideRenameEdits(m, { lineNumber: 1, column: 2 }, 'x')).toEqual({ edits: [] })
   })
 
+  it('a quick fix writes nothing until it is chosen: its closed files then, its open ones in their buffers', async () => {
+    const m = make('q2', 'a.ts', 'new Foo().bar()')
+    await flush()
+    tabsOpen(tabKey('q2', 'a.ts'))
+    routes['files:read'] = ({ path }: { path: string }) => ({ path, mtimeMs: 4, size: 1, content: 'class Foo {}\n' })
+    routes['files:write'] = () => ({ mtimeMs: 5, size: 1 })
+    routes['lsp:codeFixes'] = () => [
+      { title: 'Declare method', files: [{ path: 'foo.ts', edits: [{ range: range(1, 12, 1, 12), newText: 'bar() {}' }] }] },
+      { title: 'Declare here and there', files: [{ path: 'a.ts', edits: [{ range: range(1, 1, 1, 1), newText: '// ' }] }, { path: 'foo.ts', edits: [{ range: range(1, 12, 1, 12), newText: 'bar: any' }] }] },
+      { title: 'Fix in this file', files: [{ path: 'a.ts', edits: [{ range: range(1, 1, 1, 1), newText: '// ' }] }] }
+    ]
+    const marker = { source: 'ts', code: '2339', startLineNumber: 1, startColumn: 1, endLineNumber: 1, endColumn: 6 }
+    const { actions } = (await provider('codeActions').provideCodeActions(m, null, { markers: [marker] })) as {
+      actions: { title: string; edit: { edits: { resource: { path: string } }[] }; command?: { id: string; arguments: unknown[] } }[]
+    }
+    // Monaco asks for these whenever the cursor rests on an error: nothing may happen yet.
+    expect(calls('files:read')).toEqual([])
+    expect(calls('files:write')).toEqual([])
+    expect(actions.map((a) => a.edit.edits.map((e) => e.resource.path))).toEqual([[], ['/q2/a.ts'], ['/q2/a.ts']])
+    expect(actions[2].command).toBeUndefined()
+
+    await mon.state.commands[actions[1].command!.id](undefined, ...actions[1].command!.arguments)
+    expect(calls('files:write')).toEqual([{ projectId: 'q2', path: 'foo.ts', content: 'class Foo {bar: any}\n', expectedMtime: 4 }])
+  })
+
+  it('edits for a file that only a peek has loaded reach the disk, not just that hidden model', async () => {
+    const m = make('r2', 'a.ts', 'greet()')
+    await flush()
+    tabsOpen(tabKey('r2', 'a.ts'))
+    routes['lsp:definition'] = () => [{ path: 'b.ts', range: range(1, 1, 1, 6) }]
+    routes['files:read'] = ({ path }: { path: string }) => ({ path, mtimeMs: 4, size: 1, content: 'greet()\n' })
+    routes['files:write'] = () => ({ mtimeMs: 5, size: 1 })
+    await provider('definition').provideDefinition(m, { lineNumber: 1, column: 1 })
+    const peek = mon.monaco.editor.getModel(uri('r2', 'b.ts'))!
+    routes['lsp:rename'] = () => ({ files: [{ path: 'a.ts', edits: [{ range: range(1, 1, 1, 6), newText: 'hello' }] }, { path: 'b.ts', edits: [{ range: range(1, 1, 1, 6), newText: 'hello' }] }] })
+    const edit = (await provider('rename').provideRenameEdits(m, { lineNumber: 1, column: 2 }, 'hello')) as { edits: { resource: { path: string } }[] }
+    expect(edit.edits.map((e) => e.resource.path)).toEqual(['/r2/a.ts'])
+    expect(calls('files:write')).toEqual([{ projectId: 'r2', path: 'b.ts', content: 'hello()\n', expectedMtime: 4 }])
+    expect(peek.getValue()).toBe('hello()\n')
+
+    // The disk moved on since the peek: the server's positions are about the old text, so they aren't applied to the new one.
+    routes['files:read'] = ({ path }: { path: string }) => ({ path, mtimeMs: 6, size: 1, content: '// changed\nhello()\n' })
+    await provider('rename').provideRenameEdits(m, { lineNumber: 1, column: 2 }, 'bye')
+    expect(calls('files:write')).toHaveLength(1)
+    expect(peek.getValue()).toBe('// changed\nhello()\n')
+
+    // A refused write leaves the peek as it was.
+    routes['files:write'] = () => Promise.reject(new Error('conflict'))
+    await provider('rename').provideRenameEdits(m, { lineNumber: 1, column: 2 }, 'bye')
+    expect(peek.getValue()).toBe('// changed\nhello()\n')
+  })
+
+  it('models loaded for peeks don’t pile up: the oldest go, a tab’s buffer stays', async () => {
+    const m = make('e1', 'a.ts', 'x')
+    await flush()
+    routes['files:read'] = ({ path }: { path: string }) => ({ path, mtimeMs: 1, size: 1, content: path })
+    const peek = () => provider('references').provideReferences(m, { lineNumber: 1, column: 1 })
+    routes['lsp:references'] = () => Array.from({ length: 30 }, (_, i) => ({ path: `f${i}.ts`, range: range(1, 1, 1, 1) }))
+    await peek()
+    tabsOpen(tabKey('e1', 'f0.ts'))
+    for (const start of [30, 60, 90]) {
+      routes['lsp:references'] = () => Array.from({ length: 30 }, (_, i) => ({ path: `f${start + i}.ts`, range: range(1, 1, 1, 1) }))
+      await peek()
+    }
+    const f = (n: number) => mon.monaco.editor.getModel(uri('e1', `f${n}.ts`))
+    expect(f(0)).not.toBeNull() // a buffer now
+    expect(f(1)).toBeNull()
+    expect(f(19)).toBeNull()
+    expect(f(20)).not.toBeNull()
+    expect(f(119)).not.toBeNull()
+    await flush()
+    expect(calls('lsp:close')).toContainEqual({ projectId: 'e1', path: 'f1.ts' })
+    // Closed before its turn came: nothing to let go any more.
+    f(20)!.dispose()
+    routes['lsp:references'] = () => Array.from({ length: 30 }, (_, i) => ({ path: `f${120 + i}.ts`, range: range(1, 1, 1, 1) }))
+    await peek()
+    expect(f(21)).toBeNull()
+  })
+
   it('quick fixes for TypeScript’s errors, each once, the first preferred', async () => {
     const m = make('q1', 'a.ts', 'later')
     await flush()
+    tabsOpen(tabKey('q1', 'a.ts'))
     const marker = (code: string, line = 1) => ({ source: 'ts', code, startLineNumber: line, startColumn: 1, endLineNumber: line, endColumn: 6 })
     routes['lsp:codeFixes'] = ({ errorCodes }: { errorCodes: number[] }) =>
       errorCodes[0] === 9 ? Promise.reject(new Error('x')) : [{ title: 'Add import from "./c"', files: [{ path: 'a.ts', edits: [{ range: range(1, 1, 1, 1), newText: 'import' }] }] }]

@@ -3,7 +3,7 @@ import type { LspDiagnostic, LspFileEdits, LspRange, LspSymbol, LspTextEdit } fr
 import { LANGUAGES as SERVED_LANGUAGES } from '@shared/types/languages'
 import { monaco } from './setup'
 import { fileOf } from './uri'
-import { tabKey, useEditor } from '../store'
+import { bufferText, tabKey, useEditor } from '../store'
 import { useProblems } from '../problems'
 import { useLanguages } from '../languages'
 
@@ -20,7 +20,10 @@ const SYNC_MS = 250
 const DIAGNOSTICS_MS = 500
 /** Peeking at references loads at most this many files that are not open. */
 const MAX_PEEK_FILES = 30
-
+/** Models kept for peeks (well over one peek's worth, so none on screen goes): the oldest are let go. */
+const MAX_PEEK_MODELS = 100
+/** A chosen quick fix writes the files it touches that aren't open in a tab. */
+const WRITE_EDITS = 'mindeck.lsp.writeEdits'
 
 const uriOf = (f: File) => monaco.Uri.file(`/${f.projectId}/${f.path}`)
 const toRange = (r: LspRange) => new monaco.Range(r.start.line, r.start.offset, r.end.line, r.end.offset)
@@ -150,20 +153,45 @@ export async function refreshDiagnostics(projectId: string): Promise<void> {
 
 // --- edits across files ---
 
-/** Monaco edits for files that have a model; the rest is written to disk directly. */
-async function workspaceEdit(projectId: string, files: LspFileEdits[]): Promise<monaco.languages.WorkspaceEdit> {
-  const edits: monaco.languages.IWorkspaceTextEdit[] = []
+/**
+ * The files open in a tab (their edits go into the buffer, saving stays the
+ * user's call), and the rest. A model alone doesn't make a file open: a peek's
+ * has no tab, so what lands in it would never reach the disk.
+ */
+function byBuffer(projectId: string, files: LspFileEdits[]): [open: LspFileEdits[], closed: LspFileEdits[]] {
+  const open = (f: LspFileEdits) => bufferText(tabKey(projectId, f.path)) !== undefined
+  return [files.filter(open), files.filter((f) => !open(f))]
+}
+
+/** Monaco edits for files open in a tab. */
+function bufferEdits(projectId: string, files: LspFileEdits[]): monaco.languages.WorkspaceEdit {
+  return { edits: files.flatMap((f) => f.edits.map((e) => ({ resource: uriOf({ projectId, path: f.path }), versionId: undefined, textEdit: { range: toRange(e.range), text: e.newText } }))) }
+}
+
+/**
+ * Edits for files without a tab go to disk. A peek's model follows; the server's
+ * positions are about its text, so they aren't applied once the disk has moved on.
+ */
+async function writeEdits(projectId: string, files: LspFileEdits[]): Promise<void> {
   for (const f of files) {
-    const resource = uriOf({ projectId, path: f.path })
-    if (monaco.editor.getModel(resource)) {
-      for (const e of f.edits) edits.push({ resource, versionId: undefined, textEdit: { range: toRange(e.range), text: e.newText } })
-      continue
-    }
     const file = await ipc('files:read', { projectId, path: f.path }).catch(() => null)
     if (file?.content === undefined) continue
-    await ipc('files:write', { projectId, path: f.path, content: applyEdits(file.content, f.edits), expectedMtime: file.mtimeMs }).catch(() => {})
+    const peek = monaco.editor.getModel(uriOf({ projectId, path: f.path }))
+    if (peek && peek.getValue() !== file.content) {
+      peek.setValue(file.content)
+      continue
+    }
+    const content = applyEdits(file.content, f.edits)
+    const saved = await ipc('files:write', { projectId, path: f.path, content, expectedMtime: file.mtimeMs }).catch(() => null)
+    if (saved) peek?.setValue(content)
   }
-  return { edits }
+}
+
+/** Edits to apply now (a rename): the closed files are written, the open ones come back as Monaco edits. */
+async function workspaceEdit(projectId: string, files: LspFileEdits[]): Promise<monaco.languages.WorkspaceEdit> {
+  const [open, closed] = byBuffer(projectId, files)
+  await writeEdits(projectId, closed)
+  return bufferEdits(projectId, open)
 }
 
 /** Apply 1-based line/offset edits to a text (last first, so earlier positions stay valid). */
@@ -176,6 +204,9 @@ export function applyEdits(text: string, edits: LspTextEdit[]): string {
     .reduce((out, e) => out.slice(0, index(e.range.start)) + e.newText + out.slice(index(e.range.end)), text)
 }
 
+/** Models loaded for a peek, oldest first. */
+const peeked: { uri: monaco.Uri; file: File }[] = []
+
 /** Peek views need a model for each file they show: load the ones not open yet. */
 async function ensureModels(projectId: string, paths: string[]): Promise<void> {
   const missing = [...new Set(paths)].filter((path) => !monaco.editor.getModel(uriOf({ projectId, path }))).slice(0, MAX_PEEK_FILES)
@@ -183,9 +214,15 @@ async function ensureModels(projectId: string, paths: string[]): Promise<void> {
     missing.map(async (path) => {
       const file = await ipc('files:read', { projectId, path }).catch(() => null)
       const uri = uriOf({ projectId, path })
-      if (file?.content !== undefined && !monaco.editor.getModel(uri)) monaco.editor.createModel(file.content, undefined, uri)
+      if (file?.content === undefined || monaco.editor.getModel(uri)) return
+      monaco.editor.createModel(file.content, undefined, uri)
+      peeked.push({ uri, file: { projectId, path } })
     })
   )
+  // Each holds a file's text, a place at the language server and a lint run. One that became a tab's buffer stays.
+  for (const { uri, file } of peeked.splice(0, Math.max(0, peeked.length - MAX_PEEK_MODELS))) {
+    if (bufferText(tabKey(file.projectId, file.path)) === undefined) monaco.editor.getModel(uri)?.dispose()
+  }
 }
 
 // --- providers ---
@@ -241,6 +278,7 @@ export function setupLsp(): void {
   registered = true
   monaco.editor.getModels().forEach(track)
   monaco.editor.onDidCreateModel(track)
+  monaco.editor.registerCommand(WRITE_EDITS, (_: unknown, projectId: string, files: LspFileEdits[]) => writeEdits(projectId, files))
   // A language server published diagnostics; one was installed (Settings) — open files try again.
   onEvent('lsp:diagnostics', ({ projectId }) => scheduleDiagnostics(projectId))
   useLanguages.subscribe((s, prev) => {
@@ -388,7 +426,16 @@ export function setupLsp(): void {
           const fixes = await ipc('lsp:codeFixes', { ...file, range, errorCodes: Number.isInteger(code) ? [code] : [] }).catch(() => [])
           for (const fix of fixes) {
             if (actions.some((a) => a.title === fix.title)) continue
-            actions.push({ title: fix.title, kind: 'quickfix', diagnostics: [marker], edit: await workspaceEdit(file.projectId, fix.files), isPreferred: actions.length === 0 })
+            // Monaco asks for these whenever the cursor rests on an error: closed files are only written once a fix is chosen.
+            const [open, closed] = byBuffer(file.projectId, fix.files)
+            actions.push({
+              title: fix.title,
+              kind: 'quickfix',
+              diagnostics: [marker],
+              edit: bufferEdits(file.projectId, open),
+              ...(closed.length ? { command: { id: WRITE_EDITS, title: fix.title, arguments: [file.projectId, closed] } } : {}),
+              isPreferred: actions.length === 0
+            })
           }
         }
         return { actions, dispose() {} }
