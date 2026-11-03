@@ -2,7 +2,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { tempDir, tick } from './helpers'
-import { isLoopback, isLoopbackHost, isPageUrl, isWebUrl, originOf, resolveInput, searchUrl } from '../../../electron/main/services/browser/url'
+import { fileRequestAllowed, isLoopback, isLoopbackHost, isPageUrl, isWebUrl, originOf, resolveInput, searchUrl } from '../../../electron/main/services/browser/url'
 import { bareUrl, BrowserHistory, frecency } from '../../../electron/main/services/browser/history'
 import { createServer } from 'node:net'
 import { DevServerDetector, listening, probeTarget } from '../../../electron/main/services/browser/devServers'
@@ -16,6 +16,28 @@ describe('browser addresses', () => {
     expect(searchUrl('google', 'a b&c')).toBe('https://www.google.com/search?q=a%20b%26c')
     expect(searchUrl('duckduckgo', 'x')).toBe('https://duckduckgo.com/?q=x')
     expect(searchUrl('kagi', 'x')).toBe('https://kagi.com/search?q=x')
+  })
+
+  it('a local page loads its own assets, from its folder down, and reads nothing else (Electron lets file:// pages read what they load)', () => {
+    const page = 'file:///Users/me/site/index.html'
+    for (const type of ['stylesheet', 'script', 'image', 'font', 'media']) {
+      expect(fileRequestAllowed('file:///Users/me/site/a/b.png', type, page), type).toBe(true)
+      expect(fileRequestAllowed('file:///Users/me/secret.png', type, page), type).toBe(false)
+    }
+    // Reading outright, whatever the file: fetch and XHR, a frame's document, anything else.
+    for (const type of ['xhr', 'subFrame', 'object', 'ping', 'other']) expect(fileRequestAllowed('file:///Users/me/site/a.txt', type, page), type).toBe(false)
+    // Another page in the tab is a page: it reads nothing by that.
+    expect(fileRequestAllowed('file:///Users/me/.ssh/id_rsa', 'mainFrame', page)).toBe(true)
+    // Ways out of the folder, as a URL writes them.
+    expect(fileRequestAllowed('file:///Users/me/site/../secret.png', 'image', page)).toBe(false)
+    expect(fileRequestAllowed('file:///Users/me/site/%2e%2e/secret.png', 'image', page)).toBe(false)
+    expect(fileRequestAllowed('file:///Users/me/site/..%2fsecret.png', 'image', page)).toBe(false)
+    expect(fileRequestAllowed('file:///Users/me/site/..%5Csecret.png', 'image', page)).toBe(false)
+    expect(fileRequestAllowed('file:///Users/me/site-other/a.png', 'image', page)).toBe(false)
+    // No local page around it (a popup, a web page): nothing local.
+    expect(fileRequestAllowed('file:///Users/me/site/a.png', 'image', undefined)).toBe(false)
+    expect(fileRequestAllowed('file:///Users/me/site/a.png', 'image', '')).toBe(false)
+    expect(fileRequestAllowed('file:///Users/me/site/a.png', 'image', 'https://x.dev/')).toBe(false)
   })
 
   it('tells pages, web addresses, loopback hosts and origins apart', () => {

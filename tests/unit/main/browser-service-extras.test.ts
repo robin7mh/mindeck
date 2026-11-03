@@ -153,6 +153,19 @@ describe('BrowserService · private tabs and the agents’ container', () => {
 })
 
 describe('BrowserService · blocking, malware and DRM', () => {
+  it('a local page in a tab reads none of this computer\'s files, whatever it asks for', async () => {
+    const { b, host, events } = await setup()
+    b.attach(host)
+    const local = b.open({ url: 'file:///Users/me/site/index.html' })
+    expect(events.request(local.id, { url: 'file:///Users/me/.ssh/id_rsa', type: 'xhr', referrer: '' })).toEqual({ cancel: true })
+    expect(events.request(local.id, { url: 'file:///Users/me/secret.png', type: 'image', referrer: '' })).toEqual({ cancel: true })
+    expect(events.request(undefined, { url: 'file:///Users/me/site/a.png', type: 'image', referrer: '' })).toEqual({ cancel: true }) // a popup: no page to judge by
+    // Its own page and assets go on as ever.
+    expect(events.request(local.id, { url: 'file:///Users/me/site/a.png', type: 'image', referrer: '' })).toEqual({})
+    expect(events.request(local.id, { url: 'file:///Users/me/site/index.html', type: 'mainFrame', referrer: '' })).toEqual({})
+    expect(events.request(local.id, { url: 'https://cdn.dev/x.js', type: 'script', referrer: '' })).toEqual({})
+  })
+
   it('asks the blocker about every request and counts what it blocked on the page', async () => {
     const { b, host, events, tab } = await setup()
     b.attach(host)

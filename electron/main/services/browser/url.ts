@@ -25,6 +25,23 @@ export function isPageUrl(url: string): boolean {
   }
 }
 
+/** What a local page loads to look right: pictures, styles, scripts, fonts and media. */
+const LOCAL_ASSETS = new Set(['stylesheet', 'script', 'image', 'font', 'media'])
+
+/**
+ * Whether a tab may ask for this `file:` address. Electron gives file:// pages
+ * more than a browser would (its GrantFileProtocolExtraPrivileges fuse, which
+ * Mindeck's own UI on file:// needs): a page opened from the disk can fetch any
+ * file, read a frame's document, the pixels of any picture and the rules of any
+ * style sheet — and send them anywhere. So: another page in the tab, yes; a
+ * local page's assets from its own folder down; nothing else, ever.
+ */
+export function fileRequestAllowed(url: string, type: string, page: string | undefined): boolean {
+  if (type === 'mainFrame') return true
+  if (!page?.startsWith('file:') || !LOCAL_ASSETS.has(type) || /%(?:2f|5c)/i.test(url)) return false
+  return new URL(url).href.startsWith(new URL('.', page).href)
+}
+
 /** http(s) only — what agents may open and what the history keeps. */
 export function isWebUrl(url: string): boolean {
   return /^https?:\/\//i.test(url)

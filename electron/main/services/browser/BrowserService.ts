@@ -53,7 +53,7 @@ import { ENGINE_NAMES, labels, type Labels } from './labels'
 import { parseNetscape, toNetscape } from './netscape'
 import { SearchSuggestions, type Fetch } from './suggestions'
 import type { AutomationTarget, BrowserHost, BrowserHostEvents, ConsoleEntry, LoginAsk, MenuEntry, PermissionAsk, ShortcutAction, TabNavigation } from './types'
-import { hostOf, isLoopback, isPageUrl, isWebUrl, originOf, resolveInput, searchUrl } from './url'
+import { fileRequestAllowed, hostOf, isLoopback, isPageUrl, isWebUrl, originOf, resolveInput, searchUrl } from './url'
 
 type BrowserEvent = 'browser:state' | 'browser:find' | 'browser:command' | 'browser:reveal' | 'browser:bookmarks' | 'browser:import'
 
@@ -1491,6 +1491,7 @@ export class BrowserService {
   /** A request of a page: the blocker decides; the tab counts what it blocked (from its page's main request on). */
   private onRequest(id: string | undefined, req: { url: string; type: string; referrer: string }): RequestVerdict {
     const tab = this.lookup(id ?? '')
+    if (req.url.startsWith('file:') && !fileRequestAllowed(req.url, req.type, tab?.url)) return { cancel: true }
     const main = req.type === 'mainFrame'
     if (tab && main) {
       tab.blocked = 0
