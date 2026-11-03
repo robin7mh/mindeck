@@ -40,7 +40,8 @@ export const VERTICAL_TABS_WIDTH = { min: 160, max: 480, default: 240 } as const
 export const DEFAULT_BROWSER_SETTINGS: BrowserSettings = {
   searchEngine: 'google',
   openLinksInMindeck: true,
-  searchSuggestions: true,
+  // What is typed in the address bar stays here until the user chooses to send it to their search engine.
+  searchSuggestions: false,
   bookmarksBar: true,
   verticalTabs: false,
   verticalTabsWidth: VERTICAL_TABS_WIDTH.default,

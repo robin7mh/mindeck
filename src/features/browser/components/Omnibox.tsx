@@ -84,7 +84,8 @@ export function Omnibox({ tab }: { tab?: BrowserTab }) {
     setIndex(-1)
     const inline = grew ? inlineCompletion(text, list) : null
     setCompletion(inline && inline.value.length > text.length ? { suffix: inline.value.slice(text.length), url: inline.url } : null)
-    if (list.length) remote.current = setTimeout(() => void ask(text, mine), SUGGEST_DELAY_MS)
+    // A private tab tells the search engine nothing.
+    if (list.length && tab?.profile !== 'private') remote.current = setTimeout(() => void ask(text, mine), SUGGEST_DELAY_MS)
   }
 
   /** What the search engine suggests (when the user allows it), once typing paused. */

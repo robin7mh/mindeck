@@ -95,6 +95,10 @@ describe('BrowserService · history page and search suggestions', () => {
   it('asks the search engine only when the user allows it', async () => {
     const fetch = vi.fn(async () => ({ ok: true, json: async () => ['re', ['react', 'redux']] }))
     const { b } = await setupBrowser({ deps: { fetch } })
+    // Off until the user switches it on: what is typed stays on this machine.
+    expect(await b.searchSuggestions('re')).toEqual([])
+    expect(fetch).not.toHaveBeenCalled()
+    await b.configure({ searchSuggestions: true })
     expect(await b.searchSuggestions('re')).toEqual([
       { kind: 'suggestion', url: 'https://www.google.com/search?q=react', title: 'react' },
       { kind: 'suggestion', url: 'https://www.google.com/search?q=redux', title: 'redux' }

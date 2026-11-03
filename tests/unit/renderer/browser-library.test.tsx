@@ -505,6 +505,21 @@ describe('Omnibox · bookmarks and the engine’s suggestions', () => {
     expect(sent('browser:searchSuggest')).toEqual([{ text: 'react' }, { text: 'reac' }, { text: 'none' }])
   })
 
+  it('a private tab never asks the search engine: what is typed there stays here', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const { sent } = bridge({
+      'browser:suggest': () => [{ kind: 'search', url: 'https://s/?q=x', title: 'x' }],
+      'browser:searchSuggest': () => []
+    })
+    render(<Omnibox tab={{ ...tab('n', ''), profile: 'private' }} />)
+    const input = screen.getByRole('textbox', { name: 'Address or search' })
+    fireEvent.focus(input)
+    fireEvent.change(input, { target: { value: 'secret words' } })
+    await act(() => vi.advanceTimersByTimeAsync(300))
+    expect(screen.getAllByRole('option')).toHaveLength(1)
+    expect(sent('browser:searchSuggest')).toEqual([])
+  })
+
   it('shows engine suggestions as searches and bookmarks with their address', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     bridge({
@@ -561,7 +576,7 @@ describe('BrowserCard · library settings', () => {
     await settle()
     fireEvent.click(screen.getByRole('switch', { name: 'Show bookmarks bar' }))
     await settle()
-    expect(sent('browser:configure')).toEqual([{ searchSuggestions: false }, { bookmarksBar: false }])
+    expect(sent('browser:configure')).toEqual([{ searchSuggestions: true }, { bookmarksBar: false }])
     expect(useBrowser.getState().settings.bookmarksBar).toBe(false)
     fireEvent.click(screen.getByRole('button', { name: 'Import from another browser…' }))
     expect(await screen.findByRole('dialog', { name: 'Import from another browser' })).toBeInTheDocument()
