@@ -355,6 +355,23 @@ describe('HttpServer — API', () => {
     expect((await fetch(`${base}/api/other`)).status).toBe(404)
   })
 
+  it('a device store that fails is the core\'s problem: no bad-code, and no path for whoever asks', async () => {
+    const { base, auth } = await startHttp()
+    const failing = vi.spyOn(auth, 'pair').mockRejectedValue(Object.assign(new Error("EACCES: permission denied, open '/Users/robin/Mindeck/data/devices.json.tmp'"), { code: 'EACCES' }))
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const res = await fetch(`${base}/api/pair`, { method: 'POST', body: JSON.stringify({ code: 'AAAA-BBBB', name: 'x' }) })
+    expect(res.status).toBe(500)
+    const body = (await res.json()) as { error: { code: string; message: string } }
+    expect(body.error.code).toBe('error')
+    expect(body.error.message).not.toContain('/Users/robin')
+    expect(String(log.mock.calls[0])).toContain('devices.json.tmp') // the details are in the log
+    failing.mockRestore()
+    // A wrong code stays a wrong code.
+    const wrong = await fetch(`${base}/api/pair`, { method: 'POST', body: JSON.stringify({ code: 'AAAA-BBBB', name: 'x' }) })
+    expect(wrong.status).toBe(401)
+    expect(await wrong.json()).toMatchObject({ error: { code: 'bad-code', message: 'Pairing code is invalid or expired' } })
+  })
+
   it('pairs over HTTP and rate-limits failed attempts per address', async () => {
     const { base, auth, http } = await startHttp()
     const { code } = await auth.createPairingCode()

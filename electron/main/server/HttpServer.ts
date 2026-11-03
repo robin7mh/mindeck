@@ -549,6 +549,8 @@ export class HttpServer {
       this.setCookie(req, res, result.token, body?.remember !== false)
       send(res, 200, { ok: true, data: { device: result.device, ...pins } })
     } catch (err) {
+      // Only a wrong code is the caller's: anything else (a full disk, a store it can't read) goes to the log, like every failure.
+      if ((err as { code?: string }).code !== 'bad-code') throw err
       throw new HttpError(401, 'bad-code', (err as Error).message)
     }
   }
