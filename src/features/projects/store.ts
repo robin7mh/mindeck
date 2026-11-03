@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { errorMessage, ipc, isDesktop } from '@shared/ipc/client'
 import type { Project } from '@shared/types/project'
+import { useEditor } from '@/features/editor/store'
 
 interface ProjectsState {
   projects: Project[]
@@ -76,6 +77,7 @@ export const useProjects = create<ProjectsState>((set, get) => ({
     set({ busyId: id, error: undefined })
     try {
       await ipc('projects:remove', { id })
+      useEditor.getState().closeProject(id)
       set((s) => {
         const projects = s.projects.filter((p) => p.id !== id)
         return {

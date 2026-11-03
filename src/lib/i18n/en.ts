@@ -1863,6 +1863,8 @@ agents: {
     pull: 'Pull',
     pullHint: 'git pull — new commits from GitHub (fast-forward only)',
     remove: 'Remove',
+    removeUnsaved: (n: number) => `${n === 1 ? '1 file has' : `${n} files have`} unsaved changes. Removing the project closes them without saving.`,
+    removeAnyway: 'Remove and lose them',
     // context
     context: 'Context',
     indexed: (when: string) => `indexed ${when}`,

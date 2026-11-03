@@ -286,6 +286,8 @@ interface EditorState {
   saveAndClose: (id: string) => Promise<void>
   /** Close a file: out of every group, its buffer freed. */
   close: (id: string) => void
+  /** A project left Mindeck: its files close (unsaved edits too: the user was asked), its area goes. */
+  closeProject: (projectId: string) => void
   /** Follow the disk: reload clean tabs that changed, flag dirty ones, mark deleted files. */
   checkDisk: () => Promise<void>
 
@@ -587,6 +589,14 @@ export const useEditor = create<EditorState>((set, get) => ({
       closing: undefined,
       sessions: Object.fromEntries(Object.entries(s.sessions).map(([p, session]) => [p, strip(session)])),
       ...area(next.groups, next.grid, next.activeGroup)
+    })
+  },
+
+  closeProject: (projectId) => {
+    for (const t of get().tabs) if (t.projectId === projectId) get().close(t.id)
+    set((s) => {
+      const { [projectId]: _gone, ...sessions } = s.sessions
+      return { sessions }
     })
   },
 

@@ -9,6 +9,7 @@ import { Dashboard } from '@/features/dashboard/components/Dashboard'
 import { ProjectsView } from '@/features/projects/components/ProjectsView'
 import { ProjectDetailPanel } from '@/features/projects/components/ProjectDetailPanel'
 import { useProjects } from '@/features/projects/store'
+import { oneGroup, tabKey, useEditor } from '@/features/editor/store'
 import { useTerminals } from '@/features/terminal/store'
 import { en } from '@/lib/i18n/en'
 const t = en.dashboard
@@ -352,6 +353,45 @@ describe('ProjectDetailPanel', () => {
     await act(settle)
     expect(bridge.invoke).toHaveBeenCalledWith('terminal:create', { projectId: 'a' })
     expect(useTerminals.getState().activeId).toBe('x4')
+  })
+
+  it('removing a project with unsaved files asks first; its open files go with it', async () => {
+    const P = proj('rm')
+    const bridge = installBridge({ 'projects:remove': () => undefined, 'projects:refresh': () => P })
+    const initialEditor = useEditor.getState()
+    const editorTab = (projectId: string, path: string, dirty: boolean) => ({ id: tabKey(projectId, path), projectId, path, name: path, loading: false, content: 'x', revision: 1, dirty, saving: false, conflict: false, deleted: false })
+    useProjects.setState({ projects: [P], selectedId: P.id })
+    useEditor.setState({
+      projectId: 'other',
+      tabs: [editorTab(P.id, 'a.ts', true), editorTab(P.id, 'b.ts', false), editorTab('other', 'c.ts', true)],
+      sessions: { [P.id]: oneGroup([tabKey(P.id, 'a.ts'), tabKey(P.id, 'b.ts')]) },
+      ...oneGroup([tabKey('other', 'c.ts')])
+    })
+    const { rerender } = render(<ProjectDetailPanel project={P} onNavigate={vi.fn()} />)
+    await act(settle)
+
+    const removeButton = () => screen.getByRole('button', { name: 'Remove' })
+    fireEvent.click(removeButton())
+    expect(bridge.invoke).not.toHaveBeenCalledWith('projects:remove', { id: P.id })
+    expect(screen.getByRole('alertdialog')).toHaveTextContent('1 file')
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(screen.queryByRole('alertdialog')).toBeNull()
+
+    // Another project on screen: the question doesn't follow it.
+    fireEvent.click(removeButton())
+    rerender(<ProjectDetailPanel project={{ ...P, id: 'other' }} onNavigate={vi.fn()} />)
+    await act(settle)
+    expect(screen.queryByRole('alertdialog')).toBeNull()
+    rerender(<ProjectDetailPanel project={P} onNavigate={vi.fn()} />)
+    await act(settle)
+
+    fireEvent.click(removeButton())
+    fireEvent.click(screen.getByRole('button', { name: 'Remove and lose them' }))
+    await act(settle)
+    expect(bridge.invoke).toHaveBeenCalledWith('projects:remove', { id: P.id })
+    expect(useEditor.getState().tabs.map((t) => t.id)).toEqual([tabKey('other', 'c.ts')])
+    expect(useEditor.getState().sessions[P.id]).toBeUndefined()
+    useEditor.setState(initialEditor, true)
   })
 
   it('dirty repo without upstream, no repo and no stack; remove', async () => {
