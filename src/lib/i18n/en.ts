@@ -996,6 +996,7 @@ agents: {
     settingUp: 'Setting up…',
     invalid: (msg: string) => `This file can’t be shown as a notebook: ${msg}`,
     emptyMarkdown: 'Empty Markdown cell — double-click to write',
+    outputCut: '[… earlier output cut: a cell keeps the last 1,000,000 characters of a stream]',
     readOnly: 'read-only here',
     cell: (n: number) => `Cell ${n}`,
     dismiss: 'Dismiss'

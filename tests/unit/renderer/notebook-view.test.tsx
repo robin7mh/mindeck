@@ -103,6 +103,17 @@ const mon = vi.hoisted(() => {
   }
 })
 vi.mock('@/features/editor/monaco/setup', () => ({ monaco: mon.monaco, THEME: 'mindeck' }))
+const sanitized = vi.hoisted(() => ({ count: 0 }))
+vi.mock('@/lib/sanitize', async (orig) => {
+  const real = await orig<typeof import('@/lib/sanitize')>()
+  return {
+    ...real,
+    sanitizeFrameHtml: (html: string) => {
+      sanitized.count += 1
+      return real.sanitizeFrameHtml(html)
+    }
+  }
+})
 vi.mock('@/features/editor/components/CodeEditor', () => ({ fileUri: (projectId: string, path: string) => ({ toString: () => `file:///${projectId}/${path}` }) }))
 
 import NotebookView from '@/features/editor/components/NotebookView'
@@ -247,6 +258,20 @@ describe('NotebookView', () => {
       ['https://example.com', '_blank', 'noopener,noreferrer'],
       ['https://example.com', '_blank', 'noopener,noreferrer']
     ])
+  })
+
+  it('typing in a cell doesn’t sanitize every HTML output again; a changed output is', async () => {
+    const { tab } = open()
+    render(<NotebookView tab={tab} readOnly={false} onRaw={vi.fn()} />)
+    await act(settle)
+    const before = sanitized.count
+    expect(before).toBeGreaterThan(0)
+    act(() => editorOf('print(1)').model.setValue('print(2)'))
+    act(() => editorOf('print(2)').model.setValue('print(3)'))
+    expect(sanitized.count).toBe(before)
+    await act(settle)
+    emit(tab.path, { type: 'output', cell: 'c1', output: { output_type: 'display_data', data: { 'text/html': '<b>new</b>' }, metadata: {} } })
+    expect(sanitized.count).toBe(before + 1)
   })
 
   it('edits cells into the file; Markdown switches between rendered and editing', async () => {

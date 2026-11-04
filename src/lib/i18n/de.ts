@@ -977,6 +977,7 @@ agents: {
     settingUp: 'Wird eingerichtet…',
     invalid: (msg) => `Diese Datei lässt sich nicht als Notebook anzeigen: ${msg}`,
     emptyMarkdown: 'Leere Markdown-Zelle — Doppelklick zum Schreiben',
+    outputCut: '[… frühere Ausgabe gekürzt: eine Zelle behält die letzten 1.000.000 Zeichen eines Streams]',
     readOnly: 'hier nur lesend',
     cell: (n) => `Zelle ${n}`,
     dismiss: 'Schließen'

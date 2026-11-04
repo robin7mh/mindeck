@@ -58,13 +58,18 @@ export function newCell(type: 'code' | 'markdown', source = ''): Cell {
   return type === 'code' ? { ...base, cell_type: 'code', execution_count: null, outputs: [] } : { ...base, cell_type: 'markdown' }
 }
 
-/** A cell's outputs with one more: text on the same stream joins the one before (as Jupyter shows it). */
-export function addOutput(outputs: NotebookOutput[], output: NotebookOutput): NotebookOutput[] {
+/** What a stream output keeps of its text (the end): a chatty cell fills neither the file nor the window. */
+export const MAX_STREAM_CHARS = 1_000_000
+
+const capped = (text: string, mark: string) => (text.length > MAX_STREAM_CHARS ? `${mark}\n${text.slice(-MAX_STREAM_CHARS)}` : text)
+
+/** A cell's outputs with one more: text on the same stream joins the one before (as Jupyter shows it); `cut` marks where it was cut. */
+export function addOutput(outputs: NotebookOutput[], output: NotebookOutput, cut: string): NotebookOutput[] {
   const last = outputs[outputs.length - 1]
   if (output.output_type === 'stream' && last?.output_type === 'stream' && last.name === output.name) {
-    return [...outputs.slice(0, -1), { ...last, text: splitSource(joinSource(last.text) + joinSource(output.text)) }]
+    return [...outputs.slice(0, -1), { ...last, text: splitSource(capped(joinSource(last.text) + joinSource(output.text), cut)) }]
   }
-  return [...outputs, output.output_type === 'stream' ? { ...output, text: splitSource(joinSource(output.text)) } : output]
+  return [...outputs, output.output_type === 'stream' ? { ...output, text: splitSource(capped(joinSource(output.text), cut)) } : output]
 }
 
 /** The cell with these changes (others unchanged). */

@@ -88,11 +88,13 @@ function CellEditor({ value, language, readOnly, focus, onChange, onRun, onEscap
  */
 function HtmlOutput({ html }: { html: string }) {
   const frame = useRef<HTMLIFrameElement>(null)
+  // Every keystroke in any cell draws every output again.
+  const clean = useMemo(() => sanitizeFrameHtml(html), [html])
   // The app's light or dark: without the same colour scheme the frame paints itself white.
   const root = getComputedStyle(document.documentElement)
   const scheme = root.colorScheme || 'normal'
   const color = getComputedStyle(document.body).color
-  const doc = `<!doctype html><html><head><meta charset="utf-8"><style>:root{color-scheme:${scheme}}body{margin:0;font:12.5px ui-sans-serif,system-ui,sans-serif;color:${color};background:transparent;overflow:auto}table{border-collapse:collapse}th,td{border:1px solid rgba(140,160,190,.3);padding:2px 8px;text-align:right}th{background:rgba(140,160,190,.12)}a{color:#38d6e8}</style></head><body>${sanitizeFrameHtml(html)}</body></html>`
+  const doc = `<!doctype html><html><head><meta charset="utf-8"><style>:root{color-scheme:${scheme}}body{margin:0;font:12.5px ui-sans-serif,system-ui,sans-serif;color:${color};background:transparent;overflow:auto}table{border-collapse:collapse}th,td{border:1px solid rgba(140,160,190,.3);padding:2px 8px;text-align:right}th{background:rgba(140,160,190,.12)}a{color:#38d6e8}</style></head><body>${clean}</body></html>`
   const fit = () => {
     const el = frame.current!
     el.style.height = `${Math.min(600, el.contentDocument!.body.scrollHeight + 4)}px`
