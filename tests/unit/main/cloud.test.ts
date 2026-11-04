@@ -7,7 +7,7 @@ import { announcedKids, keyId, parsePublicKey, parsePublicKeys, trustedKeys, ver
 import { bakedCloud, cloudConfig, cloudDefines, cloudKeyDefine, DEV_CLOUD_URL, isReleaseBuild } from '../../../electron/main/services/cloud/config'
 import { SecretStore } from '../../../electron/main/services/ai/SecretStore'
 import { Router } from '../../../electron/ipc/router'
-import { isLicenseFree } from '@shared/types/cloud'
+import { isLicenseFree, TRIAL_IDLE_MS } from '@shared/types/cloud'
 import { tempDir } from './helpers'
 
 // --- a fake Mindeck Cloud that signs real entitlements -------------------------
@@ -557,18 +557,35 @@ describe('CloudService', () => {
     expect(beats()).toBe(2)
     expect(t.svc.status()).toMatchObject({ state: 'paused', allowed: true }) // nobody here: the clock pauses
 
-    t.svc.setRemoteClients(1) // a paired phone counts as use
+    t.svc.deviceUsed() // someone works on a paired phone: that counts as use
     await t.svc.tick()
     expect(beats()).toBe(3)
-    t.svc.setRemoteClients(0)
   })
 
-  it('treats a core without a user signal as idle unless a device is connected', async () => {
+  it('a device counts as use for five minutes after someone did something on it, as long as the desktop waits: an open connection counts for nothing', async () => {
     const t = await setup({ isUserActive: undefined })
     await t.signIn()
+    const beats = () => t.cloud.s.calls.filter((c) => c.path === '/v1/license/heartbeat').length
     t.advance(60)
     await t.svc.tick()
-    expect(t.cloud.s.calls.filter((c) => c.path === '/v1/license/heartbeat')).toHaveLength(1)
+    expect(beats()).toBe(1) // a tab left open overnight, an HTTP client doing nothing: no use, the clock stands
+    expect(t.svc.status()).toMatchObject({ allowed: true })
+
+    t.svc.deviceUsed()
+    t.advance(60)
+    await t.svc.tick()
+    expect(beats()).toBe(2)
+    t.advance(TRIAL_IDLE_MS / 1000 - 61) // the last moment
+    await t.svc.tick()
+    expect(beats()).toBe(3)
+    t.advance(2 + 90) // away, and the last lease ran out: it pauses
+    await t.svc.tick()
+    expect(beats()).toBe(3)
+    expect(t.svc.status()).toMatchObject({ state: 'paused', allowed: true })
+
+    t.svc.deviceUsed() // an HTTP-only client that does anything counts like any other
+    await t.svc.tick()
+    expect(beats()).toBe(4)
   })
 
   it('locks a trial without the cloud, and retries after a pause', async () => {
@@ -883,6 +900,22 @@ describe('CloudService', () => {
     await t.svc.tick()
     expect(beats()).toBe(before)
     t.svc.setRemoteSessions(1)
+    await t.svc.tick()
+    expect(beats()).toBe(before + 1)
+  })
+
+  it('a remote window left open pauses the clock like any other when nobody is at the computer', async () => {
+    let away = true
+    const t = await setup({ isUserAway: () => away })
+    await t.signIn()
+    t.setUserActive(false)
+    t.svc.setRemoteSessions(1)
+    const beats = () => t.cloud.s.calls.filter((c) => c.path === '/v1/license/heartbeat').length
+    const before = beats()
+    t.advance(60)
+    await t.svc.tick()
+    expect(beats()).toBe(before)
+    away = false
     await t.svc.tick()
     expect(beats()).toBe(before + 1)
   })

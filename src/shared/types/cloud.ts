@@ -29,6 +29,9 @@ export type LicenseState =
   | 'license_suspended'
   | 'offline'
 
+/** Nobody at the computer or on a paired device for this long: the trial clock pauses (what the website promises). */
+export const TRIAL_IDLE_MS = 5 * 60_000
+
 /** States in which Mindeck may be used. */
 export const USABLE_STATES: readonly LicenseState[] = ['active', 'paused']
 

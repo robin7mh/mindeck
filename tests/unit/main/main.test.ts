@@ -425,6 +425,13 @@ describe('main process boot', () => {
     expect(active()).toBe(false)
     win.visible = true
     win.focused = true
+    // Nobody at the computer, whatever window it is (a remote one is no Mindeck window that has the focus).
+    const away = h.coreOpts!.isUserAway as () => boolean
+    h.idleSeconds = 5 * 60
+    expect(away()).toBe(true)
+    h.idleSeconds = 299
+    expect(away()).toBe(false)
+    h.idleSeconds = 0
     h.packaged = true
     await boot()
     expect(h.coreOpts!.cloud).toMatchObject({ enforced: true })

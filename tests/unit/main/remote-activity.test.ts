@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { RemoteActivity } from '../../../electron/main/server/RemoteActivity'
 import type { CallContext } from '../../../electron/ipc/router'
 
@@ -8,17 +8,42 @@ function setup() {
   const logged: [string, string, unknown][] = []
   const names: Record<string, string> = { d1: 'iPhone', d2: 'iPad' }
   let broken = false
+  const used = vi.fn()
   const a = new RemoteActivity({
+    used,
     devices: async () => {
       if (broken) throw new Error('no devices file')
       return Object.entries(names).map(([id, name]) => ({ id, name }))
     },
     log: (type, deviceId, payload) => logged.push([type, deviceId, payload])
   })
-  return { a, logged, names, breakDevices: () => (broken = true) }
+  return { a, logged, names, used, breakDevices: () => (broken = true) }
 }
 
 const flush = () => new Promise((r) => setTimeout(r, 0))
+
+describe('what counts as someone using a paired device (the trial clock)', () => {
+  it('what a person does, whatever it is — not what clients ask by themselves, on a timer or after a push', () => {
+    const { a, used } = setup()
+    for (const channel of ['terminal:write', 'agents:send', 'agents:create', 'ai:send', 'permission:respond', 'files:write', 'files:list', 'search:start', 'memory:write', 'scm:commit', 'finder:list', 'mongo:find'] as const) {
+      used.mockClear()
+      a.observe(channel, {}, {}, phone)
+      expect(used, channel).toHaveBeenCalledOnce()
+    }
+    used.mockClear()
+    // The editor's look at the disk and git, a session's changes, what follows a push or a reconnect, what an open tab keeps up to date.
+    for (const channel of ['files:stat', 'scm:status', 'scm:branches', 'scm:stashes', 'agents:changes', 'agents:branch', 'agents:list', 'agents:get', 'ai:conversations', 'ai:status', 'permission:pending', 'events:recent', 'memory:list', 'memory:status', 'lsp:diagnostics', 'terminal:attach', 'projects:list', 'system:snapshot'] as const) {
+      a.observe(channel, {}, {}, phone)
+    }
+    // An agent changing an open file: the editor reloads it by itself, with everything that follows.
+    for (const channel of ['files:read', 'lsp:change', 'lint:file', 'scm:blame', 'scm:original'] as const) a.observe(channel, {}, {}, phone)
+    // Free of the license: no use of it.
+    for (const channel of ['cloud:status', 'cloud:refresh', 'app:info'] as const) a.observe(channel, {}, {}, phone)
+    // The desktop has its own signal.
+    a.observe('terminal:write', {}, {}, { transport: 'ipc' })
+    expect(used).not.toHaveBeenCalled()
+  })
+})
 
 describe('what paired devices do with the files', () => {
   it('logs downloads, uploads and every change — a batch with its first paths and its size', async () => {

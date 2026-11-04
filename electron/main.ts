@@ -18,12 +18,13 @@ import { isFullScreenKey } from './main/platform/browser/shortcuts'
 import { FILE_SCHEME, serveFile } from './main/platform/fileProtocol'
 import { appMenuTemplate } from './main/platform/menu'
 import { guardSession } from './main/platform/sessionGuard'
+import { TRIAL_IDLE_MS } from '@shared/types/cloud'
 
 /** A 1×1 picture for drags whose file has no icon. */
 const DRAG_ICON = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
 
 /** After this long without keyboard or mouse, the trial clock pauses. */
-const IDLE_SECONDS = 5 * 60
+const IDLE_SECONDS = TRIAL_IDLE_MS / 1000
 /** The longest a quit waits for the core to save and stop. */
 const DISPOSE_TIMEOUT_MS = 5000
 
@@ -291,7 +292,8 @@ async function startCore(): Promise<void> {
     // The packaged app needs a license; `npm run dev` only with MINDECK_LICENSE=required.
     cloud: cloudConfig(app.isPackaged),
     // The trial counts only while Mindeck is in front of someone — not while it runs in the background.
-    isUserActive: () => usingMindeck(mainWindow, lastFocusAt, Date.now(), powerMonitor.getSystemIdleTime() >= IDLE_SECONDS)
+    isUserActive: () => usingMindeck(mainWindow, lastFocusAt, Date.now(), powerMonitor.getSystemIdleTime() >= IDLE_SECONDS),
+    isUserAway: () => powerMonitor.getSystemIdleTime() >= IDLE_SECONDS
   })
   core.hub.subscribe(broadcast)
   const c = core

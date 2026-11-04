@@ -450,6 +450,13 @@ describe('createCore — paired devices without remote shells', () => {
       expect(await desktop('projects:remove', { id: hiddenProject.id })).toMatchObject({ ok: true })
       expect(await remote('ai:conversation', { id: other.data.conversationId })).toMatchObject({ ok: false, error: { code: 'remote-forbidden' } })
 
+      // What the device does counts for the trial clock, what it keeps up to date by itself doesn't.
+      const used = vi.spyOn(c.cloud, 'deviceUsed')
+      await remote('files:stat', { projectId: project.id, paths: ['a.txt'] })
+      expect(used).not.toHaveBeenCalled()
+      await remote('files:list', { projectId: project.id })
+      expect(used).toHaveBeenCalledOnce()
+
       // 3. A change the desktop's run wants: the device may deny, not allow.
       let pending: string | undefined
       c.hub.subscribe((channel, payload) => {

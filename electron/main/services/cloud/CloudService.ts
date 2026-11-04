@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { mkdir, rename, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import {
+  TRIAL_IDLE_MS,
   USABLE_STATES,
   type CloudAccount,
   type CloudLicense,
@@ -64,6 +65,8 @@ export interface CloudServiceOptions {
   secrets: Pick<SecretStore, 'get' | 'set'>
   /** Someone is at this machine (desktop: not idle). Absent on a headless server. */
   isUserActive?: () => boolean
+  /** Nobody is at this machine, whatever is on its screen (desktop: no keyboard or mouse). Absent on a headless server. */
+  isUserAway?: () => boolean
   onStatus: (status: CloudStatus) => void
   fetch?: typeof fetch
   now?: () => number
@@ -213,7 +216,8 @@ export class CloudService {
   private error: string | null = null
   private lastAttempt = 0
   private lastSuccess = 0
-  private remoteClients = 0
+  /** When someone last did something on a paired device. */
+  private deviceUsedAt = -Infinity
   private remoteSessions = 0
   private beating: Promise<void> | null = null
   private timer?: ReturnType<typeof setInterval>
@@ -300,9 +304,9 @@ export class CloudService {
     }
   }
 
-  /** Paired devices connected right now — someone uses Mindeck through them. */
-  setRemoteClients(count: number): void {
-    this.remoteClients = count
+  /** Someone did something on a paired device (RemoteActivity): an open connection says nothing, a tab can stay open overnight. */
+  deviceUsed(): void {
+    this.deviceUsedAt = this.now()
   }
 
   /** Remote windows (SSH, Dev Containers) open right now — Mindeck is in use there, on this license. */
@@ -310,9 +314,15 @@ export class CloudService {
     this.remoteSessions = count
   }
 
-  /** Someone is using Mindeck: at this machine, through a connected device, or in a remote window. */
+  /**
+   * Someone is using Mindeck, what the trial counts: at this machine, on a
+   * paired device within the minutes the desktop waits too, or in a remote
+   * window while anyone is at the computer. An agent working alone is not.
+   */
   private inUse(): boolean {
-    return this.remoteClients > 0 || this.remoteSessions > 0 || (this.opts.isUserActive?.() ?? false)
+    if (this.now() - this.deviceUsedAt < TRIAL_IDLE_MS) return true
+    if (this.remoteSessions > 0 && !this.opts.isUserAway?.()) return true
+    return this.opts.isUserActive?.() ?? false
   }
 
   /** May Mindeck be used right now? (The Router asks before every licensed call.) */

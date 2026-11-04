@@ -113,8 +113,10 @@ export interface CoreOptions {
   cloud?: CloudConfig & { fetch?: typeof fetch }
   /** Someone looks at Mindeck (desktop: its window has focus) — then no push goes to the phone. */
   isFocused?: () => boolean
-  /** Someone is at this machine (desktop: not idle). Remote clients count as use, too. */
+  /** Someone is using Mindeck at this machine (desktop: not idle, its window in front). What a device does counts as use, too. */
   isUserActive?: () => boolean
+  /** Nobody is at this machine, whatever is on its screen (desktop: no keyboard or mouse): a remote window left open counts for nothing then. */
+  isUserAway?: () => boolean
 }
 
 export interface Core {
@@ -265,7 +267,8 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
   // What devices do with the computer's files: into the audit log.
   const remoteActivity = new RemoteActivity({
     devices: () => auth.devices(),
-    log: (type, deviceId, payload) => events.emit(type, { actor: { kind: 'device', id: deviceId }, payload })
+    log: (type, deviceId, payload) => events.emit(type, { actor: { kind: 'device', id: deviceId }, payload }),
+    used: () => cloud.deviceUsed()
   })
 
   const router = new Router({
@@ -286,10 +289,7 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
     fixedConfig: opts.serverConfig,
     webRoot: opts.webRoot,
     certificates: new Certificates({ dir: paths.tlsDir, files: opts.tlsFiles }),
-    onClients: (count) => {
-      system.setRemoteClients(count)
-      cloud.setRemoteClients(count)
-    },
+    onClients: (count) => system.setRemoteClients(count),
     scope: remoteScope.event.bind(remoteScope)
   })
 
@@ -327,6 +327,7 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
     file: paths.cloudFile,
     secrets,
     isUserActive: opts.isUserActive,
+    isUserAway: opts.isUserAway,
     onStatus: (status) => hub.publish('cloud:status', status),
     fetch: cloudCfg.fetch
   })

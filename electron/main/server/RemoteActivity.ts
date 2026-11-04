@@ -1,15 +1,76 @@
 import type { IpcChannel } from '@shared/ipc/contract'
+import { isLicenseFree } from '@shared/types/cloud'
 import type { DeviceActivity } from '@shared/types/events'
 import type { CallContext } from '../../ipc/router'
 
 /** Paths a batch names in the log (the count says how many there were). */
 const LOGGED_PATHS = 20
 
+/**
+ * What clients ask by themselves: a tab or an app that is merely open keeps
+ * doing it, and an agent at work sets it off. None of it says anyone is there
+ * — the trial clock must not run on it: the editor's look at the disk and git
+ * every few seconds, a session's changes every minute, what follows a push or
+ * a reconnect, and an open file the agent changed (reloaded, parsed, linted).
+ */
+const BY_ITSELF: ReadonlySet<IpcChannel> = new Set<IpcChannel>([
+  'agents:branch',
+  'agents:changes',
+  'agents:detect',
+  'agents:get',
+  'agents:list',
+  'agents:pushSettings',
+  'ai:agents',
+  'ai:conversation',
+  'ai:conversations',
+  'ai:runs',
+  'ai:status',
+  'ai:tools',
+  'editor:settings',
+  'events:recent',
+  'files:read',
+  'files:stat',
+  'lint:file',
+  'liveServer:status',
+  'lsp:change',
+  'lsp:close',
+  'lsp:diagnostics',
+  'lsp:open',
+  'memory:folders',
+  'memory:graph',
+  'memory:list',
+  'memory:read',
+  'memory:status',
+  'permission:grants',
+  'permission:pending',
+  'projects:list',
+  'scm:blame',
+  'scm:branches',
+  'scm:original',
+  'scm:stashes',
+  'scm:status',
+  'server:devices',
+  'server:status',
+  'sftp:targets',
+  'system:snapshot',
+  'system:user',
+  'terminal:attach',
+  'terminal:list',
+  'terminal:resize',
+  'terminal:settings',
+  'terminal:shells',
+  'tests:state',
+  'tools:runtimes',
+  'tools:status'
+])
+
 export interface RemoteActivityDeps {
   /** The paired devices (for their names). */
   devices: () => Promise<{ id: string; name: string }[]>
   /** Into the audit log. */
   log: (type: 'device.files', deviceId: string, payload: DeviceActivity) => void
+  /** Someone did something on a device, under the license (the trial clock's signal). */
+  used: () => void
 }
 
 type Payload = Record<string, unknown>
@@ -20,9 +81,9 @@ function batch(paths: string[]): Pick<DeviceActivity, 'paths' | 'count'> {
 }
 
 /**
- * What paired devices do with the computer's files: an audit entry per
- * action (`device.files` — which file and where, never its content), shown
- * on the desktop only.
+ * What paired devices do: with the computer's files an audit entry per action
+ * (`device.files` — which file and where, never its content), shown on the
+ * desktop only; with anything under the license a sign that someone is there.
  */
 export class RemoteActivity {
   constructor(private readonly deps: RemoteActivityDeps) {}
@@ -30,7 +91,9 @@ export class RemoteActivity {
   /** The Router's observer: a remote call that went through. */
   observe(channel: IpcChannel, payload: unknown, data: unknown, ctx: CallContext): void {
     const deviceId = ctx.deviceId
-    if (ctx.transport !== 'remote' || !deviceId || !channel.startsWith('finder:')) return
+    if (ctx.transport !== 'remote' || !deviceId) return
+    if (!isLicenseFree(channel) && !BY_ITSELF.has(channel)) this.deps.used()
+    if (!channel.startsWith('finder:')) return
     const entry = this.filesEntry(channel, (payload ?? {}) as Payload, data)
     if (entry) void this.record(deviceId, entry)
   }
