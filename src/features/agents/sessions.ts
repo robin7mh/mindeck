@@ -126,6 +126,8 @@ export const useAgents = create<AgentsState>((set, get) => {
           onResync(() => {
             void get().refresh()
             const id = get().activeId
+            // Sessions not on screen missed the gap too: they come fresh when opened again, not as they were left.
+            set((s) => ({ messages: id && s.messages[id] ? { [id]: s.messages[id] } : {} }))
             if (id) void load(id, false).catch(fail)
           })
         ]

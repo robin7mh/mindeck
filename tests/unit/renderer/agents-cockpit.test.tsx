@@ -160,6 +160,39 @@ describe('useAgents store', () => {
     off()
   })
 
+  it('after an outage, a session not on screen comes back as the core has it, not as it was left', async () => {
+    let a = [{ ...msg('a1', 'assistant', 'half a sent'), status: 'streaming' as const }]
+    const remote = installRemote({ 'agents:list': () => [], 'agents:get': ({ id }: { id: string }) => ({ ...session({ id }), messages: id === 'A' ? a : [msg('b1', 'user', 'hi')] }) })
+    useAgents.setState({ messages: {}, activeId: undefined })
+    const off = ag().connect()
+    await act(settle)
+    await ag().open('A')
+    await ag().open('B')
+    // The socket drops; A's turn ends on the core, no event says so.
+    a = [{ ...msg('a1', 'assistant', 'half a sentence, then the rest'), status: 'done' as const }]
+    await act(async () => {
+      remote.resync()
+      await settle()
+    })
+    await ag().open('A')
+    expect(ag().messages.A[0]).toMatchObject({ status: 'done', parts: [{ text: 'half a sentence, then the rest' }] })
+
+    // Nothing open, or the open session not loaded yet: nothing to keep.
+    useAgents.setState({ activeId: undefined })
+    await act(async () => {
+      remote.resync()
+      await settle()
+    })
+    expect(ag().messages).toEqual({})
+    useAgents.setState({ activeId: 'B', messages: { A: [] } })
+    await act(async () => {
+      remote.resync()
+      await settle()
+    })
+    expect(Object.keys(ag().messages)).toEqual(['B'])
+    off()
+  })
+
   it('after an outage of the push channel: statuses and the open session reload', async () => {
     let status: AgentSession['status'] = 'working'
     let messages = [msg('m1', 'user', 'hi')]
