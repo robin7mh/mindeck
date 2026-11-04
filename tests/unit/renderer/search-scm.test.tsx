@@ -241,6 +241,23 @@ describe('search store', () => {
     await q().undoReplace() // nothing to undo
   })
 
+  it('replace all: a file Mindeck can’t write back is named, stays listed and doesn’t count as done', async () => {
+    const written: string[] = []
+    await searched(
+      {
+        'files:read': ({ path }: { path: string }) =>
+          path === 'disk.ts' ? { path, mtimeMs: 1, size: 1, unsupported: 'encoding' } : path === 'open.ts' ? { path, mtimeMs: 1, size: 1, unsupported: 'too-large' } : { path, content: 'needle\nab needle', mtimeMs: 5, size: 1 },
+        'files:write': ({ path }: { path: string }) => (written.push(path), { mtimeMs: 7, size: 1 })
+      },
+      false
+    )
+    await q().replaceAll()
+    expect(written).toEqual(['gone.ts'])
+    expect(q().error).toBe('Some files were not replaced:\nopen.ts: Larger than 5 MB\ndisk.ts: Not UTF-8 text')
+    expect(q().results.map((f) => f.path)).toEqual(['open.ts', 'disk.ts'])
+    expect(q().undo?.files.map((f) => f.path)).toEqual(['gone.ts'])
+  })
+
   it('replace failures: a file changed on disk, binary files, undo conflicts; guards', async () => {
     let conflict = true
     await searched(
@@ -254,8 +271,10 @@ describe('search store', () => {
     expect(q().error).toBe('Some files were not replaced:\ndisk.ts: disk.ts changed on disk since it was opened')
     expect(q().results.find((f) => f.path === 'disk.ts')).toBeDefined() // still listed
     conflict = false
-    await q().replaceFile('gone.ts') // binary now: nothing written
+    await q().replaceFile('gone.ts') // binary now: nothing written, and it says so
     expect(q().undo).toBeUndefined()
+    expect(q().error).toBe('Some files were not replaced:\ngone.ts: Binary file')
+    expect(q().results.find((f) => f.path === 'gone.ts')).toBeDefined()
     // An open buffer without an editor that edits: the file on disk is replaced instead.
     await q().replaceFile('open.ts')
     expect(q().undo?.files.map((f) => f.path)).toEqual(['open.ts'])

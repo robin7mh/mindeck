@@ -14,7 +14,7 @@ import {
   type TextSearchQuery
 } from '@shared/types/search'
 import { getT } from '@/lib/i18n'
-import { bufferText, editBuffer, tabKey, useEditor } from './store'
+import { bufferText, editBuffer, tabKey, UNSUPPORTED_LABEL, useEditor } from './store'
 import { useScm } from './scm'
 
 /** What the user typed into the search view. */
@@ -117,10 +117,12 @@ export const useSearch = create<SearchState>((set, get) => {
     const open = bufferText(id)
     if (open !== undefined && editBuffer(id, replacementsFor(open, matches, re, get().replace, !!q.regex))) return undefined
     const file = await ipc('files:read', { projectId, path })
-    const reps = file.content === undefined ? [] : replacementsFor(file.content, matches, re, get().replace, !!q.regex)
+    // Not text Mindeck can write back (another encoding, binary, too large): no match was replaced, and the user hears why.
+    if (file.content === undefined) throw new Error(getT().editor[UNSUPPORTED_LABEL[file.unsupported!]])
+    const reps = replacementsFor(file.content, matches, re, get().replace, !!q.regex)
     if (!reps.length) return undefined
-    const saved = await ipc('files:write', { projectId, path, content: applyReplacements(file.content!, reps), expectedMtime: file.mtimeMs })
-    return { path, before: file.content!, mtimeMs: saved.mtimeMs }
+    const saved = await ipc('files:write', { projectId, path, content: applyReplacements(file.content, reps), expectedMtime: file.mtimeMs })
+    return { path, before: file.content, mtimeMs: saved.mtimeMs }
   }
 
   /** Replace per file; matches leave the list, failures are reported, disk writes become undoable. */
