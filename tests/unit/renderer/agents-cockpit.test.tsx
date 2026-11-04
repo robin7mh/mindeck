@@ -122,6 +122,23 @@ describe('useAgents store', () => {
     expect(bridge.listenerCount('agents:changed')).toBe(0)
   })
 
+  it('an answer about the changes that overtakes a newer one is dropped: the list shows the latest look', async () => {
+    const answers: ((changes: unknown[]) => void)[] = []
+    installBridge({
+      'agents:changes': () => new Promise((resolve) => answers.push(resolve))
+    })
+    const older = ag().loadChanges('s1')
+    const newer = ag().loadChanges('s1')
+    const other = ag().loadChanges('s2')
+    answers[1]([{ path: 'written.txt', status: 'added', added: 1, removed: 0 }])
+    answers[2]([{ path: 'there.txt', status: 'added', added: 1, removed: 0 }])
+    await Promise.all([newer, other])
+    answers[0]([]) // asked before the file was written, answered after
+    await older
+    expect(ag().changes.s1).toEqual([{ path: 'written.txt', status: 'added', added: 1, removed: 0 }])
+    expect(ag().changes.s2).toHaveLength(1)
+  })
+
   it('opening a running session: what arrives while it loads is kept, the answer doesn’t replace it', async () => {
     let answer: (v: unknown) => void = () => {}
     const bridge = installBridge({ 'agents:list': () => [], 'agents:get': () => new Promise((r) => (answer = r)) })
