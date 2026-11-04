@@ -161,7 +161,7 @@ describe('useAgents store', () => {
   })
 
   it('after an outage, a session not on screen comes back as the core has it, not as it was left', async () => {
-    let a = [{ ...msg('a1', 'assistant', 'half a sent'), status: 'streaming' as const }]
+    let a: ChatMessage[] = [{ ...msg('a1', 'assistant', 'half a sent'), status: 'streaming' }]
     const remote = installRemote({ 'agents:list': () => [], 'agents:get': ({ id }: { id: string }) => ({ ...session({ id }), messages: id === 'A' ? a : [msg('b1', 'user', 'hi')] }) })
     useAgents.setState({ messages: {}, activeId: undefined })
     const off = ag().connect()
@@ -169,7 +169,7 @@ describe('useAgents store', () => {
     await ag().open('A')
     await ag().open('B')
     // The socket drops; A's turn ends on the core, no event says so.
-    a = [{ ...msg('a1', 'assistant', 'half a sentence, then the rest'), status: 'done' as const }]
+    a = [msg('a1', 'assistant', 'half a sentence, then the rest')]
     await act(async () => {
       remote.resync()
       await settle()
