@@ -53,7 +53,7 @@ describe('a paired device\'s diff', () => {
     await writeFile(join(dir, 'pkg', 'mine.txt'), 'mine too\n')
     sh(dir, 'add', '.')
     sh(dir, 'commit', '-q', '-m', 'change')
-    return { dir, hash: sh(dir, 'rev-parse', 'HEAD').trim(), project: service(join(dir, 'pkg')) }
+    return { dir, hash: sh(dir, 'rev-parse', 'HEAD').trim(), project: Object.assign(service(join(dir, 'pkg')), { rootForTest: join(dir, 'pkg') }) }
   }
 
   it('reads inside the project only: a shared folder doesn\'t share the rest of its repository', async () => {
@@ -62,17 +62,63 @@ describe('a paired device\'s diff', () => {
     expect(await project.diff('p', 'pkg/mine.txt', { kind: 'commit', hash }, true)).toMatchObject({ original: 'mine\n', modified: 'mine too\n' })
     expect(await project.diff('p', 'pkg/mine.txt', { kind: 'staged' }, true)).toMatchObject({ original: 'mine too\n', modified: 'mine too\n' })
     for (const [path, target] of [
-      ['other/secret.txt', { kind: 'staged' }],
       ['../other/secret.txt', { kind: 'staged' }],
       ['..', { kind: 'staged' }],
       ['pkg/../other/secret.txt', { kind: 'commit', hash }],
-      ['pkg/mine.txt', { kind: 'commit', hash, from: 'other/secret.txt' }],
       ['pkg/mine.txt', { kind: 'stash', hash, from: '../other/secret.txt' }]
     ] as const) {
       await expect(project.diff('p', path, target, true), `${path} ${JSON.stringify(target)}`).rejects.toMatchObject({ code: 'outside-project' })
     }
+    // A path from outside the project reads as one inside it: nothing there.
+    for (const [path, target] of [
+      ['other/secret.txt', { kind: 'staged' }],
+      ['other/secret.txt', { kind: 'unstaged' }],
+      ['other/secret.txt', { kind: 'commit', hash }]
+    ] as const) {
+      const shown = await project.diff('p', path, target, true)
+      expect(`${shown.original}${shown.modified}`, `${path} ${target.kind}`).toBe('')
+    }
+    expect((await project.diff('p', 'pkg/mine.txt', { kind: 'commit', hash, from: 'other/secret.txt' }, true)).original).toBe('')
     // The desktop's own view of its repository stays as it is.
     expect(await project.diff('p', 'other/secret.txt', { kind: 'staged' })).toMatchObject({ original: 'SECRET\n' })
+  })
+
+  it('both ways of naming a file work in a shared subfolder, for every kind of diff: from the project (the gutter) and from the repository (git status)', async () => {
+    const { hash, project } = await monorepo()
+    await writeFile(join(project.rootForTest, 'mine.txt'), 'edited\n')
+    for (const path of ['mine.txt', 'pkg/mine.txt']) {
+      expect(await project.diff('p', path, { kind: 'unstaged' }, true), path).toMatchObject({ path, original: 'mine too\n', modified: 'edited\n' })
+      expect(await project.diff('p', path, { kind: 'staged' }, true), path).toMatchObject({ original: 'mine too\n', modified: 'mine too\n' })
+      expect(await project.diff('p', path, { kind: 'commit', hash }, true), path).toMatchObject({ original: 'mine\n', modified: 'mine too\n' })
+      // The desktop's gutter too.
+      expect(await project.diff('p', path, { kind: 'unstaged' }), path).toMatchObject({ original: 'mine too\n', modified: 'edited\n' })
+    }
+  })
+
+  it('a path is a path: git\'s revision syntax in it reads nothing', async () => {
+    const dir = await repo()
+    await writeFile(join(dir, 'secrets.yaml'), 'AWS_SECRET=hunter2\n')
+    sh(dir, 'add', '.')
+    sh(dir, 'commit', '-q', '-m', 'add config')
+    const s = service(dir)
+    const hash = sh(dir, 'rev-parse', 'HEAD').trim()
+    for (const kind of ['staged', 'unstaged', 'commit'] as const) {
+      const target = kind === 'commit' ? { kind, hash } : { kind }
+      for (const path of ['/^add config', ':/^add config', '0:secrets.yaml', ':0:secrets.yaml', '1:secrets.yaml', '../secrets.yaml', 'sub/../../secrets.yaml', '\\^add config', '/etc/passwd']) {
+        await expect(s.diff('p', path, target, true), `${kind} ${path}`).rejects.toMatchObject({ code: 'outside-project' })
+      }
+    }
+    // In any other syntax git would read it as: the name of a file, which isn't there — for the desktop's window as well.
+    for (const path of ['/^add config', '0:secrets.yaml', ':/^add config', 'HEAD~1']) {
+      for (const kind of ['staged', 'unstaged'] as const) {
+        const shown = await s.diff('p', path, { kind }).catch(() => ({ original: '', modified: '' }))
+        expect(`${shown.original}${shown.modified}`, `${kind} ${path}`).not.toContain('hunter2')
+      }
+    }
+    // A file's own odd name still works.
+    await writeFile(join(dir, 'a:b.txt'), 'colon\n')
+    sh(dir, 'add', '.')
+    expect((await s.diff('p', 'a:b.txt', { kind: 'staged' }, true)).modified).toBe('colon\n')
   })
 
   it('a project at the repository\'s root: everything in it, nothing above', async () => {
@@ -80,6 +126,11 @@ describe('a paired device\'s diff', () => {
     const whole = service(dir)
     expect(await whole.diff('p', 'other/secret.txt', { kind: 'commit', hash, from: 'other/secret.txt' }, true)).toMatchObject({ original: 'SECRET\n' })
     await expect(whole.diff('p', '../up.txt', { kind: 'staged' }, true)).rejects.toMatchObject({ code: 'outside-project' })
+  })
+
+  it('a folder that is no repository has nothing to show', async () => {
+    const plain = await tempDir('mindeck-plain-')
+    expect(await service(plain).diff('p', 'a.txt', { kind: 'staged' }, true)).toEqual({ path: 'a.txt', original: '', modified: '' })
   })
 })
 

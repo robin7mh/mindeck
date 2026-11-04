@@ -366,20 +366,25 @@ export class ScmService {
   /**
    * Before → after of one file: working tree vs. index, index vs. HEAD, or a commit vs. its parent.
    * `device`: a paired device's call, which stays in the project.
+   * Every spec for `git show` names its source first (`:0:`, `HEAD:`, a hash): what follows the
+   * colon is only ever a path. `:${path}` alone would read `/^fix` as "the commit saying so" and `0:x` as a stage.
    */
   async diff(projectId: string, path: string, target: ScmDiffTarget, device = false): Promise<FileDiff> {
     const root = this.root(projectId)
-    if (device) await this.inProject(root, 'from' in target && target.from ? [path, target.from] : [path])
+    // No repository: nothing to show, each spec below says so by failing.
+    const prefix = (await this.git(root, ['rev-parse', '--show-prefix']).catch(() => '')).trim()
+    const file = this.inRepository(root, prefix, path, device)
     const blob = (spec: string) => this.git(root, ['show', spec]).catch(() => '')
     if (target.kind === 'unstaged') {
-      const abs = await confine(root, path)
-      return { path, original: await blob(`:${path}`), modified: await readFile(abs, 'utf8').catch(() => '') }
+      const abs = await confine(root, file.startsWith(prefix) ? file.slice(prefix.length) : file)
+      return { path, original: await blob(`:0:${file}`), modified: await readFile(abs, 'utf8').catch(() => '') }
     }
-    if (target.kind === 'staged') return { path, original: await blob(`HEAD:${path}`), modified: await blob(`:${path}`) }
+    if (target.kind === 'staged') return { path, original: await blob(`HEAD:${file}`), modified: await blob(`:0:${file}`) }
     if (!HASH.test(target.hash)) throw coded('bad-input', 'Not a commit hash')
     // A stash commit's first parent is the commit it was made on; its third holds the untracked files.
-    if (target.kind === 'stash' && target.untracked) return { path, original: '', modified: await blob(`${target.hash}^3:${path}`) }
-    return { path, original: await blob(`${target.hash}^:${target.from ?? path}`), modified: await blob(`${target.hash}:${path}`) }
+    if (target.kind === 'stash' && target.untracked) return { path, original: '', modified: await blob(`${target.hash}^3:${file}`) }
+    const before = target.from ? this.inRepository(root, prefix, target.from, device) : file
+    return { path, original: await blob(`${target.hash}^:${before}`), modified: await blob(`${target.hash}:${file}`) }
   }
 
   /**
@@ -469,15 +474,16 @@ export class ScmService {
   }
 
   /**
-   * Paths as `git status` writes them, from the repository's root: all inside
-   * the project, or refused — a shared subfolder doesn't share the rest of its repository.
+   * A file as git's trees name it, from the repository's root. It comes that way from `git status`
+   * (`pkg/a.ts` in the project `pkg`), or from the project's folder from the editor (`a.ts`). A paired
+   * device's stays in the project: a shared subfolder doesn't share the rest of its repository, and
+   * nothing that reads as a way out or as git's own syntax gets this far.
    */
-  private async inProject(root: string, paths: string[]): Promise<void> {
-    const prefix = (await this.git(root, ['rev-parse', '--show-prefix'])).trim()
-    for (const path of paths) {
-      const clean = posix.normalize(path.replace(/\\/g, '/'))
-      if (clean === '..' || clean.startsWith('../') || !clean.startsWith(prefix)) throw coded('outside-project', `${path} is not in this project`)
-    }
+  private inRepository(root: string, prefix: string, path: string, device: boolean): string {
+    if (device && (/^(?:[\\/:]|\d+:)/.test(path) || path.split(/[\\/]/).includes('..'))) throw coded('outside-project', `${path} is not in this project`)
+    const clean = posix.normalize(path)
+    if (clean.startsWith(prefix)) return clean
+    return device || existsSync(join(root, clean)) ? prefix + clean : clean
   }
 
   /** `stash@{n}` for a stash — found by its hash, since the positions shift as stashes come and go. */

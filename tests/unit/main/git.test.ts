@@ -126,6 +126,25 @@ describe('GitService', () => {
     expect(existsSync(wt2)).toBe(false)
   })
 
+  it('a session in a subfolder of its repository sees that folder: its changes and old versions, nothing past it', async () => {
+    const dir = await repo()
+    await mkdir(join(dir, 'pkg'))
+    await mkdir(join(dir, 'other'))
+    await writeFile(join(dir, 'pkg', 'mine.txt'), 'mine\n')
+    await writeFile(join(dir, 'other', 'secret.txt'), 'SECRET\n')
+    sh(dir, 'add', '.')
+    sh(dir, 'commit', '-q', '-m', 'packages')
+    const pkg = join(dir, 'pkg')
+    const start = (await git.baseline(pkg))!
+    expect(await git.fileAt(pkg, start.base, 'mine.txt')).toBe('mine\n')
+    expect(await git.fileAt(pkg, start.base, 'other/secret.txt')).toBe('')
+    // A path is a path, whatever else it looks like to git.
+    expect(await git.fileAt(pkg, start.base, '/^packages')).toBe('')
+    await writeFile(join(pkg, 'mine.txt'), 'changed\n')
+    await writeFile(join(dir, 'other', 'secret.txt'), 'CHANGED\n')
+    expect((await git.changes(pkg, start)).map((c) => c.path)).toEqual(['mine.txt'])
+  })
+
   it('applies a worktree byte for byte: text in any encoding, a large patch with multibyte characters', async () => {
     const dir = await repo()
     const latin1 = Buffer.from('M\xFCller\nGr\xFC\xDFe\n', 'latin1')

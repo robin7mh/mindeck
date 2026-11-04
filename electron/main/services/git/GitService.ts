@@ -141,8 +141,9 @@ export class GitService {
   /** Files changed since the baseline (tracked diff + files that became untracked since). */
   async changes(cwd: string, from: GitBaseline, exclude: string[] = []): Promise<FileChange[]> {
     const [numstat, names, untracked] = await Promise.all([
-      git(cwd, this.guard(cwd), ['diff', '--no-renames', '--numstat', from.base, ...except(exclude)]),
-      git(cwd, this.guard(cwd), ['diff', '--no-renames', '--name-status', from.base, ...except(exclude)]),
+      // --relative: from this folder, like the untracked files and `fileAt` (only a subfolder project sees a difference).
+      git(cwd, this.guard(cwd), ['diff', '--no-renames', '--relative', '--numstat', from.base, ...except(exclude)]),
+      git(cwd, this.guard(cwd), ['diff', '--no-renames', '--relative', '--name-status', from.base, ...except(exclude)]),
       git(cwd, this.guard(cwd), ['ls-files', '--others', '--exclude-standard', ...except(exclude)])
     ])
     const status = new Map(lines(names).map((l) => [l.slice(l.indexOf('\t') + 1), l[0]]))
@@ -169,7 +170,8 @@ export class GitService {
 
   /** A file's content at the baseline ('' if it did not exist then). */
   async fileAt(cwd: string, base: string, path: string): Promise<string> {
-    return git(cwd, this.guard(cwd), ['show', `${base}:${path}`]).catch(() => '')
+    // From the session's folder, not the repository's root: in a shared subfolder `other/x` is no way out of it.
+    return git(cwd, this.guard(cwd), ['show', `${base}:./${path}`]).catch(() => '')
   }
 
   /** A new worktree on a new branch from HEAD, for an agent working in parallel. */
