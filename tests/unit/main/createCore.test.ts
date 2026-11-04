@@ -204,6 +204,7 @@ describe('createCore', () => {
     expect(await c.router.dispatch('tests:debug', { projectId, id: 'none', breakpoints: [] }, { transport: 'ipc' })).toMatchObject({ error: { code: 'not-found' } })
     expect(await c.router.dispatch('remote:hasContainer', { projectId: 'none' }, { transport: 'ipc' })).toMatchObject({ error: { code: 'not-found' } })
     expect(await c.router.dispatch('remote:hasContainer', { projectId }, { transport: 'ipc' })).toEqual({ ok: true, data: false })
+    expect(await c.router.dispatch('remote:container', { projectId: 'none' }, { transport: 'ipc' })).toMatchObject({ error: { code: 'untrusted' } })
     expect(await c.router.dispatch('cloud:adopt', { token: 'mindeck1.x.y.zzzz', account: { email: 'a@b', name: null } }, { transport: 'ipc' })).toMatchObject({ error: { code: 'not-follower' } })
     // the install id a desktop asks for a follower lease with
     expect(await c.router.dispatch('cloud:installId', undefined, { transport: 'ipc' })).toMatchObject({ ok: true, data: { installId: expect.any(String) } })
