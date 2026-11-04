@@ -718,6 +718,46 @@ describe('memory store', () => {
     expect(m().error).toBe('disk full')
   })
 
+  it('closing the window with text the disk doesn’t have asks, whichever module is on screen', async () => {
+    const closing = () => {
+      const event = new Event('beforeunload', { cancelable: true })
+      window.dispatchEvent(event)
+      return event.defaultPrevented
+    }
+    const v = vault()
+    expect(closing()).toBe(false) // no note open
+    await m().open('Willkommen.md')
+    expect(closing()).toBe(false) // nothing unsaved
+
+    // Typed a moment ago: it isn't on disk yet, and the write could still be refused.
+    m().setDraft('typed a moment ago')
+    expect(closing()).toBe(true)
+    expect(await m().save()).toBe(true)
+    expect(v.files.get('Willkommen.md')!.body).toBe('typed a moment ago')
+    expect(closing()).toBe(false)
+
+    // An agent touches the note, the user keeps typing past the banner: only this window has that text.
+    const write = v.routes['memory:writeBody']
+    v.routes['memory:writeBody'] = (() => fail('changed on disk', 'conflict')) as never
+    m().setDraft('past the banner')
+    expect(await m().save()).toBe(false)
+    expect(m().conflict).toBe(true)
+    m().setDraft('past the banner, and on')
+    expect(closing()).toBe(true)
+    expect(m().draft).toBe('past the banner, and on')
+    expect(v.files.get('Willkommen.md')!.body).toBe('typed a moment ago')
+
+    // A write that keeps failing for another reason: the same.
+    v.routes['memory:writeBody'] = (() => fail('read-only')) as never
+    expect(await m().save()).toBe(false)
+    expect(closing()).toBe(true)
+
+    // Kept on disk at last: free to go.
+    v.routes['memory:writeBody'] = write
+    expect(await m().save({ force: true })).toBe(true)
+    expect(closing()).toBe(false)
+  })
+
   it('a note closed while its text is being written stays closed', async () => {
     const v = vault()
     await m().open('Willkommen.md')

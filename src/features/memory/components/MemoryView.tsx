@@ -37,24 +37,8 @@ export function MemoryView() {
     return onEvent('memory:changed', (change) => void useMemory.getState().onChanged(change))
   }, [])
 
-  // Flush pending edits when leaving the module, and when the window goes (nothing unmounts then).
-  useEffect(() => {
-    const closing = (e: BeforeUnloadEvent) => {
-      const { note, draft, save } = useMemory.getState()
-      if (!note || draft === note.body) return
-      void save()
-      // A browser may drop a request made while the page goes: it asks first. The desktop's write is on its way.
-      if (!isDesktop()) {
-        e.preventDefault()
-        e.returnValue = ''
-      }
-    }
-    window.addEventListener('beforeunload', closing)
-    return () => {
-      window.removeEventListener('beforeunload', closing)
-      void useMemory.getState().save()
-    }
-  }, [])
+  // Flush pending edits when leaving the module.
+  useEffect(() => () => void useMemory.getState().save(), [])
 
   // ⌘⇧D: today's daily note — while Memory's pane has the focus.
   const focused = usePaneFocused()

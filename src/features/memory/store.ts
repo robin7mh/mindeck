@@ -560,3 +560,12 @@ export function folderColors(notes: { folder: string }[]): Map<string, number> {
   const folders = [...new Set(notes.map((n) => n.folder))].sort((a, b) => a.localeCompare(b))
   return new Map(folders.map((f, i) => [f, i]))
 }
+
+// Unsaved text vetoes closing the window, whichever module is on screen; the desktop app then asks (main.ts).
+// A write started now could be refused with no one left to tell (the file moved on, a read-only vault): this window has the only copy.
+window.addEventListener('beforeunload', (e) => {
+  const { note, draft } = useMemory.getState()
+  if (!note || draft === note.body) return
+  e.preventDefault()
+  e.returnValue = ''
+})
