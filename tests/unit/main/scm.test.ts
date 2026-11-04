@@ -93,6 +93,8 @@ describe('a paired device\'s diff', () => {
       // The desktop's gutter too.
       expect(await project.diff('p', path, { kind: 'unstaged' }), path).toMatchObject({ original: 'mine too\n', modified: 'edited\n' })
     }
+    // A name from the repository outside the project: the desktop's window can get one, and its working copy stays out of it.
+    expect(await project.diff('p', 'other/secret.txt', { kind: 'unstaged' })).toMatchObject({ modified: '' })
   })
 
   it('a path is a path: git\'s revision syntax in it reads nothing', async () => {
