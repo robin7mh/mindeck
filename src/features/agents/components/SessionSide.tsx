@@ -134,7 +134,7 @@ export function SessionSide({ session, onOpenNote, onHide }: { session: AgentSes
             className={cn('rounded-sm px-2 py-1 font-sans text-[11.5px] font-medium', tab === id ? 'bg-cyan/10 text-cyan' : 'text-text-muted hover:text-text-secondary')}
           >
             {label}
-            {count > 0 && <span className="ml-1 font-mono text-[10px]">{count}</span>}
+            {count > 0 && <span className="ml-1 font-mono text-[11px]">{count}</span>}
           </button>
         ))}
         <HideSideButton onHide={onHide} />
@@ -145,7 +145,7 @@ export function SessionSide({ session, onOpenNote, onHide }: { session: AgentSes
           <div className="space-y-1">
             <div className="flex items-center justify-between px-1">
               <TechLabel className="text-text-muted">{session.worktree ? t.agents.inOwnFolder : t.agents.sinceStart}</TechLabel>
-              <button type="button" aria-label={t.agents.refreshChanges} onClick={reload} className="text-text-muted hover:text-cyan">
+              <button type="button" aria-label={t.agents.refreshChanges} onClick={reload} className="text-text-muted hover:text-text-primary">
                 <RefreshCw size={12} />
               </button>
             </div>
@@ -206,11 +206,11 @@ export function SessionSide({ session, onOpenNote, onHide }: { session: AgentSes
                 onClick={() => void showDiff(c.path)}
                 className="flex w-full items-center gap-2 rounded-sm px-1.5 py-1 text-left hover:bg-elevated/50"
               >
-                <span className={cn('font-mono text-[10px] font-semibold', c.status === 'added' ? 'text-green' : c.status === 'deleted' ? 'text-danger' : 'text-amber')}>
+                <span className={cn('font-mono text-[11px] font-semibold', c.status === 'added' ? 'text-green' : c.status === 'deleted' ? 'text-danger' : 'text-amber')}>
                   {c.status === 'added' ? 'A' : c.status === 'deleted' ? 'D' : 'M'}
                 </span>
                 <span className="min-w-0 flex-1 truncate font-mono text-[11.5px] text-text-secondary">{c.path}</span>
-                <span className="font-mono text-[10px] text-text-muted">
+                <span className="font-mono text-[11px] text-text-muted">
                   +{c.added} −{c.removed}
                 </span>
               </button>
@@ -225,7 +225,7 @@ export function SessionSide({ session, onOpenNote, onHide }: { session: AgentSes
                       type="button"
                       disabled={busy}
                       onClick={() => void accept()}
-                      className="flex flex-1 items-center justify-center gap-1 rounded-md border border-cyan/50 bg-cyan/8 px-2 py-1 font-sans text-[11.5px] text-cyan hover:bg-cyan/15 disabled:opacity-40"
+                      className="flex flex-1 items-center justify-center gap-1 rounded-md border border-cyan px-2 py-1 font-sans text-[11.5px] bg-cyan text-void hover:opacity-90 disabled:opacity-40"
                     >
                       {busy ? <Loader2 size={12} className="animate-spin" /> : <GitMerge size={12} />} {t.agents.takeOver}
                     </button>

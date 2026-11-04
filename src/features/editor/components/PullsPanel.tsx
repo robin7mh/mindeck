@@ -55,7 +55,7 @@ function CreateForm() {
       </label>
       {same && <p className="font-sans text-[11.5px] text-amber">{t.github.sameBranch}</p>}
       <div className="flex gap-1.5">
-        <button type="submit" disabled={!title.trim() || !base.trim() || same || !!busy} className="flex items-center gap-1 rounded-sm border border-cyan/50 px-2 py-0.5 font-sans text-[12px] text-cyan hover:bg-cyan/10 disabled:opacity-40">
+        <button type="submit" disabled={!title.trim() || !base.trim() || same || !!busy} className="flex items-center gap-1 rounded-sm border border-cyan px-2 py-0.5 font-sans text-[12px] bg-cyan text-void hover:opacity-90 disabled:opacity-40">
           {busy === 'create' && <Loader2 size={11} className="animate-spin" />}
           {t.github.submit}
         </button>
@@ -123,7 +123,7 @@ export function PullsPanel() {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="space-y-1.5 px-2 pb-2">
-        <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-text-muted">{t.github.title}</p>
+        <p className="font-sans text-[12px] font-medium text-text-muted">{t.github.title}</p>
         <p className="truncate font-mono text-[11px] text-text-secondary" title={t.github.signedInAs(status.user)}>
           {status.repo.nameWithOwner}
         </p>

@@ -354,7 +354,7 @@ function ContextMenu({ menu, onClose, readOnly }: { menu: Menu; onClose: () => v
       role="menu"
       aria-label={t.explorer.actions}
       style={{ left: menu.x, top: menu.y }}
-      className="fixed z-70 min-w-[200px] rounded-md border border-hud/70 bg-panel/95 p-1 shadow-xl shadow-black/40 backdrop-blur-md"
+      className="fixed z-70 min-w-[200px] rounded-md border border-hud/50 bg-panel p-1 shadow-xl shadow-black/40 backdrop-blur-md"
     >
       {items
         .filter((i) => !i.hidden)
@@ -402,7 +402,7 @@ export function FileTree({ projectId, readOnly = false }: { projectId: string; r
 
   const header = (
     <div className="flex items-center gap-0.5 px-2 pb-1">
-      <span className="mr-auto font-mono text-[10px] uppercase tracking-[0.14em] text-text-muted">{t.explorer.title}</span>
+      <span className="mr-auto font-sans text-[12px] font-medium text-text-muted">{t.explorer.title}</span>
       {!readOnly && (
         <>
           <button type="button" aria-label={t.explorer.newFile} title={t.explorer.newFile} className={tool} onClick={() => void useEditor.getState().startNaming('file')}>

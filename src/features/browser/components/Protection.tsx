@@ -10,9 +10,9 @@ import { hostOf } from '../url'
 const NONE: BrowserAuthRequest[] = []
 
 const button =
-  'flex items-center gap-1.5 rounded-md border border-hud/60 px-3 py-1.5 font-sans text-[12.5px] text-text-secondary transition-colors hover:border-cyan/50 hover:text-cyan'
+  'flex items-center gap-1.5 rounded-md border border-hud/60 px-3 py-1.5 font-sans text-[12.5px] text-text-secondary transition-colors hover:border-hud-strong/80 hover:text-text-primary'
 const small =
-  'flex items-center gap-1 rounded-md border border-hud/60 px-2 py-0.5 font-sans text-[11.5px] text-text-secondary transition-colors hover:border-cyan/50 hover:text-cyan'
+  'flex items-center gap-1 rounded-md border border-hud/60 px-2 py-0.5 font-sans text-[11.5px] text-text-secondary transition-colors hover:border-hud-strong/80 hover:text-text-primary'
 
 /** A private tab's new-tab page: what private means here — no history, no top sites. */
 export function PrivateTabPage() {

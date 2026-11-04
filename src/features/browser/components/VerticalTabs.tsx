@@ -173,7 +173,7 @@ export function VerticalTabs() {
         {!folded && (group.collapsed ? <ChevronRight size={13} aria-hidden /> : <ChevronDown size={13} aria-hidden />)}
         <span className={cn('h-2.5 w-2.5 shrink-0 rounded-full', style.dot)} aria-hidden />
         {!folded && <span className="min-w-0 flex-1 truncate text-left">{name}</span>}
-        {!folded && <span className="font-mono text-[10px] font-normal text-text-muted">{count}</span>}
+        {!folded && <span className="font-mono text-[11px] font-normal text-text-muted">{count}</span>}
       </button>
     )
   }
@@ -227,7 +227,7 @@ export function VerticalTabs() {
           onClick={() => void useBrowser.getState().newTab()}
           {...drag.target('end', (id) => dropAtEnd(useBrowser.getState().state, id))}
           className={cn(
-            'flex h-8 shrink-0 items-center gap-2 rounded-md font-sans text-[12.5px] text-text-muted transition-colors hover:bg-elevated/40 hover:text-cyan',
+            'flex h-8 shrink-0 items-center gap-2 rounded-md font-sans text-[12.5px] text-text-muted transition-colors hover:bg-elevated/40 hover:text-text-primary',
             folded ? 'mx-auto w-8 justify-center' : 'px-2',
             drag.over === 'end' && 'shadow-[inset_0_2px_0_0_rgb(var(--accent-cyan))]'
           )}

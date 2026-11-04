@@ -11,7 +11,7 @@ import { XtermPane } from '@/features/terminal/components/XtermPane'
 import { quietButton } from '@/features/cloud/components/CloudForms'
 import { guides, type Guide } from '../guides'
 
-const small = 'flex shrink-0 items-center gap-1 rounded-sm border border-hud/60 px-1.5 py-1 font-sans text-[11px] text-text-secondary transition-colors hover:border-cyan/50 hover:text-cyan'
+const small = 'flex shrink-0 items-center gap-1 rounded-sm border border-hud/60 px-1.5 py-1 font-sans text-[11px] text-text-secondary transition-colors hover:border-hud-strong/80 hover:text-text-primary'
 
 /** A command line: copy it, or run it in a terminal right here. */
 function CommandLine({ label, command, onRun }: { label: string; command: string; onRun: (command: string) => void }) {
@@ -54,7 +54,7 @@ function Row({ guide, tone, status, children }: { guide: Guide; tone: Tone; stat
         <span className={cn('h-2 w-2 shrink-0 rounded-full', tone === 'ok' ? 'bg-green' : tone === 'warn' ? 'bg-amber' : 'bg-text-muted')} />
         <span className="font-sans text-[13px] font-medium text-text-primary">{guide.name}</span>
         <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-text-muted">{status}</span>
-        <a href={guide.url} target="_blank" rel="noreferrer" className="flex shrink-0 items-center gap-1 font-sans text-[11px] text-text-muted hover:text-cyan">
+        <a href={guide.url} target="_blank" rel="noreferrer" className="flex shrink-0 items-center gap-1 font-sans text-[11px] text-text-muted hover:text-text-primary">
           {o.guide} <ExternalLink size={11} />
         </a>
       </div>

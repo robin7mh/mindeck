@@ -3,7 +3,7 @@ import { useT } from '@/lib/i18n'
 import { useBrowser } from '../store'
 
 const small =
-  'flex items-center gap-1 rounded-md border border-hud/60 px-2 py-0.5 font-sans text-[11.5px] text-text-secondary transition-colors hover:border-cyan/50 hover:text-cyan'
+  'flex items-center gap-1 rounded-md border border-hud/60 px-2 py-0.5 font-sans text-[11.5px] text-text-secondary transition-colors hover:border-hud-strong/80 hover:text-text-primary'
 
 /** After a crash: the last session's tabs wait here — restore them, or let them go. */
 export function RestoreBar() {

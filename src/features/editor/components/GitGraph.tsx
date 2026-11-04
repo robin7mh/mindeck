@@ -84,7 +84,7 @@ function Ref({ name }: { name: string }) {
   return (
     <span
       className={cn(
-        'shrink-0 rounded-sm border px-1 font-mono text-[10px]',
+        'shrink-0 rounded-sm border px-1 font-mono text-[11px]',
         head ? 'border-cyan/50 bg-cyan/10 text-cyan' : tag ? 'border-amber/40 text-amber' : 'border-hud/60 text-text-secondary'
       )}
     >
@@ -159,7 +159,7 @@ export function GitGraph() {
                     className="flex w-full items-center gap-1.5 rounded-sm px-1.5 py-0.5 text-left hover:bg-elevated/50"
                   >
                     <span className="min-w-0 flex-1 truncate font-sans text-[12px] text-text-primary">{name}</span>
-                    <span className="min-w-0 truncate font-mono text-[10px] text-text-muted">{f.path.slice(0, f.path.length - name.length)}</span>
+                    <span className="min-w-0 truncate font-mono text-[11px] text-text-muted">{f.path.slice(0, f.path.length - name.length)}</span>
                     <span className="w-14 shrink-0 text-right font-sans text-[10.5px] text-text-muted">{t.scm.change[f.change]}</span>
                   </button>
                 </li>

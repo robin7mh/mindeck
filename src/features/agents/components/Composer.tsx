@@ -272,8 +272,8 @@ export function Composer({
   }
 
   return (
-    <div className="border-t border-hud/60 p-3" onDragOver={(e) => agent && e.preventDefault()} onDrop={onDrop}>
-      <div className="relative rounded-lg border border-hud/70 bg-surface/70 px-2.5 py-2 focus-within:border-cyan/50">
+    <div className="border-t border-hud/40 px-4 pb-4 pt-3" onDragOver={(e) => agent && e.preventDefault()} onDrop={onDrop}>
+      <div className="relative rounded-xl border border-hud/60 bg-panel px-3.5 pb-2.5 pt-3 shadow-panel transition-colors focus-within:border-hud-strong/80">
         {token && suggestions.length > 0 && (
           <ul role="listbox" aria-label={token.trigger === '@' ? t.agents.references : t.agents.commands} className="absolute inset-x-0 bottom-full z-20 mb-1 max-h-64 overflow-y-auto rounded-md border border-hud/70 bg-elevated p-1 shadow-lg">
             {suggestions.map((s, i) => (
@@ -339,7 +339,7 @@ export function Composer({
                 title={t.agents.attachImage}
                 disabled={disabled}
                 onClick={() => filePicker.current!.click()}
-                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-muted hover:text-cyan disabled:opacity-40"
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-muted hover:text-text-primary disabled:opacity-40"
               >
                 <ImagePlus size={15} />
               </button>
@@ -368,7 +368,7 @@ export function Composer({
             onPaste={onPaste}
             onBlur={() => setToken(null)}
             placeholder={placeholder}
-            className="max-h-[220px] min-h-[24px] flex-1 resize-none bg-transparent font-sans text-[13.5px] leading-6 text-text-primary outline-hidden placeholder:text-text-muted disabled:opacity-50"
+            className="max-h-[220px] min-h-[24px] flex-1 resize-none bg-transparent font-sans text-[14.5px] leading-6 text-text-primary outline-hidden placeholder:text-text-muted disabled:opacity-50"
           />
           {running ? (
             <button
@@ -376,7 +376,7 @@ export function Composer({
               onClick={onStop}
               aria-label={t.agents.stop}
               title={t.agents.stopAgent}
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-amber/50 bg-amber/10 text-amber hover:bg-amber/20"
+              className="flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-md border border-hud/60 text-text-primary hover:bg-elevated"
             >
               <Square size={13} fill="currentColor" />
             </button>
@@ -386,7 +386,7 @@ export function Composer({
               onClick={() => void submit()}
               aria-label={t.agents.send}
               disabled={empty || sending || disabled}
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-cyan/50 bg-cyan/12 text-cyan hover:bg-cyan/20 disabled:opacity-40"
+              className="flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-md bg-cyan text-void transition-opacity hover:opacity-90 disabled:opacity-30"
             >
               {sending ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
             </button>
@@ -410,7 +410,7 @@ export function Composer({
           />
         )}
         {toolbar}
-        <span className="ml-auto hidden font-mono text-[10px] text-text-muted sm:inline">{sendKey === 'enter' ? t.agents.enterHint : t.agents.modEnterHint}</span>
+        <span className="ml-auto hidden font-mono text-[11px] text-text-muted sm:inline">{sendKey === 'enter' ? t.agents.enterHint : t.agents.modEnterHint}</span>
       </div>
     </div>
   )

@@ -38,7 +38,7 @@ function Source({ source }: { source: MigrationSource }) {
           type="button"
           disabled={busy}
           onClick={() => void apply()}
-          className="flex items-center gap-1.5 rounded-md border border-cyan/40 bg-cyan/6 px-2.5 py-1 font-sans text-[12px] text-cyan hover:bg-cyan/12 disabled:opacity-50"
+          className="flex items-center gap-1.5 rounded-md border border-cyan px-2.5 py-1 font-sans text-[12px] bg-cyan text-void hover:opacity-90 disabled:opacity-50"
         >
           {busy ? <Loader2 size={12} className="animate-spin" /> : <ArrowRightLeft size={12} />} {m.apply}
         </button>
@@ -60,7 +60,7 @@ function Source({ source }: { source: MigrationSource }) {
         const languages = [...new Set(list.map((e) => e.language).filter(Boolean))].map((id) => LANGUAGES.find((l) => l.id === id)?.name ?? id)
         return (
           <div key={fate} className="mt-1.5">
-            <p className="font-mono text-[10px] uppercase tracking-[0.12em] text-text-muted">{m.fates[fate]}</p>
+            <p className="font-sans text-[12px] font-medium text-text-muted">{m.fates[fate]}</p>
             <p className="font-sans text-[11.5px] text-text-secondary">
               {list.map((e) => e.name).join(' · ')}
               {fate === 'language' && languages.length > 0 && <span className="text-cyan"> → {m.installLanguages(languages.join(', '))}</span>}

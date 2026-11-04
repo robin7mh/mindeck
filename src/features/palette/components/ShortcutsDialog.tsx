@@ -74,7 +74,7 @@ export function ShortcutsDialog() {
                 if (!mine.length) return null
                 return (
                   <section key={context} aria-label={contextName(context)}>
-                    <h3 className="mb-1.5 flex items-center gap-1.5 font-mono text-[10.5px] uppercase tracking-wider text-cyan">
+                    <h3 className="mb-1.5 flex items-center gap-1.5 font-sans text-[12px] font-medium text-cyan">
                       <Keyboard size={12} /> {contextName(context)}
                     </h3>
                     <ul className="space-y-0.5">

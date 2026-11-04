@@ -7,7 +7,7 @@ import { relativeTime } from '@/features/agents/format'
 import { useScm } from '../scm'
 
 const icon = 'flex h-6 w-6 shrink-0 items-center justify-center rounded-sm text-text-muted transition-colors hover:bg-elevated hover:text-text-primary disabled:opacity-40'
-const button = 'flex items-center justify-center gap-1 rounded-md border border-hud/60 px-2 py-1 font-sans text-[11.5px] text-text-secondary transition-colors hover:border-cyan/50 hover:text-cyan disabled:opacity-40'
+const button = 'flex items-center justify-center gap-1 rounded-md border border-hud/60 px-2 py-1 font-sans text-[11.5px] text-text-secondary transition-colors hover:border-hud-strong/80 hover:text-text-primary disabled:opacity-40'
 
 /** "On main: message" → "message"; "WIP on main: abc subject" stays as it is. */
 const shortMessage = (message: string) => message.replace(/^On [^:]+: /, '')
@@ -82,7 +82,7 @@ export function StashSection({ readOnly }: { readOnly: boolean }) {
                 <button type="button" aria-expanded={!!files} title={s.message} onClick={() => void scm.toggleStash(s.hash)} className="flex min-w-0 flex-1 items-center gap-1 text-left">
                   {files ? <ChevronDown size={12} className="shrink-0 text-text-muted" /> : <ChevronRight size={12} className="shrink-0 text-text-muted" />}
                   <span className="min-w-0 truncate font-sans text-[12px] text-text-primary">{shortMessage(s.message)}</span>
-                  <span className="shrink-0 font-mono text-[10px] text-text-muted">{relativeTime(new Date(s.date).toISOString())}</span>
+                  <span className="shrink-0 font-mono text-[11px] text-text-muted">{relativeTime(new Date(s.date).toISOString())}</span>
                 </button>
                 {!readOnly && (
                   <span className="hidden items-center group-hover:flex">
@@ -131,7 +131,7 @@ export function StashSection({ readOnly }: { readOnly: boolean }) {
                           className="flex w-full items-center gap-1.5 rounded-sm px-1.5 py-0.5 text-left hover:bg-elevated/50"
                         >
                           <span className="min-w-0 flex-1 truncate font-sans text-[12px] text-text-primary">{name}</span>
-                          <span className="min-w-0 truncate font-mono text-[10px] text-text-muted">{f.path.slice(0, f.path.length - name.length)}</span>
+                          <span className="min-w-0 truncate font-mono text-[11px] text-text-muted">{f.path.slice(0, f.path.length - name.length)}</span>
                           <span className="shrink-0 font-sans text-[10.5px] text-text-muted">{t.scm.change[f.change]}</span>
                         </button>
                       </li>

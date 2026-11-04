@@ -41,7 +41,7 @@ export function SystemView() {
       headerRight={
         <span className="flex items-center gap-1.5">
           <StatusDot tone={live ? 'ok' : 'muted'} pulse={live} />
-          <span className="font-mono text-[10px] text-text-muted">{live ? t.system.live : t.system.offline}</span>
+          <span className="font-mono text-[11px] text-text-muted">{live ? t.system.live : t.system.offline}</span>
         </span>
       }
       bodyClassName="min-h-0 overflow-y-auto"
@@ -94,7 +94,7 @@ export function SystemView() {
         <TechLabel className="px-1 text-text-secondary">{t.system.processes}</TechLabel>
         <table className="mt-1.5 w-full font-mono text-[12px]">
           <thead>
-            <tr className="text-left text-[10px] uppercase tracking-wider text-text-muted">
+            <tr className="text-left text-[12px] font-medium text-text-muted">
               <th className="px-1 py-1 font-normal">{t.system.pid}</th>
               <th className="px-1 py-1 font-normal">{t.system.name}</th>
               <th className="px-1 py-1 text-right font-normal">{t.system.cpuPct}</th>

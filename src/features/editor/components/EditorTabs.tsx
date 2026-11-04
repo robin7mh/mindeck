@@ -89,7 +89,7 @@ function TabMenu({ menu, group, onClose }: { menu: Menu; group: string; onClose:
       role="menu"
       aria-label={t.editor.tabActions}
       style={{ left: menu.x, top: menu.y }}
-      className="fixed z-70 min-w-[200px] rounded-md border border-hud/70 bg-panel/95 p-1 shadow-xl shadow-black/40 backdrop-blur-md"
+      className="fixed z-70 min-w-[200px] rounded-md border border-hud/50 bg-panel p-1 shadow-xl shadow-black/40 backdrop-blur-md"
     >
       {items
         .filter((i) => !i.hidden)
@@ -200,7 +200,7 @@ export function EditorTabs({ group, projectNames }: { group: string; projectName
               {dropAt === i + 1 && i === tabs.length - 1 && <span aria-hidden className="absolute inset-y-1 right-0 w-0.5 rounded-sm bg-cyan" />}
               <Icon size={13} className={cn('shrink-0', tint)} />
               <span className={cn(t.deleted && 'line-through')}>{t.name}</span>
-              {hint.has(t.id) && <span className="font-mono text-[10px] text-text-muted">{hint.get(t.id)}</span>}
+              {hint.has(t.id) && <span className="font-mono text-[11px] text-text-muted">{hint.get(t.id)}</span>}
               <button
                 type="button"
                 aria-label={tr.editor.closeFile(t.name)}

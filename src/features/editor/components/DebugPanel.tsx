@@ -27,7 +27,7 @@ function Section({ title, right, children }: { title: string; right?: ReactNode;
   return (
     <section className="border-t border-hud/50">
       <header className="flex items-center gap-1 px-2 pb-0.5 pt-1.5">
-        <h3 className="mr-auto font-mono text-[10px] uppercase tracking-[0.14em] text-text-muted">{title}</h3>
+        <h3 className="mr-auto font-sans text-[12px] font-medium text-text-muted">{title}</h3>
         {right}
       </header>
       <div className="px-1 pb-1.5">{children}</div>
@@ -99,7 +99,7 @@ export function DebugPanel() {
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
       <div className="space-y-1.5 px-2 pb-2">
-        <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-text-muted">{d.title}</p>
+        <p className="font-sans text-[12px] font-medium text-text-muted">{d.title}</p>
         {!active ? (
           <>
             <label className="block space-y-0.5">
@@ -139,7 +139,7 @@ export function DebugPanel() {
             <button
               type="button"
               onClick={() => void debug.start()}
-              className="flex w-full items-center justify-center gap-1.5 rounded-md border border-cyan/40 bg-cyan/8 py-1.5 font-sans text-[12.5px] font-medium text-cyan hover:bg-cyan/[0.14]"
+              className="flex w-full items-center justify-center gap-1.5 rounded-md border border-cyan bg-cyan py-1.5 font-sans text-[12.5px] font-semibold text-void hover:opacity-90"
             >
               <Play size={13} /> {d.start} <span className="font-mono text-[10.5px] opacity-70">F5</span>
             </button>
@@ -296,7 +296,7 @@ export function DebugConsole() {
   return (
     <div className="flex h-44 shrink-0 flex-col border-t border-hud/60 bg-surface/30">
       <header className="flex items-center gap-2 px-3 py-1">
-        <h3 className="mr-auto font-mono text-[10px] uppercase tracking-[0.14em] text-text-muted">{d.console}</h3>
+        <h3 className="mr-auto font-sans text-[12px] font-medium text-text-muted">{d.console}</h3>
         <button type="button" aria-label={d.clear} title={d.clear} onClick={() => useDebug.getState().clearConsole()} className="text-text-muted hover:text-text-primary">
           <Trash2 size={11} />
         </button>

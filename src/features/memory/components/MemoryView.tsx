@@ -79,7 +79,7 @@ export function MemoryView() {
         type="button"
         title={t.memory.todayTitle}
         onClick={() => void m.openDaily()}
-        className="flex items-center gap-1.5 rounded-md border border-hud/60 bg-surface/50 px-2.5 py-1 font-sans text-[12px] font-medium text-text-secondary transition-colors hover:border-cyan/40 hover:text-cyan"
+        className="flex items-center gap-1.5 rounded-md border border-hud/60 bg-surface/50 px-2.5 py-1 font-sans text-[12px] font-medium text-text-secondary transition-colors hover:border-cyan/40 hover:text-text-primary"
       >
         <CalendarDays size={13} />
         {t.memory.today}
@@ -89,7 +89,7 @@ export function MemoryView() {
           type="button"
           onClick={() => m.startCreate('note', '')}
           className={cn(
-            'flex items-center gap-1.5 border border-cyan/40 bg-cyan/6 px-2.5 py-1 font-sans text-[12px] font-medium text-cyan transition-colors hover:bg-cyan/12',
+            'flex items-center gap-1.5 border border-cyan bg-cyan px-2.5 py-1 font-sans text-[12px] font-semibold text-void transition-colors hover:opacity-90',
             templates.length ? 'rounded-l-md' : 'rounded-md'
           )}
         >
@@ -133,7 +133,7 @@ export function MemoryView() {
                 <span className="block truncate font-sans text-[12.5px] font-semibold text-text-primary">
                   {m.status.name}
                 </span>
-                <span className="block truncate font-mono text-[10px] text-text-muted">
+                <span className="block truncate font-mono text-[11px] text-text-muted">
                   {m.status.root.replace(/^\/Users\/[^/]+|^[A-Z]:\\Users\\[^\\]+/i, '~')}
                 </span>
               </span>
@@ -143,7 +143,7 @@ export function MemoryView() {
                   onClick={() => void m.reveal()}
                   title={t.memory.showInFinder}
                   aria-label={t.memory.showVault}
-                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-elevated/60 hover:text-cyan"
+                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-elevated/60 hover:text-text-primary"
                 >
                   <FolderOpen size={14} />
                 </button>
@@ -159,7 +159,7 @@ export function MemoryView() {
                 onClick={pick}
                 title={t.memory.openAnother}
                 aria-label={t.memory.openAnotherLabel}
-                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-elevated/60 hover:text-cyan"
+                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-elevated/60 hover:text-text-primary"
               >
                 <ArrowLeftRight size={13} />
               </button>
@@ -267,7 +267,7 @@ function NewFromTemplate({ templates, onPick }: { templates: NoteMeta[]; onPick:
         aria-label={t.memory.fromTemplate}
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
-        className="flex h-full items-center rounded-r-md border border-l-0 border-cyan/40 bg-cyan/6 px-1.5 text-cyan transition-colors hover:bg-cyan/12"
+        className="flex h-full items-center rounded-r-md border border-l border-cyan border-l-void/30 bg-cyan px-1.5 text-void transition-colors hover:opacity-90"
       >
         <ChevronDown size={13} />
       </button>
@@ -325,7 +325,7 @@ function VaultSetup({
           <button
             type="button"
             onClick={onCreate}
-            className="flex items-center gap-2 rounded-md border border-cyan/40 bg-cyan/8 px-3.5 py-2 font-sans text-[13px] font-medium text-cyan transition-colors hover:bg-cyan/[0.14]"
+            className="flex items-center gap-2 rounded-md border border-cyan bg-cyan px-3.5 py-2 font-sans text-[13px] font-semibold text-void transition-colors hover:opacity-90"
           >
             <Sparkles size={14} />
             {t.memory.createVault}

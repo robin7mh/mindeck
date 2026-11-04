@@ -11,7 +11,7 @@ import { Toggle } from './Toggle'
 const field = 'rounded-md border border-hud/70 bg-surface/70 px-2 py-1 font-mono text-[12px] text-text-primary outline-hidden focus:border-cyan/60'
 const label = 'flex items-center gap-2 font-sans text-[12.5px] text-text-secondary'
 const button =
-  'flex items-center justify-center gap-1.5 rounded-md border border-hud/60 px-2.5 py-1.5 font-sans text-[12px] text-text-secondary transition-colors hover:border-cyan/50 hover:text-cyan disabled:opacity-40'
+  'flex items-center justify-center gap-1.5 rounded-md border border-hud/60 px-2.5 py-1.5 font-sans text-[12px] text-text-secondary transition-colors hover:border-hud-strong/80 hover:text-text-primary disabled:opacity-40'
 
 /** A number typed freely, saved (within its bounds) on Enter or leaving the field. */
 function NumberField({ name, value, bounds, step = 1, onSave }: { name: string; value: number; bounds: readonly [number, number]; step?: number; onSave: (v: number) => void }) {
@@ -193,7 +193,7 @@ export function TerminalCard() {
                 <span className="font-sans text-[13px] text-text-primary">{p.name}</span>{' '}
                 <span className="font-mono text-[11px] text-text-muted">{[p.command, ...p.args].join(' ')}</span>
               </span>
-              <button type="button" aria-label={s.editProfile(p.name)} onClick={() => setEditing(p)} className="text-text-muted hover:text-cyan">
+              <button type="button" aria-label={s.editProfile(p.name)} onClick={() => setEditing(p)} className="text-text-muted hover:text-text-primary">
                 <Pencil size={12} />
               </button>
               <button type="button" aria-label={s.removeProfile(p.name)} onClick={() => removeProfile(p.id)} className="text-text-muted hover:text-danger">

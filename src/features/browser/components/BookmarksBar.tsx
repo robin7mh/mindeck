@@ -37,7 +37,7 @@ function Popover({ at, onClose, label, children }: { at: { x: number; y: number 
       role="menu"
       aria-label={label}
       style={{ left: at.x, top: at.y }}
-      className="fixed z-60 max-h-[70vh] w-64 overflow-y-auto rounded-lg border border-hud/70 bg-panel/95 p-1 shadow-xl shadow-black/40 backdrop-blur-md"
+      className="fixed z-60 max-h-[70vh] w-64 overflow-y-auto rounded-md border border-hud/50 bg-panel p-1 shadow-xl shadow-black/40"
     >
       {children}
     </div>

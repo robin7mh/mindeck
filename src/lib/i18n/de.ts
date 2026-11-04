@@ -36,6 +36,8 @@ export const de: Dict = {
     logs: 'Logs',
     settings: 'Einstellungen',
     account: 'Profil',
+    groups: { workspace: 'Arbeitsbereich', knowledge: 'Wissen', system: 'System' },
+    newAgent: 'Neuer Agent',
     notSignedIn: 'Nicht angemeldet',
     collapse: 'Module einklappen',
     expand: 'Module ausklappen'

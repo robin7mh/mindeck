@@ -31,6 +31,18 @@
 @custom-variant hover (&:hover);
 
 /*
+ * Corner radii of the modern design: small controls 6, buttons and inputs 9,
+ * cards and panels 14, the composer 16. Every `rounded-*` in the app follows.
+ */
+@theme {
+  --radius-xs: 0.25rem;
+  --radius-sm: 0.375rem;
+  --radius-md: 0.5625rem;
+  --radius-lg: 0.875rem;
+  --radius-xl: 1rem;
+}
+
+/*
  * SINGLE SOURCE OF TRUTH for color.
  * Values are space-separated RGB channels so Tailwind's `rgb(var(--x) / <alpha>)`
  * can apply opacity. Change a token here and it propagates everywhere.
@@ -59,10 +71,10 @@
 
   --text-primary: 226 236 247;
   --text-secondary: 150 168 189;
-  --text-muted: 96 112 133;
+  --text-muted: 119 137 160; /* raised for 4.5:1 on every surface */
 
-  /* Strength of decorative glows (text-glow, HUD drop-shadows) — kept subtle. */
-  --glow: 0.4;
+  /* Decorative glows are off in the modern design (kept as a token for old call sites). */
+  --glow: 0;
 
   /* Memory graph palette — one hue per folder in colorful mode. */
   --graph-cyan: 56 214 232;
@@ -101,7 +113,7 @@
 
   --text-primary: 17 24 39;
   --text-secondary: 61 74 94;
-  --text-muted: 107 120 140;
+  --text-muted: 96 108 128;
 
   --glow: 0;
 
@@ -150,7 +162,13 @@
     background: rgb(var(--border-hud-strong) / 0.5);
   }
   ::-webkit-scrollbar-thumb:hover {
-    background: rgb(var(--accent-cyan) / 0.4);
+    background: rgb(var(--border-hud-strong) / 0.8);
+  }
+
+  /* One focus ring for everything reachable by keyboard. */
+  :focus-visible {
+    outline: 2px solid rgb(var(--accent-cyan) / 0.8);
+    outline-offset: 2px;
   }
 
   ::selection {
@@ -160,22 +178,21 @@
 }
 
 @layer components {
-  /* Uppercase, tracked technical label — used across the UI. */
+  /* Small label — sentence case, no tracking (was: uppercase, letter-spaced). */
   .tech-label {
-    @apply font-sans text-[10px] font-medium uppercase leading-none text-text-muted;
-    letter-spacing: var(--tw-tracking, 0.18em);
-    letter-spacing: 0.18em;
+    @apply font-sans text-[12px] font-medium leading-none text-text-muted;
+    letter-spacing: 0;
   }
 
-  /* The one panel treatment. Reused everywhere to keep borders consistent. */
+  /* The one panel treatment: a calm card with a hairline border. */
   .panel {
-    @apply relative rounded-lg border bg-panel/70 backdrop-blur-xs;
-    border-color: rgb(var(--border-hud) / 0.7);
+    @apply relative rounded-lg border bg-panel;
+    border-color: rgb(var(--border-hud) / 0.45);
   }
 
   .panel-flush {
-    @apply relative rounded-lg border bg-panel/40;
-    border-color: rgb(var(--border-hud) / 0.5);
+    @apply relative rounded-lg border bg-panel/60;
+    border-color: rgb(var(--border-hud) / 0.4);
   }
 
   /* Rendered markdown (Memory preview). */

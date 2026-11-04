@@ -13,7 +13,7 @@ import { Toggle } from './Toggle'
 
 const input = 'rounded-md border border-hud/70 bg-surface/70 px-2.5 py-1.5 font-mono text-[12px] text-text-primary outline-hidden focus:border-cyan/60'
 const button =
-  'flex items-center justify-center gap-1.5 rounded-md border border-hud/60 px-2.5 py-1.5 font-sans text-[12px] text-text-secondary transition-colors hover:border-cyan/50 hover:text-cyan disabled:opacity-40'
+  'flex items-center justify-center gap-1.5 rounded-md border border-hud/60 px-2.5 py-1.5 font-sans text-[12px] text-text-secondary transition-colors hover:border-hud-strong/80 hover:text-text-primary disabled:opacity-40'
 const hint = 'font-sans text-[11.5px] text-text-muted'
 
 const euro = (cents: number, locale: string) => new Intl.NumberFormat(locale, { style: 'currency', currency: 'EUR' }).format(cents / 100)

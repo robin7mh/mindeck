@@ -92,7 +92,7 @@ export function QuickOpen() {
 
   return (
     <div role="dialog" aria-label={label} className="fixed inset-0 z-60 flex justify-center bg-void/40 pt-[12vh]" onMouseDown={close}>
-      <div className="h-fit w-[min(600px,90vw)] overflow-hidden rounded-lg border border-hud/70 bg-panel/95 shadow-2xl shadow-black/50 backdrop-blur-md" onMouseDown={(e) => e.stopPropagation()}>
+      <div className="h-fit w-[min(600px,90vw)] overflow-hidden rounded-lg border border-hud/50 bg-panel shadow-2xl shadow-black/50 backdrop-blur-md" onMouseDown={(e) => e.stopPropagation()}>
         <input
           autoFocus
           aria-label={label}

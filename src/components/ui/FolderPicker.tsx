@@ -66,7 +66,7 @@ export function FolderPicker({
       <div className="panel flex max-h-[80vh] w-full max-w-lg flex-col overflow-hidden">
         <header className="flex h-10 shrink-0 items-center justify-between border-b border-hud/60 px-3">
           <TechLabel className="text-text-secondary">{title}</TechLabel>
-          <button type="button" aria-label={t.common.close} onClick={onClose} className="text-text-muted hover:text-cyan">
+          <button type="button" aria-label={t.common.close} onClick={onClose} className="text-text-muted hover:text-text-primary">
             <X size={15} />
           </button>
         </header>
@@ -82,7 +82,7 @@ export function FolderPicker({
             type="button"
             aria-label={t.folderPicker.home}
             onClick={() => void open()}
-            className="rounded-md border border-hud/60 px-2 text-text-muted hover:border-cyan/50 hover:text-cyan"
+            className="rounded-md border border-hud/60 px-2 text-text-muted hover:border-hud-strong/80 hover:text-text-primary"
           >
             <Home size={14} />
           </button>
@@ -91,7 +91,7 @@ export function FolderPicker({
             aria-label={t.folderPicker.parent}
             disabled={!listing?.parent}
             onClick={() => listing?.parent && void open(listing.parent)}
-            className="rounded-md border border-hud/60 px-2 text-text-muted hover:border-cyan/50 hover:text-cyan disabled:opacity-30"
+            className="rounded-md border border-hud/60 px-2 text-text-muted hover:border-hud-strong/80 hover:text-text-primary disabled:opacity-30"
           >
             <ArrowUp size={14} />
           </button>
@@ -113,7 +113,7 @@ export function FolderPicker({
                 onClick={() => void open(root)}
                 className={cn(
                   'max-w-full truncate rounded-sm border px-1.5 py-0.5 font-mono text-[10.5px]',
-                  root === listing.path ? 'border-cyan/50 text-cyan' : 'border-hud/60 text-text-muted hover:border-cyan/40 hover:text-cyan'
+                  root === listing.path ? 'border-cyan/50 text-cyan' : 'border-hud/60 text-text-muted hover:border-cyan/40 hover:text-text-primary'
                 )}
               >
                 {root}
@@ -152,7 +152,7 @@ export function FolderPicker({
             type="button"
             disabled={!listing}
             onClick={() => listing && onPick(listing.path)}
-            className="flex shrink-0 items-center gap-1.5 rounded-md border border-cyan/50 bg-cyan/[0.10] px-3 py-1.5 font-sans text-[12px] font-medium text-cyan hover:bg-cyan/16 disabled:opacity-40"
+            className="flex shrink-0 items-center gap-1.5 rounded-md border border-cyan bg-cyan px-3 py-1.5 font-sans text-[12px] font-semibold text-void hover:opacity-90 disabled:opacity-40"
           >
             <Check size={13} /> {confirmLabel ?? t.folderPicker.select}
           </button>

@@ -37,7 +37,7 @@ function Picker({ label, items, onClose }: { label: string; items: Item[]; onClo
     item.run()
   }
   return (
-    <div ref={ref} role="dialog" aria-label={label} className="absolute left-0 top-full z-30 mt-0.5 w-72 rounded-md border border-hud/70 bg-panel/95 p-1 shadow-xl shadow-black/40 backdrop-blur-md">
+    <div ref={ref} role="dialog" aria-label={label} className="absolute left-0 top-full z-30 mt-0.5 w-72 rounded-md border border-hud/50 bg-panel p-1 shadow-xl shadow-black/40 backdrop-blur-md">
       <input
         autoFocus
         aria-label={t.editor.outlineFilter}

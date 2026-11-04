@@ -5,7 +5,7 @@ import { useConflicts } from '../conflicts'
 import { useEditor, type EditorTab } from '../store'
 import { useScm } from '../scm'
 
-const button = 'flex items-center gap-1 rounded-md border border-hud/60 px-2 py-0.5 font-sans text-[11.5px] text-text-secondary transition-colors hover:border-cyan/50 hover:text-cyan disabled:opacity-40'
+const button = 'flex items-center gap-1 rounded-md border border-hud/60 px-2 py-0.5 font-sans text-[11.5px] text-text-secondary transition-colors hover:border-hud-strong/80 hover:text-text-primary disabled:opacity-40'
 
 /**
  * Above a file with merge conflicts: how many are left, previous / next,

@@ -38,19 +38,19 @@ export function ProjectListItem({
           <span className="block truncate font-sans text-[13px] font-medium text-text-primary">
             {project.name}
           </span>
-          <span className="block truncate font-mono text-[10px] text-text-muted">{project.path}</span>
+          <span className="block truncate font-mono text-[11px] text-text-muted">{project.path}</span>
         </span>
       </div>
       <div className="mt-1.5 flex items-center gap-2 pl-[26px]">
         <StatusDot tone={gitTone(project)} pulse={false} />
         {project.git?.isRepo ? (
-          <span className="flex items-center gap-1 font-mono text-[10px] text-text-secondary">
+          <span className="flex items-center gap-1 font-mono text-[11px] text-text-secondary">
             <GitBranch size={11} className="text-text-muted" />
             {project.git.branch ?? t.projects.detached}
             {project.git.dirty && <span className="text-amber">•{t.projects.dirty}</span>}
           </span>
         ) : (
-          <span className="font-mono text-[10px] text-text-muted">{t.projects.noRepo}</span>
+          <span className="font-mono text-[11px] text-text-muted">{t.projects.noRepo}</span>
         )}
         {project.stack?.frameworks.slice(0, 2).map((f) => (
           <span

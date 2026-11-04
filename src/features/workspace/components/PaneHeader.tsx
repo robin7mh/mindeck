@@ -61,7 +61,7 @@ function ModuleSwitcher({ pane, elsewhere }: { pane: Pane; elsewhere: Set<Module
         <div
           role="menu"
           aria-label={t.workspace.modules}
-          className="absolute left-0 top-full z-40 mt-1 min-w-[220px] rounded-lg border border-hud/70 bg-panel/95 p-1 shadow-xl shadow-black/40 backdrop-blur-md"
+          className="absolute left-0 top-full z-40 mt-1 min-w-[220px] rounded-md border border-hud/50 bg-panel p-1 shadow-xl shadow-black/40"
         >
           {NAV_ITEMS.map((item) => {
             const ItemIcon = item.icon
@@ -80,7 +80,7 @@ function ModuleSwitcher({ pane, elsewhere }: { pane: Pane; elsewhere: Set<Module
               >
                 <ItemIcon size={14} className="shrink-0" />
                 <span className="flex-1 truncate">{t.nav[item.id]}</span>
-                {elsewhere.has(item.id) && <span className="font-mono text-[10px] text-text-muted">{t.workspace.inOtherPane}</span>}
+                {elsewhere.has(item.id) && <span className="font-mono text-[11px] text-text-muted">{t.workspace.inOtherPane}</span>}
               </button>
             )
           })}

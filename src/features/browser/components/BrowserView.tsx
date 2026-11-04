@@ -103,7 +103,7 @@ export function BrowserView({ active }: { active: boolean }) {
               type="button"
               title={t.browser.zoom(Math.round(tab.zoom * 100))}
               onClick={() => void run('browser:zoom', { id, zoom: 'reset' })}
-              className="shrink-0 rounded-md border border-hud/60 px-1.5 py-0.5 font-mono text-[10.5px] text-text-secondary hover:border-cyan/50 hover:text-cyan"
+              className="shrink-0 rounded-md border border-hud/60 px-1.5 py-0.5 font-mono text-[10.5px] text-text-secondary hover:border-hud-strong/80 hover:text-text-primary"
             >
               {Math.round(tab.zoom * 100)} %
             </button>

@@ -6,7 +6,7 @@ export function LanguageSwitch({ className }: { className?: string }) {
   const locale = useLocale((s) => s.locale)
   const setLocale = useLocale((s) => s.setLocale)
   return (
-    <div role="radiogroup" aria-label="Language / Sprache" className={cn('inline-flex rounded-md border border-hud/60 bg-surface/50 p-0.5', className)}>
+    <div role="radiogroup" aria-label="Language / Sprache" className={cn('inline-flex gap-0.5 rounded-md bg-elevated p-[3px]', className)}>
       {LOCALES.map((l) => (
         <button
           key={l.id}
@@ -15,8 +15,8 @@ export function LanguageSwitch({ className }: { className?: string }) {
           aria-checked={locale === l.id}
           onClick={() => setLocale(l.id)}
           className={cn(
-            'rounded-sm px-3 py-1 font-sans text-[12px] transition-colors',
-            locale === l.id ? 'bg-cyan/12 text-cyan' : 'text-text-muted hover:text-text-secondary'
+            'h-[30px] rounded-sm px-3 font-sans text-[13px] font-medium transition-colors',
+            locale === l.id ? 'bg-panel text-text-primary shadow-[0_1px_2px_rgb(0_0_0/0.25)]' : 'text-text-secondary hover:text-text-primary'
           )}
         >
           {l.label}

@@ -18,15 +18,10 @@ export function StatusIndicator({
   className?: string
 }) {
   return (
-    <div
-      className={cn(
-        'flex items-center gap-2 rounded-md border border-hud/60 bg-surface/50 px-2.5 py-1',
-        className
-      )}
-    >
+    <div className={cn('flex h-7 items-center gap-2 rounded-full border border-hud/45 px-2.5', className)}>
       <StatusDot tone={tone} pulse={pulse} />
-      <span className="tech-label text-text-muted">{label}</span>
-      <span className="font-mono text-[11px] font-medium text-text-secondary">{value}</span>
+      <span className="font-sans text-[12px] text-text-muted">{label}</span>
+      <span className="font-mono text-[11.5px] font-medium text-text-secondary">{value}</span>
     </div>
   )
 }

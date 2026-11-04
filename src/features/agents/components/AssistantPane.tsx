@@ -64,7 +64,7 @@ export function AssistantPane({ onOpenSettings }: { onOpenSettings: () => void }
         <Icon size={14} className="shrink-0 text-cyan" />
         <span className="truncate font-sans text-[13px] font-semibold text-text-primary">{active ? active.title : t.agents.newChatWith(agent?.name ?? t.agents.assistantName)}</span>
         {a.status?.model && (
-          <span className="ml-auto hidden font-mono text-[10px] text-text-muted md:inline">
+          <span className="ml-auto hidden font-mono text-[11px] text-text-muted md:inline">
             {t.agents.assistant} · {a.status.model} · {a.status.settings.effort}
           </span>
         )}

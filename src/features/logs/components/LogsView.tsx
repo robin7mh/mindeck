@@ -116,7 +116,7 @@ export function LogsView() {
         <span className="flex items-center gap-2">
           <span className="font-mono text-[10.5px] text-text-muted">{l.count(shown.length)}</span>
           <StatusDot tone="ok" pulse />
-          <span className="font-mono text-[10px] uppercase tracking-wider text-text-muted">{l.live}</span>
+          <span className="font-sans text-[12px] font-medium text-text-muted">{l.live}</span>
         </span>
       }
     >
@@ -135,7 +135,7 @@ export function LogsView() {
               )}
             >
               {l.filters[f]}
-              <span className="ml-1 font-mono text-[10px]">{counts[f]}</span>
+              <span className="ml-1 font-mono text-[11px]">{counts[f]}</span>
             </button>
           ))}
         </div>
@@ -171,7 +171,7 @@ export function LogsView() {
               const newDay = i === 0 || dayOf(shown[i - 1].ts) !== dayOf(e.ts)
               return (
                 <li key={e.id}>
-                  {newDay && <p className="sticky top-0 z-10 bg-panel/95 px-2 pb-1 pt-2 font-mono text-[10px] uppercase tracking-wider text-text-muted">{dayLabel(e.ts)}</p>}
+                  {newDay && <p className="sticky top-0 z-10 bg-panel/95 px-2 pb-1 pt-2 font-sans text-[12px] font-medium text-text-muted">{dayLabel(e.ts)}</p>}
                   <button
                     type="button"
                     aria-expanded={expanded}

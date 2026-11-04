@@ -28,7 +28,7 @@ function Tool({ tool, part, busy, onInstall }: { tool: ToolState; part: Part; bu
           aria-label={l.installTool(tool.name)}
           disabled={busy}
           onClick={onInstall}
-          className="flex shrink-0 items-center gap-1 rounded-sm border border-cyan/40 px-1.5 py-px font-sans text-[11px] text-cyan hover:bg-cyan/10 disabled:opacity-50"
+          className="flex shrink-0 items-center gap-1 rounded-sm border border-cyan px-1.5 py-px font-sans text-[11px] bg-cyan text-void hover:opacity-90 disabled:opacity-50"
         >
           {busy ? <Loader2 size={10} className="animate-spin" /> : <Download size={10} />} {l.install}
         </button>
@@ -90,7 +90,7 @@ export function LanguagesCard() {
     <Card icon={Code2} title={l.title} className="pane-lg:col-span-2">
       <div className="mb-2 flex items-start gap-2">
         <p className="flex-1 font-sans text-[12px] text-text-secondary">{l.intro}</p>
-        <button type="button" aria-label={l.refresh} title={l.refresh} onClick={() => void load()} className="text-text-muted hover:text-cyan">
+        <button type="button" aria-label={l.refresh} title={l.refresh} onClick={() => void load()} className="text-text-muted hover:text-text-primary">
           <RefreshCw size={12} />
         </button>
       </div>

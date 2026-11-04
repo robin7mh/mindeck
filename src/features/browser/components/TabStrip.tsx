@@ -43,7 +43,7 @@ export function GroupChip({ group, count, drag, className }: { group: BrowserTab
     >
       <span className={cn('h-2 w-2 shrink-0 rounded-full', style.dot)} aria-hidden />
       {group.title && <span className="truncate">{group.title}</span>}
-      {group.collapsed && <span className="font-mono text-[10px] font-normal opacity-80">{count}</span>}
+      {group.collapsed && <span className="font-mono text-[11px] font-normal opacity-80">{count}</span>}
     </button>
   )
 }
@@ -143,7 +143,7 @@ export function TabStrip() {
         aria-label={t.browser.newTab}
         title={`${t.browser.newTab} (⌘T)`}
         onClick={() => void useBrowser.getState().newTab()}
-        className="mb-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-elevated hover:text-cyan"
+        className="mb-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-elevated hover:text-text-primary"
       >
         <Plus size={14} />
       </button>

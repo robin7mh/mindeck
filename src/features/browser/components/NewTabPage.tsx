@@ -41,7 +41,7 @@ export function NewTabPage() {
           <button
             type="button"
             onClick={() => useBrowser.setState((s) => ({ focusTick: s.focusTick + 1 }))}
-            className="flex w-full max-w-xl items-center gap-3 rounded-lg border border-hud/60 bg-surface/70 px-4 py-3 text-left transition-colors hover:border-cyan/50"
+            className="flex w-full max-w-xl items-center gap-3 rounded-lg border border-hud/60 bg-surface/70 px-4 py-3 text-left transition-colors hover:border-hud-strong/80"
           >
             <Search size={16} className="text-text-muted" />
             <span className="font-sans text-[14px] text-text-muted">{t.browser.ntpSearch}</span>
@@ -101,7 +101,7 @@ export function NewTabPage() {
             </TechLabel>
             <div className="flex flex-wrap gap-2">
               {repos.map((p) => (
-                <button key={p.id} type="button" onClick={() => go(p.git!.webUrl!)} className="flex items-center gap-1.5 rounded-md border border-hud/50 bg-surface/50 px-2.5 py-1.5 font-sans text-[12px] text-text-secondary transition-colors hover:border-cyan/40 hover:text-cyan">
+                <button key={p.id} type="button" onClick={() => go(p.git!.webUrl!)} className="flex items-center gap-1.5 rounded-md border border-hud/50 bg-surface/50 px-2.5 py-1.5 font-sans text-[12px] text-text-secondary transition-colors hover:border-cyan/40 hover:text-text-primary">
                   <FolderGit2 size={13} /> {p.name}
                 </button>
               ))}

@@ -171,7 +171,7 @@ export function SearchPanel({ readOnly = false }: { readOnly?: boolean }) {
                     <X size={12} />
                   </button>
                 </span>
-                <span className="shrink-0 rounded-full bg-elevated px-1.5 font-mono text-[10px] text-text-secondary">{file.matches.length}</span>
+                <span className="shrink-0 rounded-full bg-elevated px-1.5 font-mono text-[11px] text-text-secondary">{file.matches.length}</span>
               </div>
               <ul>
                 {shown.map((m) => (

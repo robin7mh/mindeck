@@ -55,7 +55,7 @@ export function PublishForm({ status }: { status: ScmStatus }) {
       <div role="status" className="space-y-1.5 rounded-md border border-green/40 bg-green/[0.07] px-2 py-1.5">
         <p className="font-sans text-[12px] text-text-primary">{g.published(done.nameWithOwner)}</p>
         <div className="flex gap-1.5">
-          <a href={done.url} target="_blank" rel="noreferrer" className={cn(button, 'border-cyan/50 text-cyan hover:bg-cyan/10')}>
+          <a href={done.url} target="_blank" rel="noreferrer" className={cn(button, 'border-cyan bg-cyan text-void hover:opacity-90')}>
             <ExternalLink size={11} /> {g.openOnGitHub}
           </a>
           <button type="button" onClick={close} className={cn(button, 'border-hud/60 text-text-secondary')}>
@@ -147,7 +147,7 @@ export function PublishForm({ status }: { status: ScmStatus }) {
       )}
       {surePublic && !isPrivate && <p className="font-sans text-[11px] text-amber">{g.confirmPublic}</p>}
       <div className="flex gap-1.5">
-        <button type="submit" disabled={!valid || !!busy || (secrets.length > 0 && !withSecrets)} className={cn(button, 'border-cyan/50 text-cyan hover:bg-cyan/10')}>
+        <button type="submit" disabled={!valid || !!busy || (secrets.length > 0 && !withSecrets)} className={cn(button, 'border-cyan bg-cyan text-void hover:opacity-90')}>
           {busy === 'publish' && <Loader2 size={11} className="animate-spin" />}
           {surePublic && !isPrivate ? g.publishPublic : g.publishSubmit}
         </button>

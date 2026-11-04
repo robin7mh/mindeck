@@ -148,7 +148,7 @@ export function Select({ value, options, onChange, label, placeholder, icon: Ico
             role="listbox"
             aria-label={label}
             style={{ left: place.left, minWidth: place.minWidth, top: place.top, bottom: place.bottom, maxHeight: MENU_MAX }}
-            className="fixed z-70 max-w-[min(420px,90vw)] overflow-y-auto rounded-lg border border-hud/70 bg-panel/95 p-1 shadow-xl shadow-black/40 backdrop-blur-md"
+            className="fixed z-70 max-w-[min(420px,90vw)] overflow-y-auto rounded-md border border-hud/50 bg-panel p-1 shadow-xl shadow-black/40"
           >
             {options.map((o, i) => (
               <li

@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
-import { ArrowUpRight, BrainCircuit, Cpu, FolderGit2, GitBranch, Send, Sparkles } from 'lucide-react'
+import { ArrowUp, ArrowUpRight, BrainCircuit, Cpu, FolderGit2, GitBranch, Sparkles } from 'lucide-react'
 import { ipc } from '@shared/ipc/client'
 import type { Project } from '@shared/types/project'
 import type { NoteMeta } from '@shared/types/memory'
 import type { ModuleId } from '@/types'
-import { Panel } from '@/components/ui/Panel'
+import { NAV_ITEMS } from '@/data/navigation'
+import { cn } from '@/lib/cn'
 import { StatusDot } from '@/components/ui/StatusDot'
-import { TechLabel } from '@/components/ui/TechLabel'
 import { useClock } from '@/hooks/useClock'
 import { useProjects } from '@/features/projects/store'
 import { useSystemMetrics } from '@/features/system/useSystemMetrics'
@@ -16,7 +16,6 @@ import { folderColors } from '@/features/memory/store'
 import { slotColor } from '@/features/memory/components/GraphView'
 import { useT } from '@/lib/i18n'
 import { greeting, isoWeek, longDate } from '../i18n'
-import { HudClock } from './HudClock'
 
 /**
  * Core: the personal HUD. Greeting, date and a calm clock, plus three tiles
@@ -35,37 +34,53 @@ export function Dashboard({ onNavigate }: { onNavigate: (id: ModuleId) => void }
   }, [])
 
   return (
-    <Panel title={t.dashboard.panel} corners className="min-h-0 flex-1" bodyClassName="flex min-h-0 flex-col overflow-y-auto">
-      <div className="flex min-h-full flex-col items-center justify-between gap-8 px-6 py-8">
-        <header className="text-center">
-          <h1 className="font-sans text-[34px] font-semibold tracking-tight text-text-primary">
-            {greeting(now, t)}
-            {firstName && <span className="text-cyan text-glow-cyan">, {firstName}</span>}
-          </h1>
-          <p className="mt-2 font-sans text-[14px] text-text-secondary">
+    <div className="min-h-0 flex-1 overflow-y-auto rounded-lg">
+      <div className="mx-auto flex w-full max-w-[1040px] flex-col gap-7 px-6 py-10 pane-md:px-10">
+        <header className="flex flex-col gap-1.5">
+          <p className="font-sans text-[13px] text-text-muted">
             {longDate(now)}
-            <span className="mx-2 text-text-muted">·</span>
-            <span className="font-mono text-[13px] text-text-muted">
-              {t.dashboard.week} {isoWeek(now)}
-            </span>
+            <span className="mx-2">·</span>
+            {t.dashboard.week} {isoWeek(now)}
           </p>
+          <h1 className="font-sans text-[32px] font-semibold leading-[1.15] tracking-[-0.025em] text-text-primary">
+            {greeting(now, t)}
+            {firstName && <span>, {firstName}</span>}
+          </h1>
         </header>
 
-        <div>
-          <HudClock now={now} />
-        </div>
-
-        <div className="w-full max-w-2xl">
+        <div className="flex flex-col gap-3">
           <AskBar onNavigate={onNavigate} />
+          <QuickLinks onNavigate={onNavigate} />
         </div>
 
-        <div className="grid w-full max-w-5xl grid-cols-1 gap-3 pane-md:grid-cols-3">
+        <div className="grid w-full grid-cols-1 gap-4 pane-md:grid-cols-3">
           <ProjectsTile onNavigate={onNavigate} />
           <BrainTile onNavigate={onNavigate} />
           <SystemTile />
         </div>
       </div>
-    </Panel>
+    </div>
+  )
+}
+
+/** Shortcuts into the modules used most, as quiet chips under the composer. */
+function QuickLinks({ onNavigate }: { onNavigate: (id: ModuleId) => void }) {
+  const t = useT()
+  const links = (['projects', 'editor', 'terminal', 'memory'] as const).map((id) => NAV_ITEMS.find((i) => i.id === id)!)
+  return (
+    <div className="flex flex-wrap gap-2">
+      {links.map(({ id, icon: Icon }) => (
+        <button
+          key={id}
+          type="button"
+          onClick={() => onNavigate(id)}
+          className="flex h-8 items-center gap-2 rounded-full border border-hud/45 px-3 font-sans text-[13px] text-text-secondary transition-colors hover:bg-elevated hover:text-text-primary"
+        >
+          <Icon size={14} strokeWidth={1.75} className="text-text-muted" />
+          {t.nav[id]}
+        </button>
+      ))}
+    </div>
   )
 }
 
@@ -87,18 +102,33 @@ function AskBar({ onNavigate }: { onNavigate: (id: ModuleId) => void }) {
     void a.send(question)
   }
   return (
-    <form onSubmit={submit} className="flex items-center gap-2 rounded-lg border border-hud/70 bg-surface/60 px-3 py-2 backdrop-blur-sm focus-within:border-cyan/50">
-      <Sparkles size={15} className="shrink-0 text-cyan" />
+    <form
+      onSubmit={submit}
+      className="rounded-xl border border-hud/60 bg-panel px-4 pb-2.5 pt-3.5 shadow-panel transition-colors focus-within:border-hud-strong/80"
+    >
       <input
         aria-label={t.dashboard.askLabel}
         value={text}
         onChange={(e) => setText(e.target.value)}
         placeholder={t.dashboard.ask}
-        className="min-w-0 flex-1 bg-transparent font-sans text-[14px] text-text-primary outline-hidden placeholder:text-text-muted"
+        className="w-full bg-transparent px-0.5 font-sans text-[15px] leading-[1.55] text-text-primary outline-hidden placeholder:text-text-muted"
       />
-      <button type="submit" aria-label={t.dashboard.askSubmit} disabled={!text.trim()} className="text-cyan disabled:opacity-30">
-        <Send size={15} />
-      </button>
+      <div className="mt-3 flex items-center gap-2">
+        <span className="flex items-center gap-1.5 font-sans text-[12.5px] text-text-muted">
+          <Sparkles size={14} strokeWidth={1.75} />
+          Mindeck Assistant
+        </span>
+        <span className="flex-1" />
+        <span className="hidden font-sans text-[12px] text-text-muted sm:inline">↵</span>
+        <button
+          type="submit"
+          aria-label={t.dashboard.askSubmit}
+          disabled={!text.trim()}
+          className="flex h-[34px] w-[34px] items-center justify-center rounded-md bg-cyan text-void transition-opacity disabled:opacity-30"
+        >
+          <ArrowUp size={16} strokeWidth={2.2} />
+        </button>
+      </div>
     </form>
   )
 }
@@ -116,18 +146,20 @@ function Tile({
 }) {
   const t = useT()
   return (
-    <section className="group flex min-h-[150px] flex-col rounded-lg border border-hud/60 bg-surface/40 p-4 transition-colors hover:border-hud-strong/70">
-      <header className="mb-3 flex items-center gap-2">
-        <Icon size={14} className="text-cyan" />
-        <TechLabel className="text-text-secondary">{title}</TechLabel>
+    <section className="group flex min-h-[170px] flex-col rounded-lg border border-hud/45 bg-panel p-5">
+      <header className="mb-4 flex items-center gap-2.5">
+        <span className="flex h-7 w-7 items-center justify-center rounded-md bg-elevated text-text-secondary">
+          <Icon size={15} strokeWidth={1.75} />
+        </span>
+        <h2 className="font-sans text-[14px] font-semibold text-text-primary">{title}</h2>
         {onOpen && (
           <button
             type="button"
             onClick={onOpen}
             aria-label={t.dashboard.open(title)}
-            className="ml-auto rounded-sm p-0.5 text-text-muted transition-colors hover:text-cyan"
+            className="ml-auto flex h-7 w-7 items-center justify-center rounded-sm text-text-muted transition-colors hover:bg-elevated hover:text-text-primary"
           >
-            <ArrowUpRight size={14} />
+            <ArrowUpRight size={15} strokeWidth={1.75} />
           </button>
         )}
       </header>
@@ -139,8 +171,8 @@ function Tile({
 function BigNumber({ value, label }: { value: number | string; label: string }) {
   return (
     <div className="flex items-baseline gap-2">
-      <span className="font-mono text-[28px] font-medium leading-none text-text-primary tabular-nums">{value}</span>
-      <span className="font-sans text-[12px] text-text-muted">{label}</span>
+      <span className="font-sans text-[28px] font-semibold leading-none tracking-[-0.02em] text-text-primary tabular-nums">{value}</span>
+      <span className="font-sans text-[13px] text-text-secondary">{label}</span>
     </div>
   )
 }
@@ -175,27 +207,27 @@ function ProjectsTile({ onNavigate }: { onNavigate: (id: ModuleId) => void }) {
   return (
     <Tile icon={FolderGit2} title={t.dashboard.projects} onOpen={() => open()}>
       {!projects ? (
-        <p className="font-mono text-[11px] text-text-muted">{t.dashboard.loading}</p>
+        <p className="font-sans text-[13px] text-text-muted">{t.dashboard.loading}</p>
       ) : projects.length === 0 ? (
-        <button type="button" onClick={() => open()} className="text-left font-sans text-[13px] text-text-muted hover:text-cyan">
+        <button type="button" onClick={() => open()} className="text-left font-sans text-[13px] text-text-secondary hover:text-text-primary">
           {t.dashboard.noProjects} — {t.dashboard.addProject} →
         </button>
       ) : (
         <>
           <BigNumber value={projects.length} label={dirty ? `${dirty} ${t.dashboard.changed}` : t.dashboard.allClean} />
-          <ul className="mt-3 space-y-1">
+          <ul className="mt-4 flex flex-col">
             {projects.slice(0, 3).map((p) => (
               <li key={p.id}>
                 <button
                   type="button"
                   onClick={() => open(p.id)}
-                  className="flex w-full items-center gap-2 rounded-sm px-1 py-0.5 text-left transition-colors hover:bg-elevated/50"
+                  className="-mx-2 flex w-[calc(100%+16px)] items-center gap-2.5 rounded-sm border-t border-hud/35 px-2 py-2 text-left transition-colors hover:bg-elevated/60"
                 >
                   <StatusDot tone={!p.git?.isRepo ? 'muted' : p.git.dirty ? 'warn' : 'ok'} pulse={false} />
-                  <span className="min-w-0 flex-1 truncate font-sans text-[12.5px] text-text-secondary">{p.name}</span>
+                  <span className="min-w-0 flex-1 truncate font-sans text-[13.5px] font-medium text-text-primary">{p.name}</span>
                   {p.git?.branch && (
-                    <span className="flex items-center gap-1 font-mono text-[10px] text-text-muted">
-                      <GitBranch size={10} />
+                    <span className="flex items-center gap-1 font-mono text-[11.5px] text-text-muted">
+                      <GitBranch size={12} strokeWidth={1.75} />
                       {p.git.branch}
                     </span>
                   )}
@@ -235,27 +267,27 @@ function BrainTile({ onNavigate }: { onNavigate: (id: ModuleId) => void }) {
   return (
     <Tile icon={BrainCircuit} title={t.dashboard.brain} onOpen={() => onNavigate('memory')}>
       {!state ? (
-        <p className="font-mono text-[11px] text-text-muted">{t.dashboard.loading}</p>
+        <p className="font-sans text-[13px] text-text-muted">{t.dashboard.loading}</p>
       ) : !state.exists ? (
-        <button type="button" onClick={() => onNavigate('memory')} className="text-left font-sans text-[13px] text-text-muted hover:text-cyan">
+        <button type="button" onClick={() => onNavigate('memory')} className="text-left font-sans text-[13px] text-text-secondary hover:text-text-primary">
           {t.dashboard.noVault} — {t.dashboard.setUp} →
         </button>
       ) : (
         <>
           <BigNumber value={state.notes.length} label={`${t.dashboard.notes} · ${state.links} ${t.dashboard.links}`} />
-          <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1">
+          <div className="mt-4 grid grid-cols-2 gap-x-3 gap-y-2">
             {folders.map(([folder, count]) => (
               <span key={folder} className="flex items-center gap-1.5">
-                <span className="h-1.5 w-1.5 rounded-full" style={{ background: slotColor(slots.get(folder)!) }} />
-                <span className="font-sans text-[12px] text-text-secondary">{folder}</span>
-                <span className="font-mono text-[10px] text-text-muted">{count}</span>
+                <span className="h-2 w-2 shrink-0 rounded-[3px]" style={{ background: slotColor(slots.get(folder)!) }} />
+                <span className="min-w-0 flex-1 truncate font-sans text-[12.5px] text-text-secondary">{folder}</span>
+                <span className="font-sans text-[12px] text-text-muted tabular-nums">{count}</span>
               </span>
             ))}
           </div>
           <button
             type="button"
             onClick={() => onNavigate('memory')}
-            className="mt-auto self-start pt-3 font-sans text-[12px] text-text-muted transition-colors hover:text-cyan"
+            className="mt-auto self-start pt-4 font-sans text-[13px] text-text-secondary transition-colors hover:text-text-primary"
           >
             {t.dashboard.openGraph} →
           </button>
@@ -286,26 +318,31 @@ function SystemTile() {
   return (
     <Tile icon={Cpu} title={t.dashboard.system}>
       {!live ? (
-        <p className="font-mono text-[11px] text-text-muted">{t.dashboard.loading}</p>
+        <p className="font-sans text-[13px] text-text-muted">{t.dashboard.loading}</p>
       ) : (
         <>
           <div className="flex items-center gap-2">
-            <StatusDot tone={warnings.length ? 'warn' : 'ok'} />
+            <StatusDot tone={warnings.length ? 'warn' : 'ok'} pulse={warnings.length > 0} />
             <span className="font-sans text-[14px] font-medium text-text-primary">{warnings[0] ?? t.dashboard.allGood}</span>
           </div>
           {warnings.length > 1 && (
             <p className="mt-1 font-sans text-[12px] text-amber">{warnings.slice(1).join(' · ')}</p>
           )}
-          <div className="mt-auto grid grid-cols-4 gap-2 pt-4">
+          <div className="mt-auto flex flex-col gap-3 pt-4">
             {stats.map(([label, value]) => (
-              <div key={label}>
-                <div className="font-mono text-[15px] text-text-primary tabular-nums">
-                  {Math.round(value)}
-                  <span className="text-[10px] text-text-muted">%</span>
+              <div key={label} className="flex flex-col gap-1.5">
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="truncate font-sans text-[12.5px] text-text-secondary">
+                    {label}
+                    {label === t.dashboard.battery && battery.charging ? ' ⚡' : ''}
+                  </span>
+                  <span className="font-mono text-[12px] text-text-primary tabular-nums">{Math.round(value)} %</span>
                 </div>
-                <div className="tech-label mt-1 truncate text-text-muted">
-                  {label}
-                  {label === t.dashboard.battery && battery.charging ? ' ⚡' : ''}
+                <div className="h-1 overflow-hidden rounded-full bg-elevated">
+                  <div
+                    className={cn('h-full rounded-full', value > 85 ? 'bg-amber' : 'bg-cyan')}
+                    style={{ width: `${Math.max(0, Math.min(100, value))}%` }}
+                  />
                 </div>
               </div>
             ))}

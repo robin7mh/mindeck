@@ -13,7 +13,7 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
     <div className="flex min-w-0 flex-col gap-1.5">
       <TechLabel className="text-text-muted">{label}</TechLabel>
       {children}
-      {hint && <p className="font-sans text-[11.5px] text-text-muted">{hint}</p>}
+      {hint && <p className="font-sans text-[12.5px] text-text-muted">{hint}</p>}
     </div>
   )
 }
@@ -21,7 +21,7 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
 /** Segmented radio buttons, styled like the language switch. */
 function Segmented<T extends string>({ label, options, value, onChange }: { label: string; options: { id: T; label: string; icon: LucideIcon }[]; value: T; onChange: (v: T) => void }) {
   return (
-    <div role="radiogroup" aria-label={label} className="inline-flex self-start rounded-md border border-hud/60 bg-surface/50 p-0.5">
+    <div role="radiogroup" aria-label={label} className="inline-flex self-start gap-0.5 rounded-md bg-elevated p-[3px]">
       {options.map(({ id, label: text, icon: Icon }) => (
         <button
           key={id}
@@ -30,11 +30,11 @@ function Segmented<T extends string>({ label, options, value, onChange }: { labe
           aria-checked={value === id}
           onClick={() => onChange(id)}
           className={cn(
-            'flex items-center gap-1.5 rounded-sm px-2.5 py-1 font-sans text-[12px] transition-colors',
-            value === id ? 'bg-cyan/12 text-cyan' : 'text-text-muted hover:text-text-secondary'
+            'flex h-[30px] items-center gap-1.5 rounded-sm px-3 font-sans text-[13px] font-medium transition-colors',
+            value === id ? 'bg-panel text-text-primary shadow-[0_1px_2px_rgb(0_0_0/0.25)]' : 'text-text-secondary hover:text-text-primary'
           )}
         >
-          <Icon size={12} />
+          <Icon size={14} strokeWidth={1.75} />
           {text}
         </button>
       ))}
@@ -74,8 +74,8 @@ export function AppearanceCard() {
                   title={s.accents[id]}
                   onClick={() => update({ accent: id })}
                   className={cn(
-                    'flex h-7 w-7 items-center justify-center rounded-full ring-offset-2 ring-offset-surface transition-transform',
-                    on ? 'ring-2 ring-text-primary/70' : 'hover:scale-110'
+                    'flex h-8 w-8 items-center justify-center rounded-full ring-offset-2 ring-offset-panel transition-transform',
+                    on ? 'ring-2 ring-text-primary' : 'hover:scale-105'
                   )}
                   style={{ background: `linear-gradient(135deg, rgb(${main}), rgb(${second}))` }}
                 >
@@ -100,14 +100,17 @@ export function AppearanceCard() {
                   disabled={light}
                   onClick={() => update({ surface: id })}
                   className={cn(
-                    'flex flex-col gap-1.5 rounded-md border p-1.5 text-left transition-colors',
-                    on ? 'border-cyan/60' : 'border-hud/60 enabled:hover:border-hud-strong'
+                    'flex flex-col gap-2 rounded-md border p-1.5 text-left transition-colors',
+                    on ? 'border-cyan/60 shadow-glow' : 'border-hud/50 enabled:hover:border-hud-strong'
                   )}
                 >
-                  <span className="block rounded-sm p-1.5" style={{ background: `rgb(${tokens['--bg-void']})` }}>
-                    <span className="block h-4 rounded-xs border" style={{ background: `rgb(${tokens['--bg-panel']})`, borderColor: `rgb(${tokens['--border-hud-strong']})` }} />
+                  <span className="flex h-12 overflow-hidden rounded-sm" style={{ background: `rgb(${tokens['--bg-void']})` }}>
+                    <span className="block w-1/4" style={{ background: `rgb(${tokens['--bg-surface']})`, borderRight: `1px solid rgb(${tokens['--border-hud']} / 0.6)` }} />
+                    <span className="m-2 flex flex-1 items-end rounded-xs border p-1" style={{ background: `rgb(${tokens['--bg-panel']})`, borderColor: `rgb(${tokens['--border-hud']} / 0.6)` }}>
+                      <span className="block h-1 w-1/2 rounded-full bg-cyan" />
+                    </span>
                   </span>
-                  <span className={cn('font-sans text-[11.5px]', on ? 'text-cyan' : 'text-text-secondary')}>{s.surfaces[id]}</span>
+                  <span className={cn('px-0.5 font-sans text-[12.5px] font-medium', on ? 'text-text-primary' : 'text-text-secondary')}>{s.surfaces[id]}</span>
                 </button>
               )
             })}
@@ -115,15 +118,15 @@ export function AppearanceCard() {
         </Field>
       </div>
 
-      <div className="mt-3 flex items-center justify-between gap-2 border-t border-hud/40 pt-2.5">
-        <span className="font-sans text-[11.5px] text-text-muted">{s.appearanceHint}</span>
+      <div className="-mx-4 -mb-4 mt-4 flex items-center justify-between gap-2 rounded-b-lg border-t border-hud/40 bg-surface/60 px-4 py-3">
+        <span className="font-sans text-[12.5px] text-text-muted">{s.appearanceHint}</span>
         <button
           type="button"
           disabled={isDefault}
           onClick={() => useAppearance.getState().reset()}
-          className="flex items-center gap-1.5 rounded-md border border-hud/60 px-2.5 py-1.5 font-sans text-[12px] text-text-secondary transition-colors hover:border-cyan/50 hover:text-cyan disabled:opacity-40"
+          className="flex h-8 items-center gap-1.5 rounded-md border border-hud/60 px-3 font-sans text-[13px] font-medium text-text-primary transition-colors hover:bg-elevated disabled:opacity-40"
         >
-          <RotateCcw size={12} /> {s.resetAppearance}
+          <RotateCcw size={14} strokeWidth={1.75} /> {s.resetAppearance}
         </button>
       </div>
     </Card>

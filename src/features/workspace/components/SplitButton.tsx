@@ -66,11 +66,11 @@ export function SplitButton() {
         disabled={full}
         onClick={split}
         className={cn(
-          'flex h-7 items-center gap-1.5 rounded-md border px-2 transition-colors hover:border-cyan/50 hover:text-cyan disabled:pointer-events-none disabled:opacity-40',
-          tip ? 'border-cyan/50 text-cyan' : 'border-hud/60 text-text-secondary'
+          'flex h-8 items-center gap-1.5 rounded-md border px-2.5 transition-colors hover:bg-elevated hover:text-text-primary disabled:pointer-events-none disabled:opacity-40',
+          tip ? 'border-cyan/50 text-cyan' : 'border-transparent text-text-secondary'
         )}
       >
-        <Columns2 size={14} />
+        <Columns2 size={16} strokeWidth={1.75} />
         <span className="hidden font-sans text-[12px] md:inline">{w.splitShort}</span>
       </button>
       {tip && (
@@ -88,7 +88,7 @@ export function SplitButton() {
           <button
             type="button"
             onClick={split}
-            className="mt-2.5 flex w-full items-center justify-center gap-1.5 rounded-md border border-cyan/40 bg-cyan/6 px-2.5 py-1 font-sans text-[12px] font-medium text-cyan transition-colors hover:bg-cyan/12"
+            className="mt-2.5 flex w-full items-center justify-center gap-1.5 rounded-md border border-cyan bg-cyan px-2.5 py-1 font-sans text-[12px] font-semibold text-void transition-colors hover:opacity-90"
           >
             <Columns2 size={13} /> {w.splitTry(keyLabel('split'))}
           </button>

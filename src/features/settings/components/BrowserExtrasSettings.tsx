@@ -5,7 +5,7 @@ import { useT } from '@/lib/i18n'
 import { Toggle } from './Toggle'
 
 const small =
-  'flex shrink-0 items-center gap-1 rounded-md border border-hud/60 px-2 py-1 font-sans text-[11.5px] text-text-secondary transition-colors hover:border-cyan/50 hover:text-cyan'
+  'flex shrink-0 items-center gap-1 rounded-md border border-hud/60 px-2 py-1 font-sans text-[11.5px] text-text-secondary transition-colors hover:border-hud-strong/80 hover:text-text-primary'
 
 /** The browser's protection, agents' logins and downloads — part of the browser card. */
 export function BrowserExtrasSettings({ settings, configure, onChange }: { settings: BrowserSettings; configure: (patch: Partial<BrowserSettings>) => void; onChange: (next: BrowserSettings) => void }) {

@@ -57,7 +57,7 @@ function AccountCard({ status }: { status: CloudStatus }) {
         {license && (
           <span
             className={cn(
-              'shrink-0 rounded-full border px-2.5 py-0.5 font-mono text-[10.5px] uppercase tracking-wider',
+              'shrink-0 rounded-full border px-2.5 py-0.5 font-sans text-[12px] font-medium',
               lifetime ? 'border-cyan/50 bg-cyan/8 text-cyan' : 'border-blue/50 bg-blue/8 text-blue'
             )}
           >
@@ -174,7 +174,7 @@ function UpdateRow() {
   const update = useUpdate.getState()
   return (
     <div className="mt-3 flex flex-wrap items-center gap-3 border-t border-hud/50 pt-3">
-      <span className="w-24 shrink-0 font-mono text-[11px] uppercase tracking-wider text-text-muted">{t.update.label}</span>
+      <span className="w-24 shrink-0 font-sans text-[12px] font-medium text-text-muted">{t.update.label}</span>
       <span className={cn('font-mono text-[12px]', status.state === 'error' ? 'text-danger' : 'text-text-secondary')}>{error ?? text}</span>
       {status.state === 'ready' ? (
         <button type="button" onClick={() => void update.install()} className={cn(primaryButton, 'ml-auto py-1.5!')}>
@@ -229,7 +229,7 @@ export function AccountView() {
             <dl className="space-y-1">
               {rows.map(([k, v]) => (
                 <div key={k} className="flex gap-3">
-                  <dt className="w-24 shrink-0 font-mono text-[11px] uppercase tracking-wider text-text-muted">{k}</dt>
+                  <dt className="w-24 shrink-0 font-sans text-[12px] font-medium text-text-muted">{k}</dt>
                   <dd className="flex min-w-0 items-center gap-1.5 wrap-break-word font-mono text-[12px] text-text-secondary">
                     {v}
                   </dd>

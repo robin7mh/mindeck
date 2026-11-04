@@ -26,3 +26,10 @@ export const NAV_ITEMS: NavItem[] = [
   { id: 'logs', icon: ScrollText },
   { id: 'settings', icon: Settings2 }
 ]
+
+/** The side navigation's groups (settings sits at the bottom, on its own). */
+export const NAV_GROUPS: { id: 'workspace' | 'knowledge' | 'system'; items: NavItem['id'][] }[] = [
+  { id: 'workspace', items: ['core', 'editor', 'terminal', 'browser', 'files'] },
+  { id: 'knowledge', items: ['projects', 'memory', 'agents'] },
+  { id: 'system', items: ['system', 'logs'] }
+]

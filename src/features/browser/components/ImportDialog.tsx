@@ -178,7 +178,7 @@ export function ImportDialog({ onClose }: { onClose(): void }) {
       onMouseDown={() => !busy && onClose()}
     >
       <div
-        className="h-fit w-[min(480px,92vw)] rounded-lg border border-hud/70 bg-panel/95 p-4 shadow-2xl shadow-black/50 backdrop-blur-md"
+        className="h-fit w-[min(480px,92vw)] rounded-lg border border-hud/50 bg-panel p-4 shadow-2xl shadow-black/50 backdrop-blur-md"
         onMouseDown={(e) => e.stopPropagation()}
       >
         <ImportPanel onClose={onClose} onBusy={setBusy} />

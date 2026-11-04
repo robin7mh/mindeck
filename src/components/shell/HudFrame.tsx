@@ -1,17 +1,7 @@
-import { cn } from '@/lib/cn'
-
 /**
- * Decorative HUD corner ticks. Purely visual — absolutely positioned inside a
- * `relative` parent (the Panel). Kept subtle to avoid gaming kitsch.
+ * Formerly the HUD corner ticks. The modern design draws no corners; kept so
+ * older imports still compile.
  */
-export function HudFrame({ className }: { className?: string }) {
-  const corner = 'absolute h-3 w-3 border-cyan/50'
-  return (
-    <div className={cn('pointer-events-none absolute inset-0', className)} aria-hidden>
-      <span className={cn(corner, 'left-0 top-0 border-l border-t')} />
-      <span className={cn(corner, 'right-0 top-0 border-r border-t')} />
-      <span className={cn(corner, 'bottom-0 left-0 border-b border-l')} />
-      <span className={cn(corner, 'bottom-0 right-0 border-b border-r')} />
-    </div>
-  )
+export function HudFrame(_props: { className?: string }) {
+  return null
 }

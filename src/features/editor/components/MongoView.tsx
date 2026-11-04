@@ -74,7 +74,7 @@ export function MongoView() {
         <div className="flex min-h-0 flex-1 flex-col">
           <div className="flex items-center gap-2 border-b border-hud/60 px-4 py-1.5">
             <span className="mr-auto font-sans text-[12px] text-text-secondary">{editing.docId ? t.mongo.editing : t.mongo.newDocument}</span>
-            <button type="button" disabled={busy} onClick={() => void mongo.saveEdit()} className={cn(button, 'border-cyan/50 text-cyan hover:bg-cyan/10')}>
+            <button type="button" disabled={busy} onClick={() => void mongo.saveEdit()} className={cn(button, 'border-cyan bg-cyan text-void hover:opacity-90')}>
               {t.mongo.save}
             </button>
             <button type="button" onClick={() => mongo.cancelEdit()} className={cn(button, 'border-hud/60 text-text-secondary')}>
@@ -117,7 +117,7 @@ export function MongoView() {
             ) : (
               <textarea aria-label={t.mongo.pipeline} value={pipeline} onChange={(e) => mongo.setQuery({ pipeline: e.target.value })} rows={5} className={cn(field, 'min-w-[320px] flex-1 resize-y')} />
             )}
-            <button type="submit" disabled={busy} className={cn(button, 'border-cyan/50 py-1 text-cyan hover:bg-cyan/10')}>
+            <button type="submit" disabled={busy} className={cn(button, 'border-cyan py-1 bg-cyan text-void hover:opacity-90')}>
               <Play size={11} /> {t.mongo.run}
             </button>
             {mode === 'find' && (

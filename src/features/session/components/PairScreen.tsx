@@ -59,7 +59,7 @@ export function UnreachableScreen() {
           <button
             type="button"
             onClick={() => void init()}
-            className="mt-1 flex items-center gap-1.5 rounded-md border border-cyan/40 bg-cyan/6 px-3 py-1.5 font-sans text-[12px] font-medium text-cyan hover:bg-cyan/12"
+            className="mt-1 flex items-center gap-1.5 rounded-md border border-cyan bg-cyan px-3 py-1.5 font-sans text-[12px] font-semibold text-void hover:opacity-90"
           >
             <RefreshCw size={13} /> {t.common.retry}
           </button>
@@ -172,7 +172,7 @@ export function PairScreen() {
           <button
             type="submit"
             disabled={!complete || busy}
-            className="flex items-center justify-center gap-2 rounded-md border border-cyan/50 bg-cyan/[0.10] px-3 py-2 font-sans text-[13px] font-medium text-cyan transition-colors hover:bg-cyan/16 disabled:cursor-not-allowed disabled:opacity-40"
+            className="flex items-center justify-center gap-2 rounded-md border border-cyan bg-cyan px-3 py-2 font-sans text-[13px] font-semibold text-void transition-colors hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
           >
             {busy ? <Loader2 size={14} className="animate-spin" /> : <KeyRound size={14} />}
             {t.pair.submit}
