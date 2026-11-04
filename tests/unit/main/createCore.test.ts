@@ -3,6 +3,7 @@ import { homedir } from 'node:os'
 import { delimiter, join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { tempDir } from './helpers'
+import { RemoteService } from '../../../electron/main/services/remote/RemoteService'
 
 const h = vi.hoisted(() => ({
   ptyData: undefined as undefined | ((d: string) => void),
@@ -496,6 +497,19 @@ describe('createCore — paired devices without remote shells', () => {
       if (saved === undefined) delete process.env.ANTHROPIC_API_KEY
       else process.env.ANTHROPIC_API_KEY = saved
     }
+  })
+})
+
+describe('the license and remote windows', () => {
+  it('what the desktop\'s license does reaches the remote windows at once', async () => {
+    const changed = vi.spyOn(RemoteService.prototype, 'licenseChanged')
+    const c = await core({ mode: 'desktop', notify: vi.fn() })
+    changed.mockClear()
+    c.hub.publish('agents:changed', {} as never)
+    expect(changed).not.toHaveBeenCalled()
+    c.hub.publish('cloud:status', c.cloud.status())
+    expect(changed).toHaveBeenCalledOnce()
+    changed.mockRestore()
   })
 })
 

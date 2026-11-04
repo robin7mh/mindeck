@@ -204,6 +204,8 @@ export const en = {
     checkAgain: 'Check again',
     offlineTitle: 'Mindeck Cloud unreachable',
     offlineIntro: 'Checking your license needs an internet connection. Check it and try again.',
+    followerTitle: 'Waiting for your computer',
+    followerIntro: 'This window runs on the license of Mindeck on your computer, and that license reaches it while you work there. It comes back by itself when you are at your computer again, with Mindeck open.',
     verifyTitle: 'Confirm your email',
     verifyIntro: (email: string) => `We sent a link to ${email}. Open it, then check again here — your 7 hours start after that.`,
     resend: 'Send again',

@@ -197,6 +197,8 @@ export const de: Dict = {
     checkAgain: 'Erneut prüfen',
     offlineTitle: 'Mindeck Cloud nicht erreichbar',
     offlineIntro: 'Für die Lizenzprüfung braucht Mindeck eine Internetverbindung. Prüfe sie und versuch es noch einmal.',
+    followerTitle: 'Wartet auf deinen Computer',
+    followerIntro: 'Dieses Fenster läuft mit der Lizenz von Mindeck auf deinem Computer, und die erreicht es, während du dort arbeitest. Sie kommt von selbst zurück, sobald du wieder an deinem Computer bist und Mindeck offen ist.',
     verifyTitle: 'Bestätige deine E-Mail',
     verifyIntro: (email) => `Wir haben dir einen Link an ${email} geschickt. Öffne ihn und prüfe hier erneut — danach starten deine 7 Stunden.`,
     resend: 'Erneut senden',

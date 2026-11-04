@@ -522,6 +522,9 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
     sshConfig: (!opts.released && process.env.MINDECK_SSH_CONFIG) || undefined,
     node: platform.node
   })
+  hub.subscribe((channel) => {
+    if (channel === 'cloud:status') remote.licenseChanged()
+  })
   registerRemoteIpc(router, remote, (id) => projects.getProjectPath(id), (id) => trust.project(id))
   // ESLint and Prettier: the project's own, in a worker per project.
   const lint = new LintService({ resolveRoot: (id) => projects.getProjectPath(id), trusted: (id) => trust.project(id), prettier: bundledPrettier(), node: platform.node })

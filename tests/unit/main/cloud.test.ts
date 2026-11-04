@@ -996,6 +996,28 @@ describe('CloudService', () => {
     await expect(leader.svc.adopt(token, account)).rejects.toMatchObject({ code: 'not-follower' })
   })
 
+  it('a follower\'s "check again" asks the cloud nothing, and nothing wipes what the desktop handed it', async () => {
+    const leader = await setup()
+    await leader.signIn()
+    expect(leader.svc.status().follower).toBeUndefined()
+    const { token, account } = leader.svc.entitlement()!
+    const follower = await setup({ follower: true, publicKey: leader.cloud.k.pem })
+    expect(await follower.svc.adopt(token, account)).toMatchObject({ follower: true, state: 'active' })
+    // The desktop stopped renewing (nobody at the computer): locked until it hands a new one over.
+    follower.advance(120)
+    expect(await follower.svc.refresh()).toMatchObject({ follower: true, state: 'offline', account, error: null })
+    // Whatever else needs a session gets none, and forgets nothing: Settings Sync, a checkout, a resend, signing out.
+    await expect(follower.svc.api('GET', '/v1/sync')).rejects.toMatchObject({ code: 'session_expired' })
+    await expect(follower.svc.checkout()).rejects.toMatchObject({ code: 'session_expired' })
+    await expect(follower.svc.resendVerification()).rejects.toMatchObject({ code: 'session_expired' })
+    expect(await follower.svc.logout()).toMatchObject({ follower: true, state: 'offline', account, error: null })
+    expect(follower.cloud.s.calls).toEqual([])
+    // And the next handover just works.
+    const now = Math.floor(follower.clock.now / 1000)
+    const fresh = signToken(JSON.stringify({ sub: 'u1', email: account.email, plan: 'trial', active: true, reason: 'ok', rem: 1, dev: 'desktop-1', iat: now, exp: now + 90 }), leader.cloud.k.privateKey)
+    expect(await follower.svc.adopt(fresh, account)).toMatchObject({ state: 'active', allowed: true, account })
+  })
+
   it('desktop: asks Mindeck Cloud for a follower lease bound to the remote core, keeps it until half of it passed (BE-SEC-09)', async () => {
     const t = await setup()
     expect(await t.svc.followerLease('remote-1')).toBeNull() // signed out: no license to lease from

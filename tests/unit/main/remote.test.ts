@@ -108,11 +108,12 @@ async function setup(
     machine?: ReturnType<typeof machine>
     api?: ReturnType<typeof api>
     saved?: string
-    entitlement?: boolean
+    entitlement?: boolean | (() => boolean)
     window?: boolean
     licensed?: boolean
     followerLease?: RemoteOptions['followerLease']
     node?: RemoteOptions['node']
+    licenseMs?: number
   } = {}
 ) {
   const dir = await tempDir('mindeck-remote-')
@@ -129,7 +130,7 @@ async function setup(
     deviceName: 'Studio',
     bundle: vi.fn(async () => bundle),
     secrets: { get: async (k) => secrets.get(k), set: async (k, v) => void (v === null ? secrets.delete(k) : secrets.set(k, v)) },
-    entitlement: () => (o.entitlement === false ? null : { token: 'ent', account: { email: 'r@mindeck.test', name: null } }),
+    entitlement: () => ((typeof o.entitlement === 'function' ? o.entitlement() : o.entitlement) === false ? null : { token: 'ent', account: { email: 'r@mindeck.test', name: null } }),
     followerLease: o.followerLease,
     openWindow:
       o.window === false
@@ -146,7 +147,7 @@ async function setup(
     ...(o.node ? { node: o.node } : { devcontainer: async (root: string) => m.start('devcontainer', ['up', '--workspace-folder', root], { X: '1' }) }),
     start: m.start,
     fetch: a.fetch as never,
-    licenseMs: 20,
+    licenseMs: o.licenseMs ?? 20,
     timeoutMs: 400
   })
   services.push(svc)
@@ -245,6 +246,40 @@ describe('Remote-SSH', () => {
     await tick()
     expect(t.svc.list()[0].state).toBe('closed')
     expect(core.killed).toBe(true)
+  })
+
+  it('the license back on the desktop goes over at once, not a minute later; a remote window waits for no timer', async () => {
+    let held = false
+    const t = await setup({ entitlement: () => held, licenseMs: 60_000 })
+    const connecting = t.svc.ssh('box')
+    held = true
+    t.svc.licenseChanged() // still on its way: nothing to hand it to yet
+    await connecting
+    const adopted = () => t.a.calls.filter((x) => x.url.endsWith('cloud:adopt')).length
+    expect(adopted()).toBe(1)
+    t.svc.licenseChanged() // still held: the timer's business
+    await tick()
+    expect(adopted()).toBe(1)
+    // Nobody at the computer: the lease ran out, nothing to hand over.
+    held = false
+    t.svc.licenseChanged()
+    await tick()
+    expect(adopted()).toBe(1)
+    // Someone back: at once, once.
+    held = true
+    t.svc.licenseChanged()
+    t.svc.licenseChanged()
+    await vi.waitFor(() => expect(adopted()).toBe(2))
+    await tick()
+    expect(adopted()).toBe(2)
+    // A window gone is nothing to hand it to.
+    await t.svc.disconnect('ssh:box')
+    held = false
+    t.svc.licenseChanged()
+    held = true
+    t.svc.licenseChanged()
+    await tick()
+    expect(adopted()).toBe(2)
   })
 
   it('hands over a follower lease for that core when Mindeck Cloud issues one, else the desktop’s entitlement (BE-SEC-09)', async () => {

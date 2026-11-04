@@ -300,7 +300,8 @@ export class CloudService {
       offlineUntil: cert ? new Date(cert.exp * 1000).toISOString() : null,
       online: this.online,
       webUrl: this.data.webUrl,
-      error: this.error
+      error: this.error,
+      ...(this.opts.follower ? { follower: true } : {})
     }
   }
 
@@ -339,6 +340,8 @@ export class CloudService {
   }
 
   async logout(): Promise<CloudStatus> {
+    // A follower has no session to end: what the desktop handed it stays until the desktop says otherwise.
+    if (this.opts.follower) return this.status()
     if (this.data.account) await this.call('POST', '/v1/auth/logout', {}).catch(() => {})
     await this.forget(null)
     return this.status()
@@ -346,7 +349,7 @@ export class CloudService {
 
   /** Re-reads the account and renews the entitlement now ("check again"). */
   async refresh(): Promise<CloudStatus> {
-    if (!this.data.account) return this.status()
+    if (!this.data.account || this.opts.follower) return this.status()
     try {
       const me = await this.call<{ user: ApiUser; license: ApiLicense }>('GET', '/v1/me')
       this.data.account = toAccount(me.user)
@@ -709,9 +712,10 @@ export class CloudService {
     const headers: Record<string, string> = {}
     if (body) headers['content-type'] = 'application/json'
     if (auth) {
-      const token = await this.opts.secrets.get(SESSION_SECRET)
+      // A follower has no session, and that is no session ending: what the desktop handed it stays.
+      const token = this.opts.follower ? null : await this.opts.secrets.get(SESSION_SECRET)
       if (!token) {
-        await this.forget('session_expired')
+        if (!this.opts.follower) await this.forget('session_expired')
         throw coded('session_expired', 'Please sign in again')
       }
       headers.authorization = `Bearer ${token}`

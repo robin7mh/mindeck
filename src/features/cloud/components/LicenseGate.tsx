@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { CirclePause, Hourglass, Loader2, LogOut, MailCheck, RefreshCw, ShoppingCart, UserRound, WifiOff } from 'lucide-react'
+import { CirclePause, Hourglass, Loader2, LogOut, MailCheck, Monitor, RefreshCw, ShoppingCart, UserRound, WifiOff } from 'lucide-react'
 import type { CloudStatus } from '@shared/types/cloud'
 import { Panel } from '@/components/ui/Panel'
 import { TechLabel } from '@/components/ui/TechLabel'
@@ -55,7 +55,8 @@ function Locked({
   intro,
   email,
   primary,
-  secondary
+  secondary,
+  signOut = true
 }: {
   icon: typeof WifiOff
   title: string
@@ -63,6 +64,7 @@ function Locked({
   email?: string
   primary: { label: string; icon: typeof WifiOff; run: () => void }
   secondary?: { label: string; run: () => void }
+  signOut?: boolean
 }) {
   const t = useT()
   const busy = useCloud((s) => s.busy)
@@ -91,9 +93,11 @@ function Locked({
               {secondary.label}
             </button>
           )}
-          <button type="button" disabled={busy} onClick={() => void useCloud.getState().logout()} className={cn(quietButton, 'flex-1')}>
-            <LogOut size={13} /> {t.cloud.signOut}
-          </button>
+          {signOut && (
+            <button type="button" disabled={busy} onClick={() => void useCloud.getState().logout()} className={cn(quietButton, 'flex-1')}>
+              <LogOut size={13} /> {t.cloud.signOut}
+            </button>
+          )}
         </div>
         {email && (
           <p className="flex items-center justify-center gap-1.5 font-mono text-[11px] text-text-muted">
@@ -111,7 +115,19 @@ export function CloudScreen({ status, overlay }: { status: CloudStatus; overlay?
   const cloud = useCloud.getState()
   const refresh = () => void cloud.refresh()
   let body: ReactNode
-  if (status.state === 'signed_out') {
+  // A remote window: the desktop holds the license. Nothing here can get it, however it is locked.
+  if (status.follower) {
+    body = (
+      <Locked
+        icon={Monitor}
+        title={t.cloud.followerTitle}
+        intro={t.cloud.followerIntro}
+        email={status.account?.email}
+        primary={{ label: t.cloud.checkAgain, icon: RefreshCw, run: refresh }}
+        signOut={false}
+      />
+    )
+  } else if (status.state === 'signed_out') {
     body = (
       <Panel title={t.cloud.signInTitle} corners>
         <SignInForm />

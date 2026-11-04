@@ -258,6 +258,25 @@ describe('CloudScreen', () => {
     expect(bridge.invoke).toHaveBeenCalledWith('cloud:logout', undefined)
   })
 
+  it('a remote window: the license comes from the desktop, so no talk of the internet, no sign-in, no sign-out', async () => {
+    const bridge = installBridge({ 'cloud:refresh': () => locked('offline', { follower: true }) })
+    const { rerender } = show(locked('offline', { follower: true }))
+    expect(screen.getByText('Waiting for your computer')).toBeInTheDocument()
+    expect(screen.getByText(/runs on the license of Mindeck on your computer.*comes back by itself when you are at your computer again/)).toBeInTheDocument()
+    expect(screen.queryByText('Mindeck Cloud unreachable')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Sign out' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Check again' }))
+    await settle()
+    expect(bridge.invoke).toHaveBeenCalledWith('cloud:refresh', undefined)
+    // Not handed anything yet: the same, not a sign-in form.
+    rerender(<CloudScreen status={locked('signed_out', { follower: true })} />)
+    expect(screen.getByText('Waiting for your computer')).toBeInTheDocument()
+    expect(screen.queryByLabelText(/email/i)).not.toBeInTheDocument()
+    act(() => useLocale.setState({ locale: 'de' }))
+    expect(screen.getByText('Wartet auf deinen Computer')).toBeInTheDocument()
+    expect(screen.getByText(/läuft mit der Lizenz von Mindeck auf deinem Computer.*kommt von selbst zurück, sobald du wieder an deinem Computer bist/)).toBeInTheDocument()
+  })
+
   it('unconfirmed email: names the address, resends, checks again', async () => {
     const bridge = installBridge()
     show(locked('email_unverified'))

@@ -65,6 +65,8 @@ export interface CloudStatus {
   webUrl: string | null
   /** Code of the last cloud error (the UI translates it). */
   error: string | null
+  /** This core runs on the license of Mindeck on the user's computer (a remote window): it hears from there, never from the cloud. */
+  follower?: boolean
 }
 
 /** The UI warns this many days before the offline certificate runs out (it is renewed whenever the cloud is reached). */

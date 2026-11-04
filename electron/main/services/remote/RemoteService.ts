@@ -52,6 +52,8 @@ interface Live {
   procs: ChildProcess[]
   proxy?: Server
   timer?: ReturnType<typeof setInterval>
+  /** Hands the license to its core, once it runs. */
+  license?: () => void
   window?: { close: () => void }
 }
 
@@ -127,6 +129,7 @@ function freePort(): Promise<number> {
  */
 export class RemoteService {
   private live = new Map<string, Live>()
+  private licenseHeld = false
   private readonly opts: RemoteOptions & Required<Pick<RemoteOptions, 'start' | 'fetch' | 'devcontainer' | 'licenseMs' | 'timeoutMs'>> & { hostsFile: string }
 
   constructor(opts: RemoteOptions) {
@@ -282,7 +285,8 @@ export class RemoteService {
       core.on('exit', () => live.info.state === 'ready' && this.stop(live, 'failed', 'The remote Mindeck stopped'))
       const { token, deviceId } = await this.pair(id, target.url, started, () => this.collect(target.run(`cd "${dirOf(this.opts.version)}" && MINDECK_HOME="$HOME/.mindeck" ./node out/server/index.cjs pair --admin`)))
       await this.handLicense(target.url, token)
-      live.timer = setInterval(() => void this.handLicense(target.url, token).catch(() => {}), this.opts.licenseMs)
+      live.license = () => void this.handLicense(target.url, token).catch(() => {})
+      live.timer = setInterval(live.license, this.opts.licenseMs)
       live.timer.unref?.()
       if (target.folder) await this.rpc(target.url, token, 'projects:add', { path: target.folder }).catch(() => {})
       this.update(live, { state: 'ready', url: target.url })
@@ -329,11 +333,23 @@ export class RemoteService {
   private async handLicense(url: string, token: string): Promise<void> {
     const entitlement = this.opts.entitlement()
     if (!entitlement) return
+    this.licenseHeld = true
     const lease = await this.leaseFor(url, token)
     await this.rpc(url, token, 'cloud:adopt', lease ?? entitlement).catch((err: Error) => {
       // Its package verifies with the key built into it — the same as this app's.
       throw coded('remote-license', `The remote Mindeck can't verify this license (${err.message}) — its server package must come from the same release`)
     })
+  }
+
+  /**
+   * This desktop's license status changed. Back after a gap (the trial pauses
+   * with nobody at the computer): a remote window that locked gets it at once,
+   * not when the timer next comes round.
+   */
+  licenseChanged(): void {
+    const held = !!this.opts.entitlement()
+    if (held && !this.licenseHeld) for (const live of this.live.values()) live.license?.()
+    this.licenseHeld = held
   }
 
   private async leaseFor(url: string, token: string): Promise<Handover | null> {
@@ -409,6 +425,7 @@ export class RemoteService {
   private stop(live: Live, state: 'closed' | 'failed', error?: string): void {
     if (live.info.state === 'closed' || (live.info.state === 'failed' && state === 'failed')) return
     clearInterval(live.timer)
+    live.license = undefined
     for (const p of live.procs) p.kill()
     live.proxy?.close()
     const win = live.window
