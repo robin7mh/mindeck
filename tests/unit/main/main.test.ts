@@ -585,7 +585,7 @@ describe('window wiring', () => {
     const veto = win.contentsHandlers.get('will-prevent-unload')!
     const cancel = { preventDefault: vi.fn() }
     veto(cancel)
-    expect(h.messageBox).toHaveBeenCalledWith(win, expect.objectContaining({ message: 'You have unsaved changes in the editor.' }))
+    expect(h.messageBox).toHaveBeenCalledWith(win, expect.objectContaining({ message: 'You have unsaved changes in the editor or in your notes.' }))
     expect(cancel.preventDefault).not.toHaveBeenCalled() // the veto stands
     h.messageBox.mockReturnValueOnce(0)
     const discard = { preventDefault: vi.fn() }

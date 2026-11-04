@@ -214,7 +214,7 @@ function createWindow(): void {
       buttons: ['Discard changes', 'Cancel'],
       defaultId: 1,
       cancelId: 1,
-      message: 'You have unsaved changes in the editor.',
+      message: 'You have unsaved changes in the editor or in your notes.',
       detail: 'Close anyway and lose them?'
     })
     if (choice === 0) event.preventDefault()
