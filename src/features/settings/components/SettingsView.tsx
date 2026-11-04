@@ -34,7 +34,7 @@ import { OnboardingCard } from '@/features/onboarding/components/OnboardingCard'
 const input =
   'rounded-md border border-hud/70 bg-surface/70 px-2.5 py-1.5 font-mono text-[12px] text-text-primary outline-hidden focus:border-cyan/60'
 const button =
-  'flex items-center justify-center gap-1.5 rounded-md border border-hud/60 px-2.5 py-1.5 font-sans text-[12px] text-text-secondary transition-colors hover:border-cyan/50 hover:text-cyan disabled:opacity-40'
+  'flex items-center justify-center gap-1.5 rounded-md border border-hud/60 px-2.5 py-1.5 font-sans text-[12px] text-text-secondary transition-colors hover:border-hud-strong/80 hover:text-text-primary disabled:opacity-40'
 
 /** How the composer sends a message, and whether agents reach the phone (Mindeck Cloud). */
 function AgentPrefs() {
@@ -175,7 +175,7 @@ function RemoteCard() {
         <div className="mt-2">
           <TechLabel className="text-text-muted">{t.settings.certificate}</TechLabel>
           <p className="break-all font-mono text-[10.5px] text-text-secondary">{s.server.tls.fingerprint}</p>
-          <p className="font-mono text-[10px] text-text-muted">
+          <p className="font-mono text-[11px] text-text-muted">
             {(s.server.tls.selfSigned ? t.settings.certificateSelfSigned : t.settings.certificateOwn)(new Date(s.server.tls.expiresAt).toLocaleDateString(intlLocale()))}
           </p>
         </div>
@@ -234,7 +234,7 @@ function RemoteCard() {
             )}
             <div className="min-w-0 flex-1 space-y-1">
               <p className="font-mono text-[22px] tracking-[0.25em] text-text-primary">{s.pairing.code}</p>
-              {s.pairing.role === 'admin' && <p className="font-mono text-[10.5px] uppercase tracking-wider text-amber">{t.settings.adminCode}</p>}
+              {s.pairing.role === 'admin' && <p className="font-sans text-[12px] font-medium text-amber">{t.settings.adminCode}</p>}
               {s.pairing.reachable ? (
                 <>
                   <p className="font-sans text-[12px] text-text-secondary">{t.settings.pairingHint}</p>
@@ -266,9 +266,9 @@ function RemoteCard() {
                 <span className="min-w-0 flex-1">
                   <span className="block truncate font-sans text-[12.5px] text-text-primary">
                     {d.name}
-                    {d.id === myDevice && <span className="ml-1.5 font-mono text-[10px] text-cyan">{t.settings.thisBrowser}</span>}
+                    {d.id === myDevice && <span className="ml-1.5 font-mono text-[11px] text-cyan">{t.settings.thisBrowser}</span>}
                   </span>
-                  <span className="block font-mono text-[10px] text-text-muted">
+                  <span className="block font-mono text-[11px] text-text-muted">
                     {t.settings.paired(relativeTime(d.createdAt))}
                     {d.lastSeenAt ? t.settings.seen(relativeTime(d.lastSeenAt)) : ''}
                   </span>
@@ -282,7 +282,7 @@ function RemoteCard() {
                     onChange={(role) => void s.setDeviceRole(d.id, role as DeviceRole)}
                   />
                 ) : (
-                  <span className="font-mono text-[10px] uppercase tracking-wider text-text-muted">{t.settings.roles[d.role]}</span>
+                  <span className="font-sans text-[12px] font-medium text-text-muted">{t.settings.roles[d.role]}</span>
                 )}
                 {(manage || d.id === myDevice) && (
                   <button type="button" aria-label={t.settings.revoke(d.name)} onClick={() => void s.revokeDevice(d.id)} className="text-text-muted hover:text-danger">
@@ -405,7 +405,7 @@ function AboutCard() {
       <dl className="space-y-1">
         {rows.map(([k, v]) => (
           <div key={k} className="flex gap-3">
-            <dt className="w-20 shrink-0 font-mono text-[11px] uppercase tracking-wider text-text-muted">{k}</dt>
+            <dt className="w-20 shrink-0 font-sans text-[12px] font-medium text-text-muted">{k}</dt>
             <dd className="min-w-0 wrap-break-word font-mono text-[12px] text-text-secondary">{v}</dd>
           </div>
         ))}

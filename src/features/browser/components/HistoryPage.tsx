@@ -14,7 +14,7 @@ const HOUR = 3_600_000
 const DAY = 24 * HOUR
 
 const small =
-  'flex items-center gap-1.5 rounded-md border border-hud/60 px-2.5 py-1 font-sans text-[12px] text-text-secondary transition-colors hover:border-cyan/50 hover:text-cyan'
+  'flex items-center gap-1.5 rounded-md border border-hud/60 px-2.5 py-1 font-sans text-[12px] text-text-secondary transition-colors hover:border-hud-strong/80 hover:text-text-primary'
 
 /** "Clear history…": the last hour, day, week — or everything. */
 function ClearMenu({ onPick, onClose }: { onPick(range: 'hour' | 'day' | 'week' | 'all'): void; onClose(): void }) {
@@ -22,7 +22,7 @@ function ClearMenu({ onPick, onClose }: { onPick(range: 'hour' | 'day' | 'week' 
   useOverlay(true)
   return (
     <div className="fixed inset-0 z-60" onMouseDown={onClose}>
-      <div role="menu" aria-label={t.library.clear} className="absolute right-6 top-24 w-52 rounded-lg border border-hud/70 bg-panel/95 p-1 shadow-xl shadow-black/40" onMouseDown={(e) => e.stopPropagation()}>
+      <div role="menu" aria-label={t.library.clear} className="absolute right-6 top-24 w-52 rounded-lg border border-hud/50 bg-panel p-1 shadow-xl shadow-black/40" onMouseDown={(e) => e.stopPropagation()}>
         {(['hour', 'day', 'week', 'all'] as const).map((r) => (
           <button key={r} type="button" role="menuitem" onClick={() => onPick(r)} className="block w-full rounded-md px-2.5 py-1.5 text-left font-sans text-[12.5px] text-text-primary hover:bg-danger/10 hover:text-danger">
             {t.library.clearRanges[r]}

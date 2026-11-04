@@ -56,14 +56,14 @@ export function ApprovalCard({
   const short = compact && !expanded ? preview(request.summary) : null
   const invisible = countInvisible(request.summary)
   const toggle = 'mt-1 font-sans text-[11px] text-cyan hover:underline'
-  const btn = 'flex items-center gap-1.5 rounded-md border px-2.5 py-1 font-sans text-[12px] font-medium transition-colors'
+  const btn = 'flex h-8 items-center gap-1.5 rounded-md border px-3 font-sans text-[13px] font-medium transition-colors'
   return (
     <div
       role="alertdialog"
       aria-label={t.agents.approve(request.toolTitle)}
       className={cn(
-        'rounded-md border bg-surface/90 p-3 backdrop-blur-sm',
-        execute ? 'border-amber/60' : 'border-cyan/50'
+        'rounded-lg border bg-panel p-4 shadow-panel',
+        execute ? 'border-amber/45' : 'border-cyan/40'
       )}
     >
       <div className="flex items-center gap-2">
@@ -99,11 +99,11 @@ export function ApprovalCard({
         </div>
       </div>
       <div className="mt-3 flex flex-wrap gap-2">
-        <button type="button" onClick={() => onRespond('once')} className={cn(btn, 'border-cyan/50 bg-cyan/[0.10] text-cyan hover:bg-cyan/16')}>
+        <button type="button" onClick={() => onRespond('once')} className={cn(btn, 'border-cyan bg-cyan font-semibold text-void hover:opacity-90')}>
           <Check size={13} /> {t.agents.allowOnce}
         </button>
         {request.allowAlways && (
-          <button type="button" onClick={() => onRespond('always')} className={cn(btn, 'border-hud/60 text-text-secondary hover:border-cyan/50 hover:text-cyan')}>
+          <button type="button" onClick={() => onRespond('always')} className={cn(btn, 'border-hud/60 text-text-secondary hover:border-hud-strong/80 hover:text-text-primary')}>
             <CheckCheck size={13} /> {t.agents.allowAlways}
           </button>
         )}

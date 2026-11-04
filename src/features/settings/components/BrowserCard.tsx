@@ -51,7 +51,7 @@ export function BrowserCard() {
         <Toggle label={t.settings.openLinks} hint={t.settings.openLinksHint} checked={settings.openLinksInMindeck} onChange={(v) => configure({ openLinksInMindeck: v })} />
       </div>
       <BrowserExtrasSettings settings={settings} configure={configure} onChange={apply} />
-      <button type="button" onClick={() => setImporting(true)} className={`${action} hover:border-cyan/50 hover:text-cyan`}>
+      <button type="button" onClick={() => setImporting(true)} className={`${action} hover:border-hud-strong/80 hover:text-text-primary`}>
         <Import size={12} /> {t.settings.importBrowser}
       </button>
       {importing && <ImportDialog onClose={() => setImporting(false)} />}

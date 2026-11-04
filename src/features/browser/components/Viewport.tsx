@@ -21,7 +21,7 @@ const NOT_UP_YET = new Set([-102, -100, -101, -324, -7, -21])
 const RETRY_MS = 2000
 
 const button =
-  'flex items-center gap-1.5 rounded-md border border-hud/60 px-3 py-1.5 font-sans text-[12.5px] text-text-secondary transition-colors hover:border-cyan/50 hover:text-cyan'
+  'flex items-center gap-1.5 rounded-md border border-hud/60 px-3 py-1.5 font-sans text-[12.5px] text-text-secondary transition-colors hover:border-hud-strong/80 hover:text-text-primary'
 
 function ErrorPage({ tab }: { tab: BrowserTab }) {
   const t = useT()

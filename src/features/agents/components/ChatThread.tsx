@@ -85,7 +85,7 @@ function ToolCard({ part, request, onRespond }: { part: ToolCallPart; request?: 
         <Icon size={13} className="shrink-0 text-cyan" />
         <span className="shrink-0 font-sans text-[12px] font-medium text-text-primary">{part.title}</span>
         {preview && <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-text-muted">{preview}</span>}
-        <span className={cn('ml-auto flex shrink-0 items-center gap-1 font-mono text-[10px] uppercase tracking-wider', STATUS_TONE[part.status])}>
+        <span className={cn('ml-auto flex shrink-0 items-center gap-1 font-sans text-[12px] font-medium', STATUS_TONE[part.status])}>
           {part.status === 'running' && <Loader2 size={10} className="animate-spin" />}
           {t.agents.toolStatus[part.status]}
         </span>
@@ -128,12 +128,12 @@ function Message({
     const text = message.parts.map((p) => (p.type === 'text' ? p.text : '')).join('')
     return (
       <div className="flex justify-end">
-        <div className="max-w-[85%] rounded-lg border border-cyan/30 bg-cyan/[0.07] px-3 py-2">
-          <div className="mb-0.5 flex items-center gap-1.5">
-            <User size={11} className="text-cyan" />
+        <div className="max-w-[80%] rounded-lg rounded-br-xs bg-elevated px-4 py-3">
+          <div className="mb-1 flex items-center gap-1.5">
+            <User size={12} className="text-text-muted" />
             <TechLabel className="text-text-muted">{t.agents.you}</TechLabel>
           </div>
-          {text && <p className="whitespace-pre-wrap wrap-break-word font-sans text-[13px] text-text-primary">{text}</p>}
+          {text && <p className="whitespace-pre-wrap wrap-break-word font-sans text-[14px] leading-[1.6] text-text-primary">{text}</p>}
           {message.attachments && (
             <ul aria-label={t.agents.attached} className="mt-1 flex flex-wrap gap-1">
               {message.attachments.map((a, i) => {
@@ -179,7 +179,7 @@ function Message({
         </p>
       )}
       {message.status !== 'streaming' && message.model && (
-        <p className="mt-1 font-mono text-[10px] text-text-muted">
+        <p className="mt-1 font-mono text-[11px] text-text-muted">
           {message.model}
           {message.usage ? t.agents.tokens(message.usage.inputTokens, message.usage.outputTokens) : ''}
         </p>

@@ -72,7 +72,7 @@ export function TerminalView({ onNavigate }: { onNavigate?: (module: ModuleId) =
                   type="button"
                   title={tr.browser.devServer(d.label)}
                   onClick={() => void useBrowser.getState().show(d.url)}
-                  className="flex shrink-0 items-center gap-1 rounded-md border border-cyan/40 bg-cyan/6 px-1.5 py-0.5 font-mono text-[10.5px] text-cyan transition-colors hover:bg-cyan/12"
+                  className="flex shrink-0 items-center gap-1 rounded-md border border-cyan px-1.5 py-0.5 font-mono text-[10.5px] bg-cyan text-void transition-colors hover:opacity-90"
                 >
                   <Globe size={11} /> {d.label}
                 </button>
@@ -167,7 +167,7 @@ export function TerminalView({ onNavigate }: { onNavigate?: (module: ModuleId) =
             <button
               type="button"
               onClick={() => void open()}
-              className="rounded-md border border-cyan/40 bg-cyan/6 px-3 py-1.5 font-sans text-[12px] font-medium text-cyan transition-colors hover:bg-cyan/12"
+              className="rounded-md border border-cyan bg-cyan px-3 py-1.5 font-sans text-[12px] font-semibold text-void transition-colors hover:opacity-90"
             >
               {tr.terminal.open}
             </button>
@@ -229,7 +229,7 @@ function NewTerminalMenu({
           type="button"
           aria-expanded={open}
           onClick={() => setOpen((o) => !o)}
-          className="flex h-full w-full items-center justify-center gap-2 rounded-md border border-dashed border-hud/60 font-sans text-[12px] text-text-muted transition-colors hover:border-cyan/40 hover:text-cyan"
+          className="flex h-full w-full items-center justify-center gap-2 rounded-md border border-dashed border-hud/60 font-sans text-[12px] text-text-muted transition-colors hover:border-cyan/40 hover:text-text-primary"
         >
           <Plus size={14} /> {t.terminal.new}
         </button>
@@ -240,7 +240,7 @@ function NewTerminalMenu({
           aria-label={t.terminal.new}
           aria-expanded={open}
           onClick={() => setOpen((o) => !o)}
-          className="flex h-7 w-7 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-elevated/60 hover:text-cyan"
+          className="flex h-7 w-7 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-elevated/60 hover:text-text-primary"
         >
           <Plus size={14} />
         </button>
@@ -268,7 +268,7 @@ function NewTerminalMenu({
             <button key={p.id} type="button" onClick={() => pick(undefined, p.id)} className={item}>
               <SquareTerminal size={13} className="text-text-muted" />
               <span className="min-w-0 flex-1 truncate">{p.name}</span>
-              {p.id === settings.defaultProfile && <span className="shrink-0 font-mono text-[10px] text-text-muted">{t.terminal.defaultProfile}</span>}
+              {p.id === settings.defaultProfile && <span className="shrink-0 font-mono text-[11px] text-text-muted">{t.terminal.defaultProfile}</span>}
             </button>
           ))}
         </div>

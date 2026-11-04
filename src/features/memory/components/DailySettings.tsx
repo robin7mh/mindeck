@@ -44,7 +44,7 @@ export function DailySettings({
         aria-label={t.memory.dailyNotes}
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
-        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-elevated/60 hover:text-cyan"
+        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-elevated/60 hover:text-text-primary"
       >
         <CalendarCog size={14} />
       </button>

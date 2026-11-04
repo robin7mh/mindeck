@@ -194,7 +194,7 @@ function CellView({ cell, index, count, language, readOnly, running, queued, foc
               <Check size={12} />
             </button>
           )}
-          <button type="button" aria-label={markdown ? t.toCode : t.toMarkdown} title={markdown ? t.toCode : t.toMarkdown} onClick={() => onType(cell.key, markdown ? 'code' : 'markdown')} className={cn(icon, 'w-auto px-1 font-mono text-[10px]')}>
+          <button type="button" aria-label={markdown ? t.toCode : t.toMarkdown} title={markdown ? t.toCode : t.toMarkdown} onClick={() => onType(cell.key, markdown ? 'code' : 'markdown')} className={cn(icon, 'w-auto px-1 font-mono text-[11px]')}>
             {markdown ? '{ }' : 'M↓'}
           </button>
           <button type="button" aria-label={t.moveUp} title={t.moveUp} disabled={index === 0} onClick={() => onMove(cell.key, -1)} className={icon}>

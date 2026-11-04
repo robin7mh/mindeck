@@ -38,7 +38,7 @@ describe('ui primitives', () => {
       </Panel>
     )
     expect(screen.getByText('T')).toBeInTheDocument()
-    expect(container.querySelector('[aria-hidden]')).not.toBeNull() // HudFrame
+    expect(container.querySelector('[aria-hidden]')).toBeNull() // no HUD corner ticks in the modern design
     expect(container.querySelector('.p-3')).toBeNull()
 
     rerender(<Panel headerRight={<b>R</b>}>body</Panel>)
@@ -73,7 +73,7 @@ describe('shell pieces', () => {
   it('SideNavigation marks the active item and selects', () => {
     const onSelect = vi.fn()
     render(<SideNavigation active="terminal" onSelect={onSelect} />)
-    expect(screen.getAllByRole('button')).toHaveLength(NAV_ITEMS.length + 2) // + fold, profile
+    expect(screen.getAllByRole('button')).toHaveLength(NAV_ITEMS.length + 3) // + new agent, fold, profile
     expect(screen.getByTitle('Terminal').className).toContain('text-text-primary')
     expect(screen.getByTitle('Core').className).toContain('text-text-muted')
     fireEvent.click(screen.getByTitle('Memory'))
@@ -84,7 +84,7 @@ describe('shell pieces', () => {
     const onSelect = vi.fn()
     const { rerender } = render(<SideNavigation active="core" onSelect={onSelect} />)
     const profile = screen.getByLabelText('Profile')
-    expect(profile.className).toContain('border-hud/50')
+    expect(profile.className).toContain('border-transparent')
     expect(screen.getByText('Not signed in')).toBeInTheDocument()
     fireEvent.click(profile)
     expect(onSelect).toHaveBeenCalledWith('account')
@@ -98,11 +98,11 @@ describe('shell pieces', () => {
     const off = onRelayout(moved)
     const first = render(<SideNavigation active="core" open={['core', 'browser']} onSelect={vi.fn()} />)
     expect(moved).not.toHaveBeenCalled() // the first look moves nothing
-    expect(screen.getByText('Modules')).toBeInTheDocument()
+    expect(screen.getByText('Workspace')).toBeInTheDocument() // the first group's label
     fireEvent.click(screen.getByRole('button', { name: 'Collapse the modules' }))
     expect(moved).toHaveBeenCalledTimes(1)
     expect(localStorage.getItem('mindeck.nav.collapsed')).toBe('1')
-    expect(screen.queryByText('Modules')).toBeNull()
+    expect(screen.queryByText('Workspace')).toBeNull()
     expect(screen.queryByText('Memory')).toBeNull() // icons only, the name in the tooltip
     expect(screen.getByTitle('Memory')).toBeInTheDocument()
     expect(screen.queryByText('Not signed in')).toBeNull()
@@ -647,5 +647,17 @@ describe('AppShell with panes', () => {
       '@/components/topbar/TopStatusBar'
     ])
       vi.doUnmock(m)
+  })
+})
+
+describe('SideNavigation: new agent', () => {
+  it('opens the Agents module with the new-chat dialog', () => {
+    const openDialog = vi.fn()
+    staticAgents.setState({ openDialog })
+    const onSelect = vi.fn()
+    render(<SideNavigation active="core" onSelect={onSelect} />)
+    fireEvent.click(screen.getByTitle('New agent'))
+    expect(onSelect).toHaveBeenCalledWith('agents')
+    expect(openDialog).toHaveBeenCalled()
   })
 })

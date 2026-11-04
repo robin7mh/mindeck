@@ -33,7 +33,7 @@ function Editor({ group, at }: { group: BrowserTabGroup; at?: { x: number; y: nu
         role="dialog"
         aria-label={t.browserTabs.editGroup}
         style={{ ...place, width: WIDTH }}
-        className="absolute rounded-lg border border-hud/70 bg-panel/95 p-2.5 shadow-2xl shadow-black/50 backdrop-blur-md"
+        className="absolute rounded-lg border border-hud/50 bg-panel p-2.5 shadow-2xl shadow-black/50 backdrop-blur-md"
         onMouseDown={(e) => e.stopPropagation()}
       >
         <input

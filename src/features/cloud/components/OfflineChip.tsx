@@ -5,7 +5,7 @@ import { showModule } from '@/features/palette/reveal'
 import { useCloud } from '../store'
 
 const chip =
-  'flex items-center gap-1.5 rounded-md border border-amber/50 bg-amber/[0.10] px-2.5 py-1 font-mono text-[11px] text-amber transition-colors hover:bg-amber/18'
+  'flex h-7 items-center gap-1.5 rounded-full bg-amber/12 px-2.5 font-sans text-[12px] font-medium text-amber transition-colors hover:bg-amber/20'
 
 /**
  * Top bar: the lifetime license's offline certificate runs out within

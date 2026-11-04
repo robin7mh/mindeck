@@ -55,6 +55,8 @@ interface AgentsState {
 let connections = 0
 let unsubscribe: (() => void) | undefined
 let recentSessions: string[] = []
+/** How often each session's changes were asked for: an answer that a newer question has overtaken is dropped. */
+const changesAsked = new Map<string, number>()
 
 const upsertSession = (list: AgentSession[], s: AgentSession) => [s, ...list.filter((x) => x.id !== s.id)].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
 
@@ -87,6 +89,7 @@ export const useAgents = create<AgentsState>((set, get) => {
 
   /** A removed session leaves nothing behind. */
   const forget = (s: AgentsState, id: string) => {
+    changesAsked.delete(id)
     const { [id]: _messages, ...messages } = s.messages
     const { [id]: _changes, ...changes } = s.changes
     const { [id]: _branch, ...branches } = s.branches
@@ -245,8 +248,10 @@ export const useAgents = create<AgentsState>((set, get) => {
 
     loadChanges: (id) =>
       act(async (x) => {
+        const asked = (changesAsked.get(x) ?? 0) + 1
+        changesAsked.set(x, asked)
         const changes = await ipc('agents:changes', { id: x })
-        set((s) => ({ changes: { ...s.changes, [x]: changes } }))
+        if (changesAsked.get(x) === asked) set((s) => ({ changes: { ...s.changes, [x]: changes } }))
       }, id),
 
     loadBranch: (id) =>

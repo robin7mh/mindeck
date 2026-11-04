@@ -7,7 +7,7 @@ import { Select } from '@/components/ui/Select'
 import { useT } from '@/lib/i18n'
 
 const button =
-  'flex items-center justify-center gap-1.5 rounded-md border border-hud/60 px-2.5 py-1.5 font-sans text-[12px] text-text-secondary transition-colors hover:border-cyan/50 hover:text-cyan'
+  'flex items-center justify-center gap-1.5 rounded-md border border-hud/60 px-2.5 py-1.5 font-sans text-[12px] text-text-secondary transition-colors hover:border-hud-strong/80 hover:text-text-primary'
 
 /** The desktop app itself: unencrypted secrets (Linux without a keyring), closing the window, logs and diagnostics. */
 export function DesktopCard() {

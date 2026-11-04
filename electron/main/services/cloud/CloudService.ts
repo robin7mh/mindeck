@@ -220,6 +220,8 @@ export class CloudService {
   private deviceUsedAt = -Infinity
   private remoteSessions = 0
   private beating: Promise<void> | null = null
+  /** Overlapping refreshes share one round: one look at the account, one heartbeat. */
+  private refreshing: Promise<CloudStatus> | null = null
   private timer?: ReturnType<typeof setInterval>
   private lastEmitted = ''
   /** Desktop: the follower leases it got, per follower install id (renewed when half of one has passed). */
@@ -350,17 +352,24 @@ export class CloudService {
   /** Re-reads the account and renews the entitlement now ("check again"). */
   async refresh(): Promise<CloudStatus> {
     if (!this.data.account || this.opts.follower) return this.status()
-    try {
-      const me = await this.call<{ user: ApiUser; license: ApiLicense }>('GET', '/v1/me')
-      this.data.account = toAccount(me.user)
-      this.data.license = toLicense(me.license)
-      await this.save()
-    } catch (err) {
-      this.note(err)
-    }
-    // Still signed in (the cloud may just have ended the session or disabled the account)?
-    if (this.data.account) await this.beat()
-    return this.status()
+    this.refreshing ??= (async () => {
+      try {
+        try {
+          const me = await this.call<{ user: ApiUser; license: ApiLicense }>('GET', '/v1/me')
+          this.data.account = toAccount(me.user)
+          this.data.license = toLicense(me.license)
+          await this.save()
+        } catch (err) {
+          this.note(err)
+        }
+        // Still signed in (the cloud may just have ended the session or disabled the account)?
+        if (this.data.account) await this.beat()
+        return this.status()
+      } finally {
+        this.refreshing = null
+      }
+    })()
+    return this.refreshing
   }
 
   async resendVerification(): Promise<void> {

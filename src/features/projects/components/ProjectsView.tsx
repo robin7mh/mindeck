@@ -37,7 +37,7 @@ export function ProjectsView({ onNavigate }: { onNavigate: (module: ModuleId) =>
           <button
             type="button"
             onClick={add}
-            className="flex items-center gap-1.5 rounded-md border border-cyan/40 bg-cyan/6 px-2.5 py-1 font-sans text-[12px] font-medium text-cyan transition-colors hover:bg-cyan/12"
+            className="flex items-center gap-1.5 rounded-md border border-cyan bg-cyan px-2.5 py-1 font-sans text-[12px] font-semibold text-void transition-colors hover:opacity-90"
           >
             <FolderPlus size={14} strokeWidth={2} />
             {t.projects.add}
@@ -62,7 +62,7 @@ export function ProjectsView({ onNavigate }: { onNavigate: (module: ModuleId) =>
             <div className="flex flex-col items-center gap-2 px-3 py-10 text-center">
               <FolderGit2 size={26} className="text-text-muted" />
               <p className="font-sans text-[12px] text-text-secondary">{t.projects.none}</p>
-              <p className="font-mono text-[10px] text-text-muted">{t.projects.addFolder}</p>
+              <p className="font-mono text-[11px] text-text-muted">{t.projects.addFolder}</p>
             </div>
           )}
           {projects.map((p) => (

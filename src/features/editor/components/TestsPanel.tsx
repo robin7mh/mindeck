@@ -50,7 +50,7 @@ function Row({ item, depth }: { item: TestItem; depth: number }) {
         >
           {item.name}
         </button>
-        {result?.durationMs !== undefined && item.kind === 'test' && <span className="shrink-0 font-mono text-[10px] text-text-muted">{Math.round(result.durationMs)} ms</span>}
+        {result?.durationMs !== undefined && item.kind === 'test' && <span className="shrink-0 font-mono text-[11px] text-text-muted">{Math.round(result.durationMs)} ms</span>}
         <button type="button" aria-label={t.tests.run(item.name)} title={t.tests.runOne} disabled={busy} onClick={() => void tests.runTests(item.id)} className={cn(tool, 'hidden group-hover:flex')}>
           <Play size={11} />
         </button>
@@ -89,7 +89,7 @@ export function TestsPanel() {
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="space-y-1.5 px-2 pb-2">
         <div className="flex items-center gap-0.5">
-          <p className="mr-auto font-mono text-[10px] uppercase tracking-[0.14em] text-text-muted">{t.tests.title}</p>
+          <p className="mr-auto font-sans text-[12px] font-medium text-text-muted">{t.tests.title}</p>
           {run?.running ? (
             <button type="button" aria-label={t.tests.stop} title={t.tests.stop} onClick={() => void tests.cancel()} className={tool}>
               <Square size={11} />

@@ -110,7 +110,7 @@ export function AgentsView({ onOpenNote, onOpenSettings }: { onOpenNote: (path: 
           <button
             type="button"
             onClick={() => ag.openDialog()}
-            className="flex w-full items-center justify-center gap-1.5 rounded-md border border-cyan/40 bg-cyan/6 px-2.5 py-1.5 font-sans text-[12px] font-medium text-cyan hover:bg-cyan/12"
+            className="flex w-full items-center justify-center gap-1.5 rounded-md border border-cyan bg-cyan px-2.5 py-1.5 font-sans text-[12px] font-semibold text-void hover:opacity-90"
           >
             <Plus size={14} /> {t.agents.newChat}
           </button>
@@ -127,7 +127,7 @@ export function AgentsView({ onOpenNote, onOpenSettings }: { onOpenNote: (path: 
                   <Icon size={13} className={cn('shrink-0', active ? 'text-cyan' : 'text-text-muted')} />
                   <span className="min-w-0 flex-1">
                     <span className="block truncate font-sans text-[12.5px] text-text-primary">{e.title}</span>
-                    <span className="block truncate font-mono text-[10px] text-text-muted">
+                    <span className="block truncate font-mono text-[11px] text-text-muted">
                       {e.sub} · {relativeTime(e.updatedAt)}
                     </span>
                   </span>
@@ -169,7 +169,7 @@ export function AgentsView({ onOpenNote, onOpenSettings }: { onOpenNote: (path: 
           <button
             type="button"
             onClick={() => ag.openDialog()}
-            className="flex items-center gap-1.5 rounded-md border border-cyan/50 bg-cyan/[0.1] px-3 py-1.5 font-sans text-[12px] font-medium text-cyan hover:bg-cyan/16"
+            className="flex items-center gap-1.5 rounded-md border border-cyan bg-cyan px-3 py-1.5 font-sans text-[12px] font-semibold text-void hover:opacity-90"
           >
             <Plus size={14} /> {t.agents.newChat}
           </button>

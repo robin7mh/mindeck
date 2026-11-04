@@ -36,7 +36,7 @@ export function installErrorReporting(target: Window = window): () => void {
 }
 
 const button =
-  'flex items-center justify-center gap-1.5 rounded-md border border-hud/60 px-2.5 py-1.5 font-sans text-[12px] text-text-secondary transition-colors hover:border-cyan/50 hover:text-cyan'
+  'flex items-center justify-center gap-1.5 rounded-md border border-hud/60 px-2.5 py-1.5 font-sans text-[12px] text-text-secondary transition-colors hover:border-hud-strong/80 hover:text-text-primary'
 
 /** What crashed, how to get it back, and the details to copy into a bug report. */
 function CrashPanel({ title, intro, action, onAction, details }: { title: string; intro: string; action: string; onAction: () => void; details: string }) {

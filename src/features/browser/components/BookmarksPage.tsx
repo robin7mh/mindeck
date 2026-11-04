@@ -10,7 +10,7 @@ import { useRootName } from './BookmarkEditor'
 import { BOOKMARK_DRAG, openBookmark } from './BookmarksBar'
 
 const small =
-  'flex items-center gap-1.5 rounded-md border border-hud/60 px-2.5 py-1 font-sans text-[12px] text-text-secondary transition-colors hover:border-cyan/50 hover:text-cyan'
+  'flex items-center gap-1.5 rounded-md border border-hud/60 px-2.5 py-1 font-sans text-[12px] text-text-secondary transition-colors hover:border-hud-strong/80 hover:text-text-primary'
 
 /** Lets a drop through when it carries a bookmark. */
 function accept(e: DragEvent): boolean {
@@ -189,7 +189,7 @@ export function BookmarksPage() {
                 {!isFolder(node) && <span className="min-w-0 shrink truncate font-mono text-[11px] text-text-muted">{displayUrl(node.url)}</span>}
                 {node.path && node.path.length > 0 && <span className="shrink-0 truncate font-sans text-[11px] text-text-muted">· {node.path.join(' › ')}</span>}
               </button>
-              <button type="button" aria-label={`${t.library.edit} ${node.title}`} onClick={() => useBrowser.getState().edit(node.id)} className="rounded-sm p-1 text-text-muted opacity-0 hover:bg-elevated hover:text-cyan focus:opacity-100 group-hover:opacity-100">
+              <button type="button" aria-label={`${t.library.edit} ${node.title}`} onClick={() => useBrowser.getState().edit(node.id)} className="rounded-sm p-1 text-text-muted opacity-0 hover:bg-elevated hover:text-text-primary focus:opacity-100 group-hover:opacity-100">
                 <Pencil size={12} />
               </button>
               <button

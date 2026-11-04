@@ -133,7 +133,7 @@ export function NoteList(p: Props) {
           title={t.memory.newNote}
           aria-label={t.memory.newNote}
           onClick={() => p.onStartCreate('note', '')}
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-elevated/60 hover:text-cyan"
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-elevated/60 hover:text-text-primary"
         >
           <FilePlus2 size={15} />
         </button>
@@ -142,7 +142,7 @@ export function NoteList(p: Props) {
           title={t.memory.newFolder}
           aria-label={t.memory.newFolder}
           onClick={() => p.onStartCreate('folder', '')}
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-elevated/60 hover:text-cyan"
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-elevated/60 hover:text-text-primary"
         >
           <FolderPlus size={15} />
         </button>
@@ -202,7 +202,7 @@ export function NoteList(p: Props) {
                       />
                       <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: dot(top) }} />
                       <span className="truncate font-sans text-[12px] font-medium text-text-secondary">{dir}</span>
-                      <span className="font-mono text-[10px] text-text-muted">{items.length}</span>
+                      <span className="font-mono text-[11px] text-text-muted">{items.length}</span>
                     </button>
                     <button
                       type="button"
@@ -210,7 +210,7 @@ export function NoteList(p: Props) {
                       onClick={() => p.onStartCreate('note', dir)}
                       className="opacity-0 transition-opacity group-hover:opacity-100"
                     >
-                      <FilePlus2 size={13} className="text-text-muted hover:text-cyan" />
+                      <FilePlus2 size={13} className="text-text-muted hover:text-text-primary" />
                     </button>
                     <button
                       type="button"
@@ -218,7 +218,7 @@ export function NoteList(p: Props) {
                       onClick={() => p.onStartCreate('folder', dir)}
                       className="opacity-0 transition-opacity group-hover:opacity-100"
                     >
-                      <FolderPlus size={13} className="text-text-muted hover:text-cyan" />
+                      <FolderPlus size={13} className="text-text-muted hover:text-text-primary" />
                     </button>
                   </div>
                 )}
@@ -244,7 +244,7 @@ export function NoteList(p: Props) {
                       )}
                       <FileText size={13} className="shrink-0 text-text-muted" />
                       <span className="min-w-0 flex-1 truncate font-sans text-[12.5px]">{n.title}</span>
-                      {n.linkCount > 0 && <span className="font-mono text-[10px] text-text-muted">{n.linkCount}</span>}
+                      {n.linkCount > 0 && <span className="font-mono text-[11px] text-text-muted">{n.linkCount}</span>}
                     </button>
                   ))}
                 {dir && !isCollapsed && items.length === 0 && !(p.creating?.parent === dir) && (

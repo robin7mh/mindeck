@@ -73,7 +73,7 @@ export function RemotePanel() {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="space-y-1.5 px-2 pb-2">
-        <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-text-muted">{t.sftp.title}</p>
+        <p className="font-sans text-[12px] font-medium text-text-muted">{t.sftp.title}</p>
         {targets.length > 1 && (
           <Select label={t.sftp.target} icon={Server} value={target ?? ''} onChange={(v) => sftp.select(v)} options={targets.map((x) => ({ value: x.name, label: x.name, hint: x.host }))} />
         )}

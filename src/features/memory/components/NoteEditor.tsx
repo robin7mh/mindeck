@@ -175,12 +175,12 @@ export function NoteEditor(p: Props) {
           {(note.type || note.tags.length > 0) && (
             <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
               {note.type && (
-                <span className="rounded-sm border border-cyan/30 bg-cyan/6 px-1.5 py-px font-mono text-[10px] text-cyan">
+                <span className="rounded-sm border border-cyan/30 bg-cyan/6 px-1.5 py-px font-mono text-[11px] text-cyan">
                   {note.type}
                 </span>
               )}
               {note.tags.map((tag) => (
-                <span key={tag} className="rounded-sm border border-hud/60 bg-elevated/50 px-1.5 py-px font-mono text-[10px] text-purple">
+                <span key={tag} className="rounded-sm border border-hud/60 bg-elevated/50 px-1.5 py-px font-mono text-[11px] text-purple">
                   #{tag}
                 </span>
               ))}
@@ -189,7 +189,7 @@ export function NoteEditor(p: Props) {
         </div>
 
         <div className="flex shrink-0 items-center gap-2">
-          <span className="flex items-center gap-1 font-mono text-[10px] text-text-muted">
+          <span className="flex items-center gap-1 font-mono text-[11px] text-text-muted">
             {p.saving ? (
               <>
                 <Loader2 size={11} className="animate-spin" /> {t.memory.saving}
@@ -265,7 +265,7 @@ export function NoteEditor(p: Props) {
               <button type="button" onClick={p.onLoadDisk} className={quietButton}>
                 {t.editor.loadDisk}
               </button>
-              <button type="button" onClick={p.onKeepMine} className="rounded-md border border-cyan/40 bg-cyan/6 px-2.5 py-1 text-[12px] font-medium text-cyan transition-colors hover:bg-cyan/12">
+              <button type="button" onClick={p.onKeepMine} className="rounded-md border border-cyan bg-cyan px-2.5 py-1 text-[12px] font-semibold text-void transition-colors hover:opacity-90">
                 {t.editor.keepMine}
               </button>
             </>
@@ -308,7 +308,7 @@ export function NoteEditor(p: Props) {
             {note.body.trim() ? (
               <div ref={preview} className="md-prose" onClick={onPreviewClick} dangerouslySetInnerHTML={{ __html: html }} />
             ) : (
-              <button type="button" onClick={() => onMode('edit')} className="font-sans text-[13px] text-text-muted hover:text-cyan">
+              <button type="button" onClick={() => onMode('edit')} className="font-sans text-[13px] text-text-muted hover:text-text-primary">
                 {t.memory.emptyNote}
               </button>
             )}
@@ -322,7 +322,7 @@ export function NoteEditor(p: Props) {
         <div className="mb-1.5 flex items-center gap-1.5">
           <Link2 size={12} className="text-text-muted" />
           <TechLabel className="text-text-secondary">{t.memory.connections}</TechLabel>
-          <span className="font-mono text-[10px] text-text-muted">{outgoing.length + note.backlinks.length}</span>
+          <span className="font-mono text-[11px] text-text-muted">{outgoing.length + note.backlinks.length}</span>
           <ConnectPicker
             notes={connectable}
             onPick={p.onLink}
@@ -402,7 +402,7 @@ function ConnectionChip({
         type="button"
         onClick={onOpen}
         title={direction === 'out' ? t.memory.linksTo : t.memory.linkedFrom}
-        className="flex items-center gap-1 py-1 pl-2 pr-1 font-sans text-[12px] hover:text-cyan"
+        className="flex items-center gap-1 py-1 pl-2 pr-1 font-sans text-[12px] hover:text-text-primary"
       >
         <Icon size={11} className="text-text-muted" />
         {title}
@@ -456,7 +456,7 @@ function ConnectPicker({ notes, onPick }: { notes: NoteMeta[]; onPick: (path: st
           setOpen((o) => !o)
           setQ('')
         }}
-        className="flex items-center gap-1 rounded-md border border-cyan/40 bg-cyan/6 px-2 py-0.5 font-sans text-[11px] font-medium text-cyan transition-colors hover:bg-cyan/12"
+        className="flex items-center gap-1 rounded-md border border-cyan bg-cyan px-2 py-0.5 font-sans text-[11px] font-semibold text-void transition-colors hover:opacity-90"
       >
         <Plus size={12} /> {t.memory.connect}
       </button>
@@ -493,7 +493,7 @@ function ConnectPicker({ notes, onPick }: { notes: NoteMeta[]; onPick: (path: st
                 className="flex w-full items-center gap-2 px-3 py-1.5 text-left transition-colors hover:bg-elevated/60"
               >
                 <span className="min-w-0 flex-1 truncate font-sans text-[12.5px] text-text-secondary">{n.title}</span>
-                {n.folder && <span className="font-mono text-[10px] text-text-muted">{n.folder}</span>}
+                {n.folder && <span className="font-mono text-[11px] text-text-muted">{n.folder}</span>}
               </button>
             ))}
           </div>
@@ -528,7 +528,7 @@ function TemplatePicker({ templates, onPick }: { templates: NoteMeta[]; onPick: 
         // Keep the editor's cursor where it is.
         onMouseDown={(e) => e.preventDefault()}
         onClick={() => setOpen((o) => !o)}
-        className="flex h-7 w-7 items-center justify-center rounded-md border border-hud/60 text-text-muted transition-colors hover:border-cyan/40 hover:text-cyan"
+        className="flex h-7 w-7 items-center justify-center rounded-md border border-hud/60 text-text-muted transition-colors hover:border-cyan/40 hover:text-text-primary"
       >
         <FileStack size={13} />
       </button>

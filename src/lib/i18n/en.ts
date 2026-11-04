@@ -41,6 +41,8 @@ export const en = {
     logs: 'Logs',
     settings: 'Settings',
     account: 'Profile',
+    groups: { workspace: 'Workspace', knowledge: 'Knowledge', system: 'System' },
+    newAgent: 'New agent',
     notSignedIn: 'Not signed in',
     collapse: 'Collapse the modules',
     expand: 'Expand the modules'

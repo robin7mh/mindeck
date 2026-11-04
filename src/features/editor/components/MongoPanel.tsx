@@ -26,7 +26,7 @@ function AddConnection() {
       <input aria-label={t.mongo.name} placeholder={t.mongo.name} value={name} onChange={(e) => setName(e.target.value)} className={field} />
       <input aria-label={t.mongo.uri} placeholder={t.mongo.uriHint} value={uri} onChange={(e) => setUri(e.target.value)} type="password" autoComplete="off" className={cn(field, 'font-mono')} />
       <div className="flex gap-1.5">
-        <button type="submit" disabled={!uri.trim() || busy} className="flex items-center gap-1 rounded-sm border border-cyan/50 px-2 py-0.5 font-sans text-[12px] text-cyan hover:bg-cyan/10 disabled:opacity-40">
+        <button type="submit" disabled={!uri.trim() || busy} className="flex items-center gap-1 rounded-sm border border-cyan px-2 py-0.5 font-sans text-[12px] bg-cyan text-void hover:opacity-90 disabled:opacity-40">
           {busy && <Loader2 size={11} className="animate-spin" />}
           {t.mongo.connect}
         </button>
@@ -56,7 +56,7 @@ function DatabaseRow({ id, db, info }: { id: string; db: string; info: string })
           <ChevronRight size={12} className={cn('shrink-0 text-text-muted transition-transform', open && 'rotate-90')} />
           <Database size={12} className="shrink-0 text-cyan/70" />
           <span className="truncate">{db}</span>
-          <span className="ml-auto shrink-0 font-mono text-[10px] text-text-muted">{info}</span>
+          <span className="ml-auto shrink-0 font-mono text-[11px] text-text-muted">{info}</span>
         </button>
         <button type="button" aria-label={`${t.mongo.newCollection} (${db})`} title={t.mongo.newCollection} onClick={() => setNaming(true)} className={cn(tool, 'hidden group-hover:flex')}>
           <Plus size={12} />
@@ -89,7 +89,7 @@ function DatabaseRow({ id, db, info }: { id: string; db: string; info: string })
                 <button type="button" role="treeitem" aria-current={active || undefined} onClick={() => void mongo.openCollection({ id, db, collection: c.name })} className={cn(row, 'pl-12', active && 'bg-cyan/8 text-text-primary')}>
                   <Table2 size={12} className="shrink-0 text-text-muted" />
                   <span className="truncate">{c.name}</span>
-                  {c.type !== 'collection' && <span className="ml-auto shrink-0 font-mono text-[10px] text-text-muted">{c.type}</span>}
+                  {c.type !== 'collection' && <span className="ml-auto shrink-0 font-mono text-[11px] text-text-muted">{c.type}</span>}
                 </button>
                 <button type="button" aria-label={t.mongo.drop(c.name)} title={t.mongo.drop(c.name)} onClick={() => setDropping(c.name)} className={cn(tool, 'hidden group-hover:flex')}>
                   <Trash2 size={11} />
@@ -135,7 +135,7 @@ export function MongoPanel() {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex items-center px-2 pb-2">
-        <p className="mr-auto font-mono text-[10px] uppercase tracking-[0.14em] text-text-muted">{t.mongo.title}</p>
+        <p className="mr-auto font-sans text-[12px] font-medium text-text-muted">{t.mongo.title}</p>
         <button type="button" aria-label={t.mongo.add} title={t.mongo.add} onClick={() => mongo.setAdding(!adding)} className={tool}>
           <Plus size={13} />
         </button>

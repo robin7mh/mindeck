@@ -196,7 +196,7 @@ export function NewChatDialog({ prompt: initialPrompt = '', onOpenSettings }: { 
           <button
             type="submit"
             disabled={!choice || busy || (isAgent && !projectId)}
-            className="flex items-center gap-1.5 rounded-md border border-cyan/50 bg-cyan/[0.1] px-3 py-1.5 font-sans text-[12px] font-medium text-cyan hover:bg-cyan/16 disabled:opacity-40"
+            className="flex items-center gap-1.5 rounded-md border border-cyan bg-cyan px-3 py-1.5 font-sans text-[12px] font-semibold text-void hover:opacity-90 disabled:opacity-40"
           >
             {busy && <Loader2 size={13} className="animate-spin" />} {t.agents.start}
           </button>

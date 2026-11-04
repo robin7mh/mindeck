@@ -371,7 +371,7 @@ export function GraphView({ graph, style, folderSlots, activeId, onOpen, onOpenG
           {legend.map(([folder, slot]) => (
             <div key={folder || '.'} className="flex items-center gap-2">
               <span className="h-2 w-2 rounded-full" style={{ background: slotColor(slot) }} />
-              <span className="font-mono text-[10px] text-text-secondary">{folder || t.memory.vaultRoot}</span>
+              <span className="font-mono text-[11px] text-text-secondary">{folder || t.memory.vaultRoot}</span>
             </div>
           ))}
         </div>
@@ -385,7 +385,7 @@ export function GraphView({ graph, style, folderSlots, activeId, onOpen, onOpenG
           type="button"
           title={t.memory.fit}
           onClick={() => fit.current()}
-          className="flex h-7 w-7 items-center justify-center rounded-md border border-hud/60 bg-surface/70 text-text-muted transition-colors hover:border-cyan/50 hover:text-cyan"
+          className="flex h-7 w-7 items-center justify-center rounded-md border border-hud/60 bg-surface/70 text-text-muted transition-colors hover:border-hud-strong/80 hover:text-text-primary"
         >
           <Maximize2 size={13} />
         </button>

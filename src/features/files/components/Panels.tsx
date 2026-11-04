@@ -128,7 +128,7 @@ export function ConflictDialog() {
           <button type="button" onClick={() => decide('replace')} className={cn(button, 'border-danger/50 text-danger hover:bg-danger/10')}>
             {t.files.replace}
           </button>
-          <button type="button" autoFocus onClick={() => decide('keep')} className={cn(button, 'border-cyan/50 bg-cyan/10 text-cyan hover:bg-cyan/20')}>
+          <button type="button" autoFocus onClick={() => decide('keep')} className={cn(button, 'border-cyan bg-cyan text-void hover:opacity-90')}>
             {t.files.keepBoth}
           </button>
         </div>

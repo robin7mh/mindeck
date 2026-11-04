@@ -61,7 +61,7 @@ function SavedRow({ w, index, current, onApply }: { w: SavedWorkspace; index: nu
         className={cn('flex min-w-0 flex-1 items-center gap-2 rounded-sm px-1.5 py-1.5 text-left transition-colors hover:text-text-primary', current ? 'text-cyan' : 'text-text-secondary')}
       >
         <span className="flex-1 truncate font-sans text-[12.5px]">{w.name}</span>
-        {keys && <span className="font-mono text-[10px] text-text-muted">{keys}</span>}
+        {keys && <span className="font-mono text-[11px] text-text-muted">{keys}</span>}
       </button>
       <button type="button" aria-label={t.update(w.name)} title={t.update(w.name)} onClick={() => s().update(w.id)} className={icon}>
         <Save size={13} />
@@ -155,11 +155,11 @@ export function WorkspaceMenu() {
         title={t.menu}
         onClick={() => setPlace((p) => (p ? null : placeUnder(ref.current!)))}
         className={cn(
-          'flex h-7 items-center gap-1.5 rounded-md border px-2 transition-colors',
-          open ? 'border-cyan/50 text-cyan' : 'border-hud/60 text-text-secondary hover:border-hud-strong/70 hover:text-text-primary'
+          'flex h-8 items-center gap-1.5 rounded-md border px-2.5 transition-colors',
+          open ? 'border-hud/50 bg-elevated text-text-primary' : 'border-transparent text-text-secondary hover:bg-elevated hover:text-text-primary'
         )}
       >
-        <LayoutGrid size={14} />
+        <LayoutGrid size={16} strokeWidth={1.75} />
         {current && <span className="hidden max-w-[120px] truncate font-sans text-[12px] lg:inline">{current.name}</span>}
       </button>
       {place &&
@@ -169,7 +169,7 @@ export function WorkspaceMenu() {
             role="dialog"
             aria-label={t.menu}
             style={place}
-            className="no-drag fixed z-70 w-80 space-y-3 rounded-lg border border-hud/70 bg-panel/95 p-3 shadow-xl shadow-black/40 backdrop-blur-md"
+            className="no-drag fixed z-70 w-80 space-y-3 rounded-lg border border-hud/50 bg-panel p-3 shadow-xl shadow-black/40 backdrop-blur-md"
           >
             <section>
               <TechLabel className="text-text-muted">{t.layout}</TechLabel>
@@ -209,7 +209,7 @@ export function WorkspaceMenu() {
                 <button
                   type="submit"
                   disabled={!name.trim()}
-                  className="shrink-0 rounded-md border border-cyan/40 px-2.5 py-1 font-sans text-[12px] text-cyan transition-colors hover:bg-cyan/8 disabled:pointer-events-none disabled:opacity-40"
+                  className="shrink-0 rounded-md border border-cyan px-2.5 py-1 font-sans text-[12px] bg-cyan text-void transition-colors hover:opacity-90 disabled:pointer-events-none disabled:opacity-40"
                 >
                   {t.saveAs}
                 </button>
@@ -226,7 +226,7 @@ export function WorkspaceMenu() {
                 <span className="flex items-center gap-1.5">
                   <Shrink size={13} /> {t.zen}
                 </span>
-                <span className="font-mono text-[10px] text-text-muted">{keyLabel('zen')}</span>
+                <span className="font-mono text-[11px] text-text-muted">{keyLabel('zen')}</span>
               </button>
               <button
                 type="button"
@@ -236,7 +236,7 @@ export function WorkspaceMenu() {
                 <span className="flex items-center gap-1.5">
                   <Expand size={13} /> {t.fullScreen}
                 </span>
-                <span className="font-mono text-[10px] text-text-muted">{keyLabel('fullscreen')}</span>
+                <span className="font-mono text-[11px] text-text-muted">{keyLabel('fullscreen')}</span>
               </button>
             </section>
           </div>,

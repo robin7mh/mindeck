@@ -9,7 +9,7 @@ import { useBrowser } from '../store'
 const NONE: BrowserExtension[] = []
 
 const small =
-  'flex items-center gap-1 rounded-md border border-hud/60 px-2 py-1 font-sans text-[11.5px] text-text-secondary transition-colors hover:border-cyan/50 hover:text-cyan disabled:pointer-events-none disabled:opacity-40'
+  'flex items-center gap-1 rounded-md border border-hud/60 px-2 py-1 font-sans text-[11.5px] text-text-secondary transition-colors hover:border-hud-strong/80 hover:text-text-primary disabled:pointer-events-none disabled:opacity-40'
 
 function Icon({ ext, size = 16 }: { ext: BrowserExtension; size?: number }) {
   if (ext.icon) return <img src={ext.icon} alt="" style={{ width: size, height: size }} className="shrink-0 object-contain" draggable={false} />
@@ -102,7 +102,7 @@ function ExtensionRow({ ext }: { ext: BrowserExtension }) {
           {ext.permissions.length > 0 && (
             <ul className="flex flex-wrap gap-1">
               {ext.permissions.map((p) => (
-                <li key={p} className={cn('rounded-sm border px-1 font-mono text-[10px]', ext.unsupported.includes(p) ? 'border-amber/40 text-amber' : 'border-hud/50')}>
+                <li key={p} className={cn('rounded-sm border px-1 font-mono text-[11px]', ext.unsupported.includes(p) ? 'border-amber/40 text-amber' : 'border-hud/50')}>
                   {p}
                 </li>
               ))}

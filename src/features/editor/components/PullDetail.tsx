@@ -24,7 +24,7 @@ function Markdown({ text }: { text: string }) {
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section aria-label={title} className="space-y-1.5">
-      <h3 className="font-mono text-[10px] uppercase tracking-[0.14em] text-text-muted">{title}</h3>
+      <h3 className="font-sans text-[12px] font-medium text-text-muted">{title}</h3>
       {children}
     </section>
   )
@@ -143,7 +143,7 @@ export function PullDetail() {
                   <li key={`${c.name}-${i}`} className="flex items-center gap-1.5 font-sans text-[12px] text-text-secondary">
                     <Icon size={13} className={cn('shrink-0', color)} aria-label={t.github.checkStates[c.state]} />
                     {c.url ? (
-                      <a href={c.url} target="_blank" rel="noreferrer" className="truncate hover:text-cyan hover:underline">
+                      <a href={c.url} target="_blank" rel="noreferrer" className="truncate hover:text-text-primary hover:underline">
                         {c.name}
                       </a>
                     ) : (

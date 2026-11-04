@@ -6,7 +6,7 @@ import { isMac } from '@/lib/platform'
 import { formatBytes } from '@/features/files/kinds'
 import { useBrowser } from '../store'
 
-const action = 'rounded-sm px-1.5 py-0.5 font-sans text-[11px] text-text-secondary transition-colors hover:bg-elevated hover:text-cyan'
+const action = 'rounded-sm px-1.5 py-0.5 font-sans text-[11px] text-text-secondary transition-colors hover:bg-elevated hover:text-text-primary'
 
 /** Downloads of this session: progress, then open or show in the folder. */
 export function DownloadsPanel() {

@@ -32,12 +32,13 @@ export default {
         mono: ['JetBrains Mono', 'ui-monospace', 'SFMono-Regular', 'monospace']
       },
       boxShadow: {
-        glow: '0 0 0 1px rgb(var(--accent-cyan) / 0.25), 0 0 18px -2px rgb(var(--accent-cyan) / calc(0.35 * var(--glow)))',
-        'glow-sm': '0 0 12px -2px rgb(var(--accent-cyan) / calc(0.30 * var(--glow)))',
-        panel: '0 1px 0 0 rgb(var(--border-hud) / 0.6), inset 0 1px 0 0 rgb(255 255 255 / 0.02)'
+        // Focus/selection ring instead of a neon glow.
+        glow: '0 0 0 3px rgb(var(--accent-cyan) / 0.18)',
+        'glow-sm': '0 0 0 2px rgb(var(--accent-cyan) / 0.14)',
+        panel: '0 1px 2px rgb(0 0 0 / 0.12), 0 12px 32px -16px rgb(0 0 0 / 0.45)'
       },
       letterSpacing: {
-        label: '0.18em'
+        label: '0'
       },
       keyframes: {
         // Transform + opacity only: the compositor runs it without repainting.

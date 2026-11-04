@@ -62,7 +62,7 @@ function Search() {
 
   return (
     <div role="dialog" aria-label={t.library.tabSearch} className="fixed inset-0 z-60 flex justify-center bg-void/40 pt-[12vh]" onMouseDown={close}>
-      <div className="h-fit w-[min(600px,90vw)] overflow-hidden rounded-lg border border-hud/70 bg-panel/95 shadow-2xl shadow-black/50 backdrop-blur-md" onMouseDown={(e) => e.stopPropagation()}>
+      <div className="h-fit w-[min(600px,90vw)] overflow-hidden rounded-lg border border-hud/50 bg-panel shadow-2xl shadow-black/50 backdrop-blur-md" onMouseDown={(e) => e.stopPropagation()}>
         <input
           autoFocus
           aria-label={t.library.tabSearch}
@@ -87,7 +87,7 @@ function Search() {
             const Icon = ICON[hit.kind]
             return (
               <li key={hit.key} role="presentation">
-                {(i === 0 || hits[i - 1].kind !== hit.kind) && <p className="px-2.5 pb-0.5 pt-2 font-mono text-[10px] uppercase tracking-wider text-text-muted">{t.library.sections[hit.kind]}</p>}
+                {(i === 0 || hits[i - 1].kind !== hit.kind) && <p className="px-2.5 pb-0.5 pt-2 font-sans text-[12px] font-medium text-text-muted">{t.library.sections[hit.kind]}</p>}
                 <div
                   role="option"
                   aria-selected={i === active}

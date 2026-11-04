@@ -857,9 +857,27 @@ describe('CloudService', () => {
   it('shares one heartbeat between overlapping refreshes', async () => {
     const t = await setup()
     await t.signIn()
-    const before = t.cloud.s.calls.filter((c) => c.path === '/v1/license/heartbeat').length
+    const beats = () => t.cloud.s.calls.filter((c) => c.path === '/v1/license/heartbeat').length
+    const before = beats()
     await Promise.all([t.svc.refresh(), t.svc.refresh()])
-    expect(t.cloud.s.calls.filter((c) => c.path === '/v1/license/heartbeat').length).toBe(before + 1)
+    expect(beats()).toBe(before + 1)
+
+    // However far apart they get on the way: the second one's answer comes only after the first has beaten.
+    const answer = t.cloud.fetch.getMockImplementation()!
+    let release = () => {}
+    const held = new Promise<void>((resolve) => (release = resolve))
+    let looks = 0
+    t.cloud.fetch.mockImplementation(async (url, init) => {
+      if (String(url).endsWith('/v1/me') && (looks += 1) === 2) await held
+      return answer(url, init)
+    })
+    t.advance(60)
+    const first = t.svc.refresh()
+    const second = t.svc.refresh()
+    await first
+    release()
+    await second
+    expect(beats()).toBe(before + 2)
   })
 
   it('resends the confirmation, asks for a reset link and opens a checkout', async () => {

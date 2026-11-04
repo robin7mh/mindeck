@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
-import { Columns2, PanelBottom, PanelLeftClose, PanelLeftOpen, SquareArrowOutUpRight, UserRound } from 'lucide-react'
-import { NAV_ITEMS } from '@/data/navigation'
-import type { ModuleId } from '@/types'
+import { Columns2, PanelBottom, PanelLeftClose, PanelLeftOpen, Plus, SquareArrowOutUpRight, UserRound } from 'lucide-react'
+import { NAV_GROUPS, NAV_ITEMS } from '@/data/navigation'
+import type { ModuleId, NavItem } from '@/types'
 import { cn } from '@/lib/cn'
 import { useT } from '@/lib/i18n'
 import { useOverlay } from '@/lib/overlay'
 import { relayout } from '@/lib/relayout'
-import { TechLabel } from '@/components/ui/TechLabel'
+import { useAgents } from '@/features/agents/sessions'
 import { useCloud } from '@/features/cloud/store'
 import { macKeys } from '@/features/workspace/keys'
 import { dropSides } from '@/features/workspace/layout'
@@ -73,7 +73,7 @@ function ModuleMenu({ id, at, onSelect, onClose }: { id: ModuleId; at: { x: numb
         const at = items.indexOf(document.activeElement as HTMLElement)
         items[(at + (e.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length].focus()
       }}
-      className="fixed z-70 min-w-[230px] rounded-lg border border-hud/70 bg-panel/95 p-1 shadow-xl shadow-black/40 backdrop-blur-md"
+      className="fixed z-70 min-w-[230px] rounded-md border border-hud/50 bg-panel p-1 shadow-xl shadow-black/40"
     >
       <button type="button" role="menuitem" onClick={run(() => onSelect(id))} className={item}>
         <SquareArrowOutUpRight size={13} className="shrink-0" />
@@ -82,7 +82,7 @@ function ModuleMenu({ id, at, onSelect, onClose }: { id: ModuleId; at: { x: numb
       <button type="button" role="menuitem" onClick={run(() => openBeside(id))} className={item}>
         {right ? <Columns2 size={13} className="shrink-0" /> : <PanelBottom size={13} className="shrink-0" />}
         <span className="flex-1">{right ? t.workspace.openRight : t.workspace.openNewPane}</span>
-        <span className="font-mono text-[10px] text-text-muted">{t.workspace.modClick(macKeys() ? '⌘' : 'Ctrl')}</span>
+        <span className="font-mono text-[11px] text-text-muted">{t.workspace.modClick(macKeys() ? '⌘' : 'Ctrl')}</span>
       </button>
     </div>
   )
@@ -130,106 +130,114 @@ export function SideNavigation({
     const box = e.currentTarget.getBoundingClientRect()
     setMenu({ id, x: e.clientX || box.right, y: e.clientY || box.top })
   }
+  const settings = NAV_ITEMS.find((i) => i.id === 'settings')!
+  const byId = new Map(NAV_ITEMS.map((i) => [i.id, i]))
+
+  const navButton = (item: NavItem) => {
+    const isActive = item.id === active
+    const Icon = item.icon
+    const label = t.nav[item.id]
+    return (
+      <button
+        key={item.id}
+        type="button"
+        onClick={click(item.id)}
+        onContextMenu={contextMenu(item.id)}
+        draggable
+        onDragStart={(e) => startModuleDrag(e, item.id)}
+        onDragEnd={endModuleDrag}
+        title={label}
+        aria-current={isActive ? 'page' : undefined}
+        className={cn(
+          'group relative flex h-[34px] shrink-0 items-center gap-2.5 rounded-sm px-2.5 text-left transition-colors',
+          collapsed && 'justify-center px-0',
+          isActive ? 'bg-elevated text-text-primary' : 'text-text-muted hover:bg-elevated/60 hover:text-text-primary'
+        )}
+      >
+        <Icon size={17} strokeWidth={1.75} className={cn('shrink-0 transition-colors', isActive ? 'text-cyan' : 'text-text-muted group-hover:text-text-secondary')} />
+        {!collapsed && <span className={cn('flex-1 truncate font-sans text-[13.5px]', isActive ? 'font-medium' : 'text-text-secondary group-hover:text-text-primary')}>{label}</span>}
+        {!isActive && open.includes(item.id) && (
+          <span data-testid={`open-${item.id}`} className={cn('h-1.5 w-1.5 rounded-full bg-cyan/70', collapsed && 'absolute right-1.5 top-1.5')} />
+        )}
+      </button>
+    )
+  }
+
   return (
-    <nav className={cn('flex h-full shrink-0 flex-col items-stretch gap-1 border-r border-hud/70 bg-surface/40 px-2 py-3 backdrop-blur-xs', collapsed ? 'w-14' : 'w-52')}>
-      <div className={cn('mb-1 flex items-center', collapsed ? 'justify-center' : 'justify-between pl-2')}>
-        {!collapsed && <TechLabel className="text-text-muted">{t.nav.modules}</TechLabel>}
+    <nav aria-label={t.nav.modules} className={cn('flex h-full shrink-0 flex-col items-stretch gap-0.5 overflow-y-auto border-r border-hud/40 bg-surface px-2.5 py-3', collapsed ? 'w-[60px]' : 'w-[232px]')}>
+      <div className={cn('mb-3 flex items-center gap-1.5', collapsed && 'flex-col')}>
+        <button
+          type="button"
+          onClick={() => {
+            onSelect('agents')
+            useAgents.getState().openDialog()
+          }}
+          title={t.nav.newAgent}
+          aria-label={collapsed ? t.nav.newAgent : undefined}
+          className={cn(
+            'flex h-9 items-center gap-2.5 rounded-md border border-hud/60 bg-panel text-text-primary transition-colors hover:border-hud-strong/70',
+            collapsed ? 'w-9 justify-center' : 'flex-1 px-3'
+          )}
+        >
+          <Plus size={16} strokeWidth={2} className="shrink-0" />
+          {!collapsed && <span className="flex-1 truncate text-left font-sans text-[13.5px] font-medium">{t.nav.newAgent}</span>}
+        </button>
         <button
           type="button"
           onClick={toggle}
           aria-expanded={!collapsed}
           aria-label={collapsed ? t.nav.expand : t.nav.collapse}
           title={collapsed ? t.nav.expand : t.nav.collapse}
-          className="flex h-6 w-6 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-elevated/60 hover:text-cyan"
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-elevated hover:text-text-primary"
         >
-          {collapsed ? <PanelLeftOpen size={14} /> : <PanelLeftClose size={14} />}
+          {collapsed ? <PanelLeftOpen size={17} strokeWidth={1.75} /> : <PanelLeftClose size={17} strokeWidth={1.75} />}
         </button>
       </div>
 
-      {NAV_ITEMS.map((item) => {
-        const isActive = item.id === active
-        const Icon = item.icon
-        const label = t.nav[item.id]
-        return (
-          <button
-            key={item.id}
-            type="button"
-            onClick={click(item.id)}
-            onContextMenu={contextMenu(item.id)}
-            draggable
-            onDragStart={(e) => startModuleDrag(e, item.id)}
-            onDragEnd={endModuleDrag}
-            title={label}
-            className={cn(
-              'group relative flex items-center gap-3 rounded-md px-2.5 py-2 text-left transition-colors',
-              isActive ? 'text-text-primary' : 'text-text-muted hover:text-text-secondary'
-            )}
-          >
-            {isActive && (
-              <span
-                className="absolute inset-0 rounded-md border border-cyan/40 bg-cyan/[0.07]"
-                style={{ boxShadow: 'inset 0 0 18px rgb(var(--accent-cyan) / 0.10)' }}
-              />
-            )}
-            {/* left accent tick */}
-            <span
-              className={cn(
-                'absolute left-0 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-full',
-                isActive ? 'bg-cyan opacity-100' : 'bg-transparent opacity-0'
-              )}
-            />
-            <Icon
-              size={18}
-              strokeWidth={1.8}
-              className={cn(
-                'relative z-10 shrink-0 transition-colors',
-                isActive && 'text-cyan'
-              )}
-            />
-            {!collapsed && (
-              <span className="relative z-10 flex flex-1 items-center justify-between">
-                <span className="font-sans text-[13px] font-medium">{label}</span>
-              </span>
-            )}
-            {!isActive && open.includes(item.id) && (
-              <span data-testid={`open-${item.id}`} className={cn('h-1.5 w-1.5 rounded-full bg-cyan/70', collapsed && 'absolute right-1 top-1')} />
-            )}
-          </button>
-        )
-      })}
+      {NAV_GROUPS.map((group, i) => (
+        <div key={group.id} className={cn('flex flex-col gap-0.5', i > 0 && 'mt-3')}>
+          {collapsed ? (
+            i > 0 && <div className="mx-2 mb-2 h-px bg-hud/40" />
+          ) : (
+            <div className="px-2.5 pb-1.5 font-sans text-[12px] font-medium text-text-muted">{t.nav.groups[group.id]}</div>
+          )}
+          {group.items.map((id) => navButton(byId.get(id)!))}
+        </div>
+      ))}
 
       {menu && <ModuleMenu id={menu.id} at={menu} onSelect={onSelect} onClose={closeMenu} />}
 
-      {/* Profile: the Mindeck account, licence and language */}
-      <button
-        type="button"
-        onClick={() => onSelect('account')}
-        title={t.nav.account}
-        aria-label={t.nav.account}
-        className={cn(
-          'mt-auto flex items-center gap-2.5 rounded-md border px-1.5 py-1.5 text-left transition-colors',
-          profileActive
-            ? 'border-cyan/40 bg-cyan/[0.07] text-text-primary'
-            : 'border-hud/50 bg-surface/40 text-text-muted hover:border-hud-strong/70 hover:text-text-secondary'
-        )}
-      >
-        <span
+      <div className="mt-auto flex flex-col gap-0.5 pt-3">
+        {navButton(settings)}
+        <div className="my-2 h-px bg-hud/40" />
+        {/* Profile: the Mindeck account, licence and language */}
+        <button
+          type="button"
+          onClick={() => onSelect('account')}
+          title={t.nav.account}
+          aria-label={t.nav.account}
           className={cn(
-            'flex h-7 w-7 shrink-0 items-center justify-center rounded-full border',
-            profileActive ? 'border-cyan/50 text-cyan' : 'border-hud/70'
+            'flex items-center gap-2.5 rounded-md border px-2 py-2 text-left transition-colors',
+            collapsed && 'justify-center px-0',
+            profileActive ? 'border-cyan/40 bg-elevated text-text-primary' : 'border-transparent text-text-muted hover:bg-elevated/60 hover:text-text-secondary'
           )}
         >
-          <UserRound size={15} strokeWidth={1.8} />
-        </span>
-        {!collapsed && (
-          <span className="min-w-0 flex-1">
-            <span className="block truncate font-sans text-[13px] font-medium text-text-primary">
-              {account?.name ?? t.nav.account}
-            </span>
-            <span className="block truncate font-mono text-[10px] text-text-muted">{account?.email ?? t.nav.notSignedIn}</span>
+          <span
+            className={cn(
+              'flex h-7 w-7 shrink-0 items-center justify-center rounded-full',
+              profileActive ? 'bg-cyan text-void' : 'bg-elevated text-text-secondary'
+            )}
+          >
+            <UserRound size={15} strokeWidth={1.8} />
           </span>
-        )}
-      </button>
+          {!collapsed && (
+            <span className="min-w-0 flex-1">
+              <span className="block truncate font-sans text-[13px] font-medium text-text-primary">{account?.name ?? t.nav.account}</span>
+              <span className="block truncate font-sans text-[12px] text-text-muted">{account?.email ?? t.nav.notSignedIn}</span>
+            </span>
+          )}
+        </button>
+      </div>
     </nav>
   )
 }

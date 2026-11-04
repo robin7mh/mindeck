@@ -219,7 +219,7 @@ export function Omnibox({ tab }: { tab?: BrowserTab }) {
         <ul
           role="listbox"
           aria-label={t.browser.address}
-          className="absolute left-0 right-0 top-full z-50 mt-1 overflow-hidden rounded-lg border border-hud/70 bg-panel/95 p-1 shadow-xl shadow-black/40 backdrop-blur-md"
+          className="absolute left-0 right-0 top-full z-50 mt-1 overflow-hidden rounded-md border border-hud/50 bg-panel p-1 shadow-xl shadow-black/40"
         >
           {items.map((s, i) => {
             const ItemIcon = KIND_ICON[s.kind]

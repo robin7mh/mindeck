@@ -7,7 +7,7 @@ import { cn } from '@/lib/cn'
 import { useT } from '@/lib/i18n'
 import { useContextStore, useProjectContextEntry } from '@/features/context/store'
 
-const chip = 'rounded-sm border border-hud/60 bg-elevated/40 px-1.5 py-0.5 font-mono text-[10px] text-text-secondary'
+const chip = 'rounded-sm border border-hud/60 bg-elevated/40 px-1.5 py-0.5 font-mono text-[11px] text-text-secondary'
 
 /**
  * Project context (P3): the deterministic structural scan — files, config,
@@ -34,12 +34,12 @@ export function ContextSection({ projectId }: { projectId: string }) {
     <section>
       <div className="mb-1.5 flex items-center gap-2">
         <TechLabel className="text-text-secondary">{t.projects.context}</TechLabel>
-        {c && <span className="font-mono text-[10px] text-text-muted">{t.projects.indexed(relativeTime(c.indexedAt))}</span>}
+        {c && <span className="font-mono text-[11px] text-text-muted">{t.projects.indexed(relativeTime(c.indexedAt))}</span>}
         <button
           type="button"
           onClick={() => void reindex(projectId)}
           disabled={entry.indexing}
-          className="ml-auto flex items-center gap-1.5 rounded-sm border border-hud/60 px-2 py-0.5 font-sans text-[11px] text-text-secondary hover:border-cyan/50 hover:text-cyan disabled:opacity-50"
+          className="ml-auto flex items-center gap-1.5 rounded-sm border border-hud/60 px-2 py-0.5 font-sans text-[11px] text-text-secondary hover:border-hud-strong/80 hover:text-text-primary disabled:opacity-50"
         >
           {entry.indexing ? <Loader2 size={11} className="animate-spin" /> : c ? <RefreshCw size={11} /> : <ScanSearch size={11} />}
           {entry.indexing ? t.projects.scanning(entry.progress?.filesScanned) : c ? t.projects.reindex : t.projects.analyze}
@@ -102,7 +102,7 @@ export function ContextSection({ projectId }: { projectId: string }) {
                         type="button"
                         title={t.projects.openInEditor}
                         onClick={() => void ipc('projects:openFile', { id: projectId, file: todo.file, line: todo.line }).catch(() => {})}
-                        className="shrink-0 text-text-muted hover:text-cyan"
+                        className="shrink-0 text-text-muted hover:text-text-primary"
                       >
                         {todo.file}:{todo.line}
                       </button>

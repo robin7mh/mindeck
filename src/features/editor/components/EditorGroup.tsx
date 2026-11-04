@@ -18,7 +18,7 @@ const NotebookView = lazy(() => import('./NotebookView'))
 const isNotebook = (tab?: { path: string }) => !!tab?.path.toLowerCase().endsWith('.ipynb')
 
 const button = 'flex items-center gap-1.5 rounded-md border px-2.5 py-1 font-sans text-[12px] font-medium transition-colors'
-export const primary = cn(button, 'border-cyan/40 bg-cyan/6 text-cyan hover:bg-cyan/12')
+export const primary = cn(button, 'border-cyan bg-cyan text-void hover:opacity-90')
 export const quiet = cn(button, 'border-hud/60 text-text-secondary hover:border-hud-strong hover:text-text-primary')
 
 export function Banner({ tone, children }: { tone: 'warn' | 'info'; children: ReactNode }) {

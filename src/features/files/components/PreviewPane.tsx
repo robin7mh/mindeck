@@ -12,7 +12,7 @@ import { useFiles } from '../store'
 import { FileIcon } from './FileIcon'
 
 const action =
-  'flex items-center justify-center gap-1.5 rounded-md border border-hud/60 px-2.5 py-1.5 font-sans text-[12px] text-text-secondary transition-colors hover:border-cyan/50 hover:text-cyan'
+  'flex items-center justify-center gap-1.5 rounded-md border border-hud/60 px-2.5 py-1.5 font-sans text-[12px] text-text-secondary transition-colors hover:border-hud-strong/80 hover:text-text-primary'
 
 /** The OS's picture of a file (PDF pages, documents, …), else its icon. */
 function SystemThumb({ preview }: { preview: FinderPreview }) {

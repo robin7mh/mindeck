@@ -5,7 +5,7 @@
  * the steps it reaches in `data-pane`. Each is its window breakpoint minus
  * the side navigation, so a module alone in the workspace looks as before.
  */
-export const PANE_STEPS = { sm: 560, md: 690, lg: 940, xl: 1050, '2xl': 1300 } as const
+export const PANE_STEPS = { sm: 536, md: 666, lg: 916, xl: 1026, '2xl': 1276 } as const
 
 /** The `data-pane` value of a pane `width` pixels wide. */
 export function paneSteps(width: number): string {

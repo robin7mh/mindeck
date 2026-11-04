@@ -123,7 +123,7 @@ export function XtermPane({ tab, label, active, framed, onNavigate }: PaneProps)
               className={cn('h-1.5 w-1.5 shrink-0 rounded-full', tab.exitCode === undefined ? 'bg-green' : 'bg-text-muted')}
             />
             <span className={cn('font-mono text-[11px]', active ? 'text-text-primary' : 'text-text-muted')}>{label}</span>
-            <span className="min-w-0 flex-1 truncate font-mono text-[10px] text-text-muted">
+            <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-text-muted">
               {tab.cwdLabel !== tab.title && tab.cwdLabel}
             </span>
             <button

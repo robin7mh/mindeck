@@ -24,7 +24,7 @@ const TONE: Record<ScmChange, string> = {
 
 const icon = 'flex h-6 w-6 shrink-0 items-center justify-center rounded-sm text-text-muted transition-colors hover:bg-elevated hover:text-text-primary disabled:opacity-40'
 const syncButton =
-  'flex flex-1 items-center justify-center gap-1 rounded-md border border-hud/60 px-2 py-1 font-sans text-[11.5px] text-text-secondary transition-colors hover:border-cyan/50 hover:text-cyan disabled:opacity-40'
+  'flex flex-1 items-center justify-center gap-1 rounded-md border border-hud/60 px-2 py-1 font-sans text-[11.5px] text-text-secondary transition-colors hover:border-hud-strong/80 hover:text-text-primary disabled:opacity-40'
 
 type Section = 'conflicts' | 'staged' | 'changes'
 
@@ -290,7 +290,7 @@ export function ScmPanel({ readOnly = false }: { readOnly?: boolean }) {
             type="button"
             disabled={!canCommit}
             onClick={() => void scm.commit()}
-            className="flex flex-1 items-center justify-center gap-1.5 rounded-md border border-cyan/50 bg-cyan/[0.1] px-2 py-1.5 font-sans text-[12px] font-medium text-cyan transition-colors hover:bg-cyan/16 disabled:opacity-40"
+            className="flex flex-1 items-center justify-center gap-1.5 rounded-md border border-cyan bg-cyan px-2 py-1.5 font-sans text-[12px] font-semibold text-void transition-colors hover:opacity-90 disabled:opacity-40"
           >
             {busy === 'commit' ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} {staged.length || amend ? t.scm.commit : t.scm.commitAll}
           </button>

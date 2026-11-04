@@ -123,7 +123,7 @@ function TitleInput({ title, onRename }: { title: string; onRename: (title: stri
 const START_GRACE_MS = 3000
 
 const iconButton =
-  'flex h-7 items-center gap-1 rounded-md border border-hud/60 px-2 font-sans text-[11.5px] text-text-secondary transition-colors hover:border-cyan/50 hover:text-cyan'
+  'flex h-7 items-center gap-1 rounded-md border border-hud/60 px-2 font-sans text-[11.5px] text-text-secondary transition-colors hover:border-hud-strong/80 hover:text-text-primary'
 
 /**
  * One coding agent session as a chat: the user's messages, the agent's answers

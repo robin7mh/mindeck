@@ -11,7 +11,7 @@ import { hostOf } from '../url'
 
 const bar = 'flex shrink-0 items-center gap-2 border-b px-3 py-1.5'
 const small =
-  'flex items-center gap-1 rounded-md border border-hud/60 px-2 py-0.5 font-sans text-[11.5px] text-text-secondary transition-colors hover:border-cyan/50 hover:text-cyan'
+  'flex items-center gap-1 rounded-md border border-hud/60 px-2 py-0.5 font-sans text-[11.5px] text-text-secondary transition-colors hover:border-hud-strong/80 hover:text-text-primary'
 
 /** In-page search (⌘F): Enter goes on, ⇧Enter back, Escape closes. */
 export function FindBar({ tab }: { tab: BrowserTab }) {

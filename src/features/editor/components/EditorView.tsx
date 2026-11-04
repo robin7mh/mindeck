@@ -526,7 +526,7 @@ export function EditorView({ active, onNavigate }: { active: boolean; onNavigate
             type="button"
             aria-label={t.editor.refreshFiles}
             onClick={() => void useEditor.getState().refreshTree()}
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-elevated/60 hover:text-cyan"
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-elevated/60 hover:text-text-primary"
           >
             <RefreshCw size={13} />
           </button>

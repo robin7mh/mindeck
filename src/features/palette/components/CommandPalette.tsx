@@ -11,7 +11,7 @@ import { usePalette } from '../store'
 
 /** A key hint in the footer. */
 function Kbd({ children }: { children: ReactNode }) {
-  return <kbd className="rounded-sm border border-hud/70 bg-surface/70 px-1 font-mono text-[10px] text-text-secondary">{children}</kbd>
+  return <kbd className="rounded-sm border border-hud/70 bg-surface/70 px-1 font-mono text-[11px] text-text-secondary">{children}</kbd>
 }
 
 /**
@@ -83,7 +83,7 @@ export function CommandPalette() {
     )
   }
   const heading = (label: string) => (
-    <li role="presentation" className="px-2.5 pb-1 pt-2 font-mono text-[10px] uppercase tracking-wider text-text-muted">
+    <li role="presentation" className="px-2.5 pb-1 pt-2 font-sans text-[12px] font-medium text-text-muted">
       {label}
     </li>
   )
@@ -95,7 +95,7 @@ export function CommandPalette() {
         aria-modal="true"
         aria-label={c.title}
         onMouseDown={(e) => e.stopPropagation()}
-        className="flex h-fit max-h-[70vh] w-[min(640px,100%)] flex-col overflow-hidden rounded-lg border border-hud/70 bg-panel/95 shadow-2xl shadow-black/50 backdrop-blur-md"
+        className="flex h-fit max-h-[70vh] w-[min(640px,100%)] flex-col overflow-hidden rounded-lg border border-hud/50 bg-panel shadow-2xl shadow-black/50 backdrop-blur-md"
       >
         <div className="flex items-center gap-2 border-b border-hud/60 px-3">
           <Search size={15} className="shrink-0 text-text-muted" />

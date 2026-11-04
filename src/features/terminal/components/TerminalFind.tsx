@@ -62,7 +62,7 @@ export function TerminalFind({ api, onClose }: { api: XtermApi; onClose: () => v
     <div
       role="search"
       onMouseDown={(e) => e.stopPropagation()}
-      className="absolute right-3 top-1.5 z-20 flex items-center gap-1 rounded-md border border-hud/70 bg-panel/95 px-1.5 py-1 shadow-lg shadow-black/30 backdrop-blur-md"
+      className="absolute right-3 top-1.5 z-20 flex items-center gap-1 rounded-md border border-hud/50 bg-panel px-1.5 py-1 shadow-lg shadow-black/30 backdrop-blur-md"
     >
       <input
         ref={input}

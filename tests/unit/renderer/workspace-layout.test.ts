@@ -365,5 +365,7 @@ describe('pane steps', () => {
     expect(paneSteps(0)).toBe('')
     expect(paneSteps(PANE_STEPS.md)).toBe('sm md')
     expect(paneSteps(5000)).toBe('sm md lg xl 2xl')
+    // A 1280 px window with the navigation open (232 px) is an `xl:` window: the agents' side panel lives there.
+    expect(paneSteps(1280 - 232)).toContain('xl')
   })
 })

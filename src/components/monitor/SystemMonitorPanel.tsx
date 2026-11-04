@@ -32,7 +32,7 @@ export function SystemMonitorPanel() {
       headerRight={
         <span className="flex items-center gap-1.5">
           <StatusDot tone={live ? 'ok' : 'muted'} pulse={live} />
-          <span className="font-mono text-[10px] text-text-muted">{live ? t.monitor.live : t.monitor.offline}</span>
+          <span className="font-mono text-[11px] text-text-muted">{live ? t.monitor.live : t.monitor.offline}</span>
         </span>
       }
       bodyClassName="flex flex-col gap-3 overflow-y-auto"

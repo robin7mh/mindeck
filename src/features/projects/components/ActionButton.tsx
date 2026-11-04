@@ -26,7 +26,7 @@ export function ActionButton({
     'flex items-center gap-2 rounded-md border px-3 py-2 font-sans text-[12px] font-medium transition-colors disabled:opacity-40',
     danger
       ? 'border-hud/60 text-text-secondary hover:border-danger/50 hover:text-danger'
-      : 'border-hud/60 text-text-secondary hover:border-cyan/50 hover:text-cyan'
+      : 'border-hud/60 text-text-secondary hover:border-hud-strong/80 hover:text-text-primary'
   )
   const body = (
     <>
