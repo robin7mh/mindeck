@@ -920,6 +920,33 @@ describe('CloudService', () => {
     expect(beats()).toBe(before + 1)
   })
 
+  it('a remote window left open asks for no trial lease once nobody is at the computer: each one costs trial time', async () => {
+    let away = false
+    const t = await setup({ isUserAway: () => away })
+    await t.signIn()
+    t.setUserActive(false)
+    t.svc.setRemoteSessions(1)
+    const leases = () => t.cloud.s.calls.filter((c) => c.path === '/v1/license/follower-lease').length
+    expect(await t.svc.followerLease('remote-1')).not.toBeNull()
+    const before = leases()
+
+    // Nobody here: the desktop's own lease runs out without a beat, and with it what it can hand over.
+    away = true
+    for (let minute = 0; minute < 8 * 60; minute += 1) {
+      t.advance(60)
+      await t.svc.tick()
+      await t.svc.followerLease('remote-1')
+    }
+    expect(t.svc.entitlement()).toBeNull()
+    expect(leases() - before).toBeLessThanOrEqual(1) // the own lease's last seconds, a whole night long
+
+    // Back at the computer: a beat, and the next hand-over has a lease again.
+    away = false
+    await t.svc.tick()
+    expect(await t.svc.followerLease('remote-1')).not.toBeNull()
+    expect(leases()).toBeGreaterThan(before)
+  })
+
   it('hands its entitlement to follower cores only while it is valid', async () => {
     const t = await setup()
     expect(t.svc.entitlement()).toBeNull()

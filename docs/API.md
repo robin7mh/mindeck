@@ -446,12 +446,15 @@ Content-Type: application/json
   The request carries `Mindeck-Keys` like every licence call.
 - **Claims:** those of the heartbeat's entitlement for this account (`sub`, `email`, `plan`, `active`,
   `reason`, `rem`, `iat`, `exp`) plus `"dev": "<installId from the request>"` and `"lease": "follower"`;
-  never `perpetual`. `exp` short: **1 hour** recommended, 24 hours at most. The desktop asks again
-  once half of it has passed (and hands the lease over every minute while the window is open).
+  never `perpetual`. `exp` short: **1 hour** recommended, 24 hours at most; a trial's 210 s, no longer
+  than its time left. The desktop asks again once half of it has passed (and hands the lease over
+  every minute while the window is open).
 - **When:** only for a session whose account may use Mindeck now (trial time left, a lifetime
   license); otherwise `{ "entitlement": null }` (or the same `active: false` lease the heartbeat would
-  give). A lease counts no trial time of its own — the desktop's heartbeat counts it while remote
-  windows are open.
+  give). A trial's lease is paid ahead, for as long as it lasts, on the heartbeat's clock: what a beat
+  has paid already isn't charged twice, and leases nobody beats for run the trial down all the same.
+  With nobody at the computer the desktop's own entitlement runs out, so it asks for none and the
+  core stops until someone is back (§6.1).
 - **Limits (cloud side, recommended):** a rate limit per account (e.g. 60 an hour) and a cap on
   distinct `installId`s per account and day (e.g. 10) — a lease bound to a core is still one per core.
 - **Errors:** `401` = the session is gone (the desktop signs out, as for every call). `404` = the
