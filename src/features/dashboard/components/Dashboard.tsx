@@ -4,7 +4,7 @@ import { ipc } from '@shared/ipc/client'
 import type { Project } from '@shared/types/project'
 import type { NoteMeta } from '@shared/types/memory'
 import type { ModuleId } from '@/types'
-import { NAV_ITEMS } from '@/data/navigation'
+import { Panel } from '@/components/ui/Panel'
 import { cn } from '@/lib/cn'
 import { StatusDot } from '@/components/ui/StatusDot'
 import { useClock } from '@/hooks/useClock'
@@ -16,6 +16,7 @@ import { folderColors } from '@/features/memory/store'
 import { slotColor } from '@/features/memory/components/GraphView'
 import { useT } from '@/lib/i18n'
 import { greeting, isoWeek, longDate } from '../i18n'
+import { HudClock } from './HudClock'
 
 /**
  * Core: the personal HUD. Greeting, date and a calm clock, plus three tiles
@@ -34,53 +35,37 @@ export function Dashboard({ onNavigate }: { onNavigate: (id: ModuleId) => void }
   }, [])
 
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto rounded-lg">
-      <div className="mx-auto flex w-full max-w-[1040px] flex-col gap-7 px-6 py-10 pane-md:px-10">
-        <header className="flex flex-col gap-1.5">
-          <p className="font-sans text-[13px] text-text-muted">
-            {longDate(now)}
-            <span className="mx-2">·</span>
-            {t.dashboard.week} {isoWeek(now)}
-          </p>
-          <h1 className="font-sans text-[32px] font-semibold leading-[1.15] tracking-[-0.025em] text-text-primary">
+    <Panel title={t.dashboard.panel} className="min-h-0 flex-1" bodyClassName="flex min-h-0 flex-col overflow-y-auto">
+      <div className="flex min-h-full flex-col items-center justify-between gap-8 px-6 py-8">
+        <header className="text-center">
+          <h1 className="font-sans text-[34px] font-semibold leading-[1.15] tracking-[-0.025em] text-text-primary">
             {greeting(now, t)}
-            {firstName && <span>, {firstName}</span>}
+            {firstName && <span className="text-cyan">, {firstName}</span>}
           </h1>
+          <p className="mt-2 font-sans text-[14px] text-text-secondary">
+            {longDate(now)}
+            <span className="mx-2 text-text-muted">·</span>
+            <span className="text-text-muted">
+              {t.dashboard.week} {isoWeek(now)}
+            </span>
+          </p>
         </header>
 
-        <div className="flex flex-col gap-3">
-          <AskBar onNavigate={onNavigate} />
-          <QuickLinks onNavigate={onNavigate} />
+        <div>
+          <HudClock now={now} />
         </div>
 
-        <div className="grid w-full grid-cols-1 gap-4 pane-md:grid-cols-3">
+        <div className="w-full max-w-2xl">
+          <AskBar onNavigate={onNavigate} />
+        </div>
+
+        <div className="grid w-full max-w-5xl grid-cols-1 gap-4 pane-md:grid-cols-3">
           <ProjectsTile onNavigate={onNavigate} />
           <BrainTile onNavigate={onNavigate} />
           <SystemTile />
         </div>
       </div>
-    </div>
-  )
-}
-
-/** Shortcuts into the modules used most, as quiet chips under the composer. */
-function QuickLinks({ onNavigate }: { onNavigate: (id: ModuleId) => void }) {
-  const t = useT()
-  const links = (['projects', 'editor', 'terminal', 'memory'] as const).map((id) => NAV_ITEMS.find((i) => i.id === id)!)
-  return (
-    <div className="flex flex-wrap gap-2">
-      {links.map(({ id, icon: Icon }) => (
-        <button
-          key={id}
-          type="button"
-          onClick={() => onNavigate(id)}
-          className="flex h-8 items-center gap-2 rounded-full border border-hud/45 px-3 font-sans text-[13px] text-text-secondary transition-colors hover:bg-elevated hover:text-text-primary"
-        >
-          <Icon size={14} strokeWidth={1.75} className="text-text-muted" />
-          {t.nav[id]}
-        </button>
-      ))}
-    </div>
+    </Panel>
   )
 }
 
@@ -104,31 +89,24 @@ function AskBar({ onNavigate }: { onNavigate: (id: ModuleId) => void }) {
   return (
     <form
       onSubmit={submit}
-      className="rounded-xl border border-hud/60 bg-panel px-4 pb-2.5 pt-3.5 shadow-panel transition-colors focus-within:border-hud-strong/80"
+      className="flex items-center gap-3 rounded-xl border border-hud/60 bg-surface py-2 pl-4 pr-2 shadow-panel transition-colors focus-within:border-hud-strong/80"
     >
+      <Sparkles size={16} strokeWidth={1.75} className="shrink-0 text-text-muted" />
       <input
         aria-label={t.dashboard.askLabel}
         value={text}
         onChange={(e) => setText(e.target.value)}
         placeholder={t.dashboard.ask}
-        className="w-full bg-transparent px-0.5 font-sans text-[15px] leading-[1.55] text-text-primary outline-hidden placeholder:text-text-muted"
+        className="min-w-0 flex-1 bg-transparent font-sans text-[15px] text-text-primary outline-hidden placeholder:text-text-muted"
       />
-      <div className="mt-3 flex items-center gap-2">
-        <span className="flex items-center gap-1.5 font-sans text-[12.5px] text-text-muted">
-          <Sparkles size={14} strokeWidth={1.75} />
-          Mindeck Assistant
-        </span>
-        <span className="flex-1" />
-        <span className="hidden font-sans text-[12px] text-text-muted sm:inline">↵</span>
-        <button
-          type="submit"
-          aria-label={t.dashboard.askSubmit}
-          disabled={!text.trim()}
-          className="flex h-[34px] w-[34px] items-center justify-center rounded-md bg-cyan text-void transition-opacity disabled:opacity-30"
-        >
-          <ArrowUp size={16} strokeWidth={2.2} />
-        </button>
-      </div>
+      <button
+        type="submit"
+        aria-label={t.dashboard.askSubmit}
+        disabled={!text.trim()}
+        className="flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-md bg-cyan text-void transition-opacity disabled:opacity-30"
+      >
+        <ArrowUp size={16} strokeWidth={2.2} />
+      </button>
     </form>
   )
 }
@@ -146,7 +124,7 @@ function Tile({
 }) {
   const t = useT()
   return (
-    <section className="group flex min-h-[170px] flex-col rounded-lg border border-hud/45 bg-panel p-5">
+    <section className="group flex min-h-[170px] flex-col rounded-lg border border-hud/45 bg-surface p-5">
       <header className="mb-4 flex items-center gap-2.5">
         <span className="flex h-7 w-7 items-center justify-center rounded-md bg-elevated text-text-secondary">
           <Icon size={15} strokeWidth={1.75} />
@@ -328,21 +306,19 @@ function SystemTile() {
           {warnings.length > 1 && (
             <p className="mt-1 font-sans text-[12px] text-amber">{warnings.slice(1).join(' · ')}</p>
           )}
-          <div className="mt-auto flex flex-col gap-3 pt-4">
+          <div className="mt-auto grid grid-cols-4 gap-2 pt-4">
             {stats.map(([label, value]) => (
-              <div key={label} className="flex flex-col gap-1.5">
-                <div className="flex items-baseline justify-between gap-2">
-                  <span className="truncate font-sans text-[12.5px] text-text-secondary">
-                    {label}
-                    {label === t.dashboard.battery && battery.charging ? ' ⚡' : ''}
-                  </span>
-                  <span className="font-mono text-[12px] text-text-primary tabular-nums">{Math.round(value)} %</span>
+              <div key={label} className="min-w-0">
+                <div className="font-sans text-[18px] font-semibold tracking-[-0.01em] text-text-primary tabular-nums">
+                  {Math.round(value)}
+                  <span className="ml-0.5 text-[12px] font-normal text-text-muted">%</span>
                 </div>
-                <div className="h-1 overflow-hidden rounded-full bg-elevated">
-                  <div
-                    className={cn('h-full rounded-full', value > 85 ? 'bg-amber' : 'bg-cyan')}
-                    style={{ width: `${Math.max(0, Math.min(100, value))}%` }}
-                  />
+                <div className="mt-1 truncate font-sans text-[12px] text-text-muted">
+                  {label}
+                  {label === t.dashboard.battery && battery.charging ? ' ⚡' : ''}
+                </div>
+                <div className="mt-2 h-1 overflow-hidden rounded-full bg-elevated">
+                  <div className={cn('h-full rounded-full', value > 85 ? 'bg-amber' : 'bg-cyan')} style={{ width: `${Math.max(0, Math.min(100, value))}%` }} />
                 </div>
               </div>
             ))}

@@ -183,7 +183,7 @@ export function AppShell() {
         <ZenBar />
       ) : (
         <motion.div {...panelIn(0.05)}>
-          <TopStatusBar since={bootedAt} showClock />
+          <TopStatusBar since={bootedAt} showClock={!visible('core')} />
         </motion.div>
       )}
 

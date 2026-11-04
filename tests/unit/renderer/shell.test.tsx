@@ -628,7 +628,7 @@ describe('AppShell with panes', () => {
     expect(useWorkspace.getState().layout.panes.map((p) => p.module)).toEqual(['agents', 'core'])
     expect(screen.getByText('DASHBOARD')).toBeInTheDocument()
     expect(screen.getByText('MONITOR')).toBeInTheDocument()
-    expect(screen.getByText('TOPBAR CLOCK')).toBeInTheDocument() // the dashboard has no clock of its own any more
+    expect(screen.getByText('TOPBAR')).toBeInTheDocument()
     expect(screen.getByText('BROWSER OFF')).toBeInTheDocument() // kept, hidden
 
     act(() => useWorkspace.getState().setZen(true))
@@ -636,7 +636,7 @@ describe('AppShell with panes', () => {
     expect(screen.queryByTitle('Terminal')).toBeNull()
     expect(screen.getAllByRole('button', { name: /Leave zen mode/ }).length).toBeGreaterThan(0)
     act(() => useWorkspace.getState().setZen(false))
-    expect(screen.getByText('TOPBAR CLOCK')).toBeInTheDocument()
+    expect(screen.getByText('TOPBAR')).toBeInTheDocument()
 
     for (const m of [
       '@/features/browser/components/BrowserView',
