@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events'
 import { existsSync } from 'node:fs'
-import { chmod, lstat, mkdir, open, readFile, readdir, rm, symlink, utimes, writeFile } from 'node:fs/promises'
+import { chmod, lstat, mkdir, open, readFile, readdir, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises'
 import { join, sep } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { tempDir, tick } from './helpers'
@@ -230,6 +230,45 @@ describe('VaultService — notes', () => {
     await expect(v.writeBody('Plain.md', 'x')).rejects.toMatchObject({ code: 'not-found' })
     await mkdir(join(root, 'Folder.md'))
     await expect(v.writeBody('Folder.md', 'x')).rejects.toMatchObject({ code: 'EISDIR' })
+  })
+
+  it('a note’s time is its file’s, whoever wrote it: a restart or a rescan finds the version the client holds', async () => {
+    const { v, root, base, settings } = await setup()
+    const fileTime = async (p: string) => (await stat(join(root, p))).mtime.toISOString()
+    await writeFile(join(root, 'Plain.md'), 'first')
+    await v.read('Plain.md')
+    const saved = await v.writeBody('Plain.md', 'second')
+    expect(saved.modifiedAt).toBe(await fileTime('Plain.md'))
+    const linked = await v.link('Plain.md', 'Willkommen.md')
+    expect(linked.modifiedAt).toBe(await fileTime('Plain.md'))
+    const unlinked = await v.unlink('Plain.md', 'Willkommen.md')
+    expect(unlinked.modifiedAt).toBe(await fileTime('Plain.md'))
+    const created = await v.create('Neu')
+    expect(created.modifiedAt).toBe(await fileTime('Neu.md'))
+    // A link rewritten by a rename, too.
+    await v.link('Neu.md', 'Plain.md')
+    await v.rename('Plain.md', 'Renamed')
+    expect((await v.read('Neu.md')).modifiedAt).toBe(await fileTime('Neu.md'))
+
+    // The core restarts and indexes from the disk: the client's version still fits, nothing changed.
+    const held = (await v.read('Renamed.md')).modifiedAt
+    const again = new VaultService({ settings, platform: electronPlatform, defaultRoot: join(base, 'vault'), onChange: vi.fn() })
+    expect((await again.read('Renamed.md')).modifiedAt).toBe(held)
+    await again.writeBody('Renamed.md', 'third', Date.parse(held))
+    expect(await readFile(join(root, 'Renamed.md'), 'utf8')).toBe('third')
+  })
+
+  it('a changed file under an unchanged time (a coarse clock) still isn’t overwritten', async () => {
+    const { v, root, read, onChange } = await setup()
+    await writeFile(join(root, 'Plain.md'), 'first')
+    const seen = (await v.read('Plain.md')).modifiedAt
+    const at = new Date(seen)
+    await writeFile(join(root, 'Plain.md'), 'theirs')
+    await utimes(join(root, 'Plain.md'), at, at)
+    onChange.mockClear()
+    await expect(v.writeBody('Plain.md', 'mine', Date.parse(seen))).rejects.toMatchObject({ code: 'conflict' })
+    expect(await read('Plain.md')).toBe('theirs')
+    expect(onChange).toHaveBeenCalledWith({ paths: ['Plain.md'] })
   })
 
   it('creates notes named after the title, typed by folder, never overwriting', async () => {

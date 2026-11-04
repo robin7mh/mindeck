@@ -217,7 +217,8 @@ export class VaultService {
     const rel = this.normalize(path)
     const abs = await this.confine(rel)
     await this.atomicWrite(abs, raw)
-    this.index.upsert(rel, raw, new Date())
+    // The file's own time, as a later scan finds it: one clock for what a client holds and what the core compares.
+    this.index.upsert(rel, raw, (await stat(abs)).mtime)
     this.opts.onChange({ paths: [rel] })
     return this.index.get(rel)!.meta
   }
@@ -256,7 +257,7 @@ export class VaultService {
         if ((err as NodeJS.ErrnoException).code === 'EEXIST') continue
         throw err
       }
-      this.index.upsert(rel, raw, new Date())
+      this.index.upsert(rel, raw, (await stat(abs)).mtime)
       if (this.indexedRoot !== root) await this.switched()
       else this.opts.onChange({ paths: [rel] })
       return this.index.get(rel)!.meta
@@ -319,10 +320,12 @@ export class VaultService {
     if (typeof body !== 'string') throw coded('bad-input', 'Invalid note text')
     const rel = this.normalize(path)
     if (expectedMtime !== undefined) {
-      // The disk decides, not the index, which follows it a moment later.
-      if (await this.load(this.root(), rel)) this.opts.onChange({ paths: [rel] })
+      // The disk decides, not the index, which follows it a moment later. Text the index didn't have is news whatever its
+      // time says (a clock that only counts seconds).
+      const moved = await this.load(this.root(), rel)
+      if (moved) this.opts.onChange({ paths: [rel] })
       const known = this.index.get(rel)?.meta.modifiedAt
-      if (!known || Date.parse(known) !== expectedMtime) throw coded('conflict', `${rel} changed on disk since it was opened`)
+      if (moved || !known || Date.parse(known) !== expectedMtime) throw coded('conflict', `${rel} changed on disk since it was opened`)
     }
     const raw =
       this.index.rawOf(rel) ??
@@ -547,8 +550,9 @@ export class VaultService {
     for (const [from] of moves) this.index.remove(from)
     for (const [, to] of moves) await this.load(root, to)
     for (const [path, raw] of rewrites) {
-      await this.atomicWrite(await this.confine(path), raw)
-      this.index.upsert(path, raw, new Date())
+      const abs = await this.confine(path)
+      await this.atomicWrite(abs, raw)
+      this.index.upsert(path, raw, (await stat(abs)).mtime)
     }
     this.opts.onChange({})
   }
