@@ -36,6 +36,8 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, Props>(function M
   const props = useRef(p)
   props.current = p
   const mode = useRef(new Compartment())
+  /** Which links resolve, until the notes change: Live Preview asks for every visible one on every keystroke. */
+  const resolved = useRef(new Map<string, boolean>())
 
   useEffect(() => {
     const v = new EditorView({
@@ -45,7 +47,13 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, Props>(function M
         extensions: [
           noteEditorExtensions({
             hooks: {
-              resolves: (target) => !!findNote(target, props.current.notes),
+              resolves: (target) => {
+                const known = resolved.current.get(target)
+                if (known !== undefined) return known
+                const found = !!findNote(target, props.current.notes)
+                resolved.current.set(target, found)
+                return found
+              },
               image: (target) => props.current.loadImage(target),
               openNote: (target) => props.current.onOpenNote(target),
               openUrl: (url) => props.current.onOpenUrl(url)
@@ -77,6 +85,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, Props>(function M
 
   // Notes appeared or went: links may (no longer) resolve.
   useEffect(() => {
+    resolved.current.clear()
     view.current!.dispatch({ effects: refreshLive.of(null) })
   }, [p.notes])
 

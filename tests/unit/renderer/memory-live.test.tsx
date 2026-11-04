@@ -497,6 +497,25 @@ describe('MarkdownEditor', () => {
     expect(container.querySelector('.cm-md-bullet')).not.toBeNull()
   })
 
+  it('typing doesn’t look up every visible link in all notes again', () => {
+    const notes = [meta('Plan.md')]
+    const filter = vi.spyOn(notes, 'filter')
+    const { container, rerender } = render(<MarkdownEditor {...props({ notes })} />)
+    const view = viewOf(container)
+    act(() => view.dispatch({ selection: { anchor: view.state.doc.length } }))
+    const before = filter.mock.calls.length
+    expect(before).toBeGreaterThan(0)
+    act(() => view.dispatch({ changes: { from: view.state.doc.length, insert: 'X' } }))
+    act(() => view.dispatch({ changes: { from: view.state.doc.length, insert: 'Y' } }))
+    expect(filter.mock.calls.length).toBe(before)
+    // Other notes: asked again.
+    const others = [meta('Plan.md'), meta('Ghost.md')]
+    const again = vi.spyOn(others, 'filter')
+    rerender(<MarkdownEditor {...props({ notes: others })} />)
+    expect(again).toHaveBeenCalled()
+    expect(container.querySelector('[data-target="Ghost"]')!.className).not.toContain('unresolved')
+  })
+
   it('suggests the current notes after [[', async () => {
     const { container } = render(<MarkdownEditor {...props({ value: '[[' })} />)
     const view = viewOf(container)

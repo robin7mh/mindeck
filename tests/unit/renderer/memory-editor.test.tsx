@@ -271,6 +271,16 @@ function editorProps(over: Partial<Parameters<typeof NoteEditor>[0]> = {}) {
 }
 
 describe('NoteEditor', () => {
+  it('typing doesn’t filter every note again for the connect menu', () => {
+    const p = editorProps({ draft: 'a' })
+    const filter = vi.spyOn(p.notes, 'filter')
+    const { rerender } = render(<NoteEditor {...p} />)
+    const before = filter.mock.calls.length
+    rerender(<NoteEditor {...p} draft="ab" />)
+    rerender(<NoteEditor {...p} draft="abc" />)
+    expect(filter.mock.calls.length).toBe(before)
+  })
+
   it('a file that moved on under the draft: the user decides', () => {
     const p = editorProps({ draft: 'mine', conflict: true })
     const { rerender } = render(<NoteEditor {...p} />)

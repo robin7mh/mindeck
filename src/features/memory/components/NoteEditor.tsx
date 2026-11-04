@@ -87,6 +87,12 @@ export function NoteEditor(p: Props) {
     [note.links, note.path, byPath]
   )
 
+  // Not on every keystroke: a big vault is a lot of notes.
+  const connectable = useMemo(() => {
+    const linked = new Set(outgoing.map((o) => o.path))
+    return p.notes.filter((n) => n.path !== note.path && !linked.has(n.path))
+  }, [p.notes, note.path, outgoing])
+
   useEffect(() => setConfirmTrash(false), [note.path])
 
   // Read mode: pictures come from the vault, never from where the note says.
@@ -306,7 +312,7 @@ export function NoteEditor(p: Props) {
           <TechLabel className="text-text-secondary">{t.memory.connections}</TechLabel>
           <span className="font-mono text-[10px] text-text-muted">{outgoing.length + note.backlinks.length}</span>
           <ConnectPicker
-            notes={p.notes.filter((n) => n.path !== note.path && !outgoing.some((o) => o.path === n.path))}
+            notes={connectable}
             onPick={p.onLink}
           />
         </div>

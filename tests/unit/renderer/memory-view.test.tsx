@@ -4,10 +4,11 @@ import { installBridge, installRemote } from './bridge'
 import type { Note, VaultStatus } from '@shared/types/memory'
 
 // Children are covered by their own tests — here they only expose their props.
-const seen = vi.hoisted(() => ({ list: {} as Record<string, unknown>, graph: {} as Record<string, unknown>, editor: {} as Record<string, unknown> }))
+const seen = vi.hoisted(() => ({ list: {} as Record<string, unknown>, graph: {} as Record<string, unknown>, editor: {} as Record<string, unknown>, listRenders: 0 }))
 vi.mock('@/features/memory/components/NoteList', () => ({
   NoteList: (p: Record<string, unknown>) => {
     seen.list = p
+    seen.listRenders += 1
     return <div>NOTE-LIST</div>
   }
 }))
@@ -71,6 +72,17 @@ describe('MemoryView', () => {
     expect(screen.queryByText('Loading memory…')).toBeNull()
     unmount()
     expect(a.save).toHaveBeenCalled()
+  })
+
+  it('typing reaches the editor without drawing the note list again', () => {
+    installBridge()
+    spyActions()
+    useMemory.setState({ status: status(), view: 'note', note, notes: [], draft: '' })
+    render(<MemoryView />)
+    const before = seen.listRenders
+    act(() => useMemory.setState({ draft: 'typed' }))
+    expect((seen.editor as { draft: string }).draft).toBe('typed')
+    expect(seen.listRenders).toBe(before)
   })
 
   it('the window closing flushes what autosave hasn’t written yet (a browser also asks to stay)', () => {

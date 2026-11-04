@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type ComponentProps } from 'react'
 import { AlertTriangle, ArrowLeftRight, BrainCircuit, CalendarDays, ChevronDown, FileText, FolderOpen, Network, Plus, Sparkles, X } from 'lucide-react'
 import { isDesktop, onEvent } from '@shared/ipc/client'
+import { useShallow } from 'zustand/react/shallow'
 import { DEFAULT_GRAPH_STYLE, TEMPLATES_FOLDER, type NoteMeta } from '@shared/types/memory'
 import { Panel } from '@/components/ui/Panel'
 import { cn } from '@/lib/cn'
@@ -21,7 +22,8 @@ import { DailySettings } from './DailySettings'
  */
 export function MemoryView() {
   const t = useT()
-  const m = useMemory()
+  // Everything but the draft, which changes on every keystroke: only the note's editor follows that.
+  const m = useMemory(useShallow(({ draft: _draft, ...rest }) => rest))
   const style = m.status?.graphStyle ?? DEFAULT_GRAPH_STYLE
   const folderSlots = useMemo(() => folderColors(m.notes), [m.notes])
   const templates = useMemo(() => m.notes.filter((n) => n.path.startsWith(`${TEMPLATES_FOLDER}/`)), [m.notes])
@@ -208,11 +210,10 @@ export function MemoryView() {
                 onOpenGhost={(title) => void m.openOrCreate(title)}
               />
             ) : m.note ? (
-              <NoteEditor
+              <OpenNote
                 note={m.note}
                 notes={m.notes}
                 templates={templates}
-                draft={m.draft}
                 mode={m.mode}
                 source={m.source}
                 saving={m.saving}
@@ -254,6 +255,12 @@ export function MemoryView() {
       )}
     </Panel>
   )
+}
+
+/** The note with its draft. */
+function OpenNote(props: Omit<ComponentProps<typeof NoteEditor>, 'draft'>) {
+  const draft = useMemory((s) => s.draft)
+  return <NoteEditor {...props} draft={draft} />
 }
 
 /** The arrow next to "New note": start one from a template. */
