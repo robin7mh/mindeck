@@ -72,6 +72,8 @@ interface MemoryState {
   saving: boolean
   /** The file moved on (or went) under the draft: the user decides, nothing is overwritten by itself. */
   conflict: boolean
+  /** The draft could not be written (a read-only vault, a note too large): it stays until it can be, or the user lets it go. */
+  saveFailed: boolean
   creating: Creating | null
 
   query: string
@@ -98,6 +100,8 @@ interface MemoryState {
   save: (opts?: { force?: boolean }) => Promise<boolean>
   /** Give up the draft for what the disk has. */
   loadDisk: () => Promise<void>
+  /** Give up the draft, back to the text last read or written; asks nothing of the disk, so it always works. */
+  discardDraft: () => void
   startCreate: (kind: Creating['kind'], parent?: string, template?: string) => void
   cancelCreate: () => void
   submitCreate: (name: string) => Promise<void>
@@ -159,7 +163,7 @@ export const useMemory = create<MemoryState>((set, get) => {
     set((s) => {
       // Another note opened meanwhile: its text must not end up paired with this one (the next save would write it here).
       if (s.note?.path !== path) return {}
-      return s.draft === s.note.body ? { note: fresh, draft: fresh.body, conflict: false } : { note: { ...fresh, body: s.note.body, modifiedAt: s.note.modifiedAt } }
+      return s.draft === s.note.body ? { note: fresh, draft: fresh.body, conflict: false, saveFailed: false } : { note: { ...fresh, body: s.note.body, modifiedAt: s.note.modifiedAt } }
     })
 
   /** Re-read the open note (links/backlinks may have changed elsewhere). */
@@ -192,8 +196,15 @@ export const useMemory = create<MemoryState>((set, get) => {
       throw err
     })
     // From here on the disk has this text, at this time (another save, right behind this one, builds on it).
-    set((s) => (s.note?.path === note.path ? { note: { ...s.note, body: draft, modifiedAt: saved.modifiedAt }, conflict: false } : {}))
+    set((s) => (s.note?.path === note.path ? { note: { ...s.note, body: draft, modifiedAt: saved.modifiedAt }, conflict: false, saveFailed: false } : {}))
     return { path: note.path, draft, modifiedAt: saved.modifiedAt }
+  }
+
+  /** The draft is on disk (so something may replace it) — else the note comes up, with what stopped it and the way out. */
+  const saved = async () => {
+    if (await get().save()) return true
+    set({ view: 'note' })
+    return false
   }
 
   return {
@@ -205,6 +216,7 @@ export const useMemory = create<MemoryState>((set, get) => {
     draft: '',
     saving: false,
     conflict: false,
+    saveFailed: false,
     creating: null,
     query: '',
     hits: [],
@@ -253,7 +265,7 @@ export const useMemory = create<MemoryState>((set, get) => {
 
     pickVault: async () => {
       try {
-        if (!(await get().save())) return
+        if (!(await saved())) return
         const status = await ipc('memory:pickVault')
         if (!status) return
         set({ note: undefined, draft: '', query: '', hits: [] })
@@ -265,7 +277,7 @@ export const useMemory = create<MemoryState>((set, get) => {
 
     setVault: async (path) => {
       try {
-        if (!(await get().save())) return
+        if (!(await saved())) return
         await ipc('memory:setVault', { path })
         set({ note: undefined, draft: '', query: '', hits: [] })
         await get().init()
@@ -286,10 +298,10 @@ export const useMemory = create<MemoryState>((set, get) => {
       // Two quick clicks: the note clicked last wins, not the one answered last.
       const seq = ++openSeq
       try {
-        if (!(await get().save())) return
+        if (!(await saved())) return
         const note = await ipc('memory:read', { path })
         if (seq !== openSeq) return
-        set({ note, draft: note.body, view: 'note', mode: mode ?? get().mode, error: undefined, conflict: false })
+        set({ note, draft: note.body, view: 'note', mode: mode ?? get().mode, error: undefined, conflict: false, saveFailed: false })
       } catch (err) {
         fail(err)
       }
@@ -313,19 +325,25 @@ export const useMemory = create<MemoryState>((set, get) => {
       window.clearTimeout(saveTimer)
       const write = writes.then(() => writeDraft(force))
       writes = write.catch(() => {})
+      let written: Awaited<typeof write>
       try {
-        const written = await write
-        if (!written) return true
-        const fresh = await ipc('memory:read', { path: written.path })
-        // Another note was opened meanwhile (its draft must not land in this one), or a newer write landed.
-        // Else keep typing that happened while the write was in flight.
-        set((s) => (s.note?.path !== written.path || s.note.modifiedAt !== written.modifiedAt ? { saving: false } : { note: fresh, draft: s.draft === written.draft ? fresh.body : s.draft, saving: false }))
-        return true
+        written = await write
       } catch (err) {
-        if ((err as IpcError).code === 'conflict') set({ conflict: true, saving: false })
-        else fail(err)
+        if ((err as IpcError).code === 'conflict') set({ conflict: true, saveFailed: false, saving: false })
+        else {
+          set({ conflict: false, saveFailed: true })
+          fail(err)
+        }
         return false
       }
+      if (!written) return true
+      const { path, draft, modifiedAt } = written
+      // Links and backlinks as they are now; the text is on disk either way.
+      const fresh = await ipc('memory:read', { path }).catch(() => null)
+      // Another note was opened meanwhile (its draft must not land in this one), or a newer write landed.
+      // Else keep typing that happened while the write was in flight.
+      set((s) => (!fresh || s.note?.path !== path || s.note.modifiedAt !== modifiedAt ? { saving: false } : { note: fresh, draft: s.draft === draft ? fresh.body : s.draft, saving: false }))
+      return true
     },
 
     loadDisk: async () => {
@@ -334,12 +352,19 @@ export const useMemory = create<MemoryState>((set, get) => {
       window.clearTimeout(saveTimer)
       try {
         const fresh = await ipc('memory:read', { path: note.path })
-        set((s) => (s.note?.path === note.path ? { note: fresh, draft: fresh.body, conflict: false } : {}))
+        set((s) => (s.note?.path === note.path ? { note: fresh, draft: fresh.body, conflict: false, saveFailed: false } : {}))
       } catch (err) {
         // Deleted, and the user lets the text go with it.
-        if ((err as IpcError).code === 'not-found') set({ note: undefined, draft: '', conflict: false })
+        if ((err as IpcError).code === 'not-found') set({ note: undefined, draft: '', conflict: false, saveFailed: false })
         else fail(err)
       }
+    },
+
+    discardDraft: () => {
+      const { note } = get()
+      if (!note) return
+      window.clearTimeout(saveTimer)
+      set({ draft: note.body, conflict: false, saveFailed: false, error: undefined })
     },
 
     startCreate: (kind, parent = '', template) => set({ creating: { kind, parent, ...(template ? { template } : {}) } }),
@@ -360,7 +385,7 @@ export const useMemory = create<MemoryState>((set, get) => {
 
     createNote: async (title, folder = '', template) => {
       try {
-        if (!(await get().save())) return
+        if (!(await saved())) return
         const meta = await ipc('memory:create', { title, folder, ...(template ? { template, now: localNow() } : {}) })
         await reloadIndex()
         await get().open(meta.path, 'edit')
@@ -373,7 +398,7 @@ export const useMemory = create<MemoryState>((set, get) => {
       const { note } = get()
       if (!note || !title.trim() || title.trim() === note.title) return
       try {
-        if (!(await get().save())) return
+        if (!(await saved())) return
         const meta = await ipc('memory:rename', { path: note.path, title: title.trim() })
         await reloadIndex()
         await get().open(meta.path, get().mode)
@@ -384,7 +409,7 @@ export const useMemory = create<MemoryState>((set, get) => {
 
     moveNote: async (path, folder) => {
       try {
-        if (!(await get().save())) return
+        if (!(await saved())) return
         const meta = await ipc('memory:move', { path, folder })
         await reloadIndex()
         if (get().note?.path === path) await get().open(meta.path, get().mode)
@@ -395,7 +420,7 @@ export const useMemory = create<MemoryState>((set, get) => {
 
     moveFolder: async (folder, into) => {
       try {
-        if (!(await get().save())) return
+        if (!(await saved())) return
         const to = await ipc('memory:moveFolder', { folder, into })
         await reloadIndex()
         const open = get().note?.path
@@ -486,7 +511,7 @@ export const useMemory = create<MemoryState>((set, get) => {
 
     openDaily: async () => {
       try {
-        if (!(await get().save())) return
+        if (!(await saved())) return
         const meta = await ipc('memory:daily', { now: localNow() })
         await reloadIndex()
         await get().open(meta.path, 'edit')

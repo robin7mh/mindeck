@@ -718,6 +718,59 @@ describe('memory store', () => {
     expect(m().error).toBe('disk full')
   })
 
+  it('text that can’t be written can be let go, and the vault left', async () => {
+    const v = vault()
+    await m().open('Willkommen.md')
+    v.routes['memory:writeBody'] = (() => fail('read-only')) as never
+    m().setDraft('one typed character')
+    useMemory.setState({ view: 'graph' })
+    await m().open('Ich/A.md')
+    // Refused, and the note comes up: that's where the way out is.
+    expect(m()).toMatchObject({ note: { path: 'Willkommen.md' }, draft: 'one typed character', saveFailed: true, conflict: false, view: 'note', error: 'read-only' })
+
+    m().discardDraft()
+    expect(m()).toMatchObject({ note: { path: 'Willkommen.md' }, draft: 'body', saveFailed: false })
+    expect(m().error).toBeUndefined()
+    await m().setVault('/elsewhere')
+    expect(v.calls).toContain('setVault:/elsewhere')
+
+    await m().open('Willkommen.md')
+    m().setDraft('again')
+    await m().save()
+    expect(m().saveFailed).toBe(true)
+    // It can be written after all: nothing left to discard.
+    v.routes['memory:writeBody'] = (({ path, body }: { path: string; body: string }) => (v.files.set(path, note(path, body)), meta(path))) as never
+    expect(await m().save()).toBe(true)
+    expect(m().saveFailed).toBe(false)
+
+    useMemory.setState({ note: undefined })
+    m().discardDraft() // nothing open
+  })
+
+  it('“Keep mine” that fails too: the same way out, not the conflict any more', async () => {
+    const v = vault()
+    await m().open('Willkommen.md')
+    v.routes['memory:writeBody'] = (({ expectedMtime }: { expectedMtime?: number }) => fail(expectedMtime === undefined ? 'read-only' : 'changed', expectedMtime === undefined ? 'error' : 'conflict')) as never
+    m().setDraft('mine')
+    await m().save()
+    expect(m()).toMatchObject({ conflict: true, saveFailed: false })
+    await m().save({ force: true })
+    expect(m()).toMatchObject({ conflict: false, saveFailed: true, error: 'read-only' })
+    // The next try notices the file moved on again.
+    await m().save()
+    expect(m()).toMatchObject({ conflict: true, saveFailed: false })
+  })
+
+  it('a write that worked counts, even when reading the note back fails', async () => {
+    const v = vault()
+    await m().open('Willkommen.md')
+    v.routes['memory:read'] = (() => fail('EMFILE')) as never
+    m().setDraft('on disk')
+    expect(await m().save()).toBe(true)
+    expect(m()).toMatchObject({ saving: false, saveFailed: false, draft: 'on disk', note: { body: 'on disk' } })
+    expect(m().error).toBeUndefined()
+  })
+
   it('closing the window with text the disk doesn’t have asks, whichever module is on screen', async () => {
     const closing = () => {
       const event = new Event('beforeunload', { cancelable: true })

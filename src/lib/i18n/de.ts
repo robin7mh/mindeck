@@ -769,6 +769,8 @@ agents: {
     fit: 'Ansicht einpassen',
     saving: 'speichert',
     unsaved: 'nicht gespeichert',
+    notSaved: (name) => `${name} lässt sich nicht speichern (der Grund steht oben). Dein Text bleibt hier, bis es klappt oder du ihn verwirfst.`,
+    discardDraft: 'Meinen Text verwerfen',
     saved: 'gespeichert',
     readTitle: 'Lesen (⌘E)',
     read: 'Lesen',

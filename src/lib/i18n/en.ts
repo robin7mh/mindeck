@@ -788,6 +788,8 @@ agents: {
     // editor
     saving: 'saving',
     unsaved: 'unsaved',
+    notSaved: (name: string) => `${name} can’t be saved (the reason is above). Your text stays here until it can be, or until you discard it.`,
+    discardDraft: 'Discard my text',
     saved: 'saved',
     readTitle: 'Read (⌘E)',
     read: 'Read',

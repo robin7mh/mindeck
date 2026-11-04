@@ -251,6 +251,8 @@ function editorProps(over: Partial<Parameters<typeof NoteEditor>[0]> = {}) {
     source: false,
     saving: false,
     conflict: false,
+    saveFailed: false,
+    onDiscard: vi.fn(),
     onLoadDisk: vi.fn(),
     onKeepMine: vi.fn(),
     onDraft: vi.fn(),
@@ -279,6 +281,18 @@ describe('NoteEditor', () => {
     rerender(<NoteEditor {...p} draft="ab" />)
     rerender(<NoteEditor {...p} draft="abc" />)
     expect(filter.mock.calls.length).toBe(before)
+  })
+
+  it('text that can’t be written: the way out is on screen', () => {
+    const p = editorProps({ draft: 'mine', saveFailed: true })
+    const { rerender } = render(<NoteEditor {...p} />)
+    expect(screen.getByRole('alert')).toHaveTextContent(`${p.note.title} can’t be saved`)
+    fireEvent.click(screen.getByText('Discard my text'))
+    expect(p.onDiscard).toHaveBeenCalled()
+    expect(screen.queryByText('Keep mine')).toBeNull()
+    // Undone back to the file's text: nothing left to discard.
+    rerender(<NoteEditor {...p} draft={p.note.body} />)
+    expect(screen.queryByRole('alert')).toBeNull()
   })
 
   it('a file that moved on under the draft: the user decides', () => {

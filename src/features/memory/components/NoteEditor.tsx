@@ -21,6 +21,9 @@ interface Props {
   saving: boolean
   /** The file moved on under the draft. */
   conflict: boolean
+  /** The draft could not be written. */
+  saveFailed: boolean
+  onDiscard: () => void
   onLoadDisk: () => void
   onKeepMine: () => void
   onDraft: (body: string) => void
@@ -156,6 +159,7 @@ export function NoteEditor(p: Props) {
   }
 
   const seg = 'flex items-center gap-1.5 rounded-sm px-2 py-1 font-sans text-[11px] font-medium transition-colors'
+  const quietButton = 'rounded-md border border-hud/60 px-2.5 py-1 text-[12px] font-medium text-text-secondary transition-colors hover:border-hud-strong hover:text-text-primary'
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -253,15 +257,23 @@ export function NoteEditor(p: Props) {
         </div>
       </div>
 
-      {p.conflict && dirty && (
+      {dirty && (p.conflict || p.saveFailed) && (
         <div role="alert" className="flex shrink-0 flex-wrap items-center gap-2 border-b border-amber/30 bg-amber/[0.07] px-5 py-1.5 font-sans text-[12.5px] text-text-primary">
-          <span className="mr-auto">{t.editor.changedOnDisk(note.title)}</span>
-          <button type="button" onClick={p.onLoadDisk} className="rounded-md border border-hud/60 px-2.5 py-1 text-[12px] font-medium text-text-secondary transition-colors hover:border-hud-strong hover:text-text-primary">
-            {t.editor.loadDisk}
-          </button>
-          <button type="button" onClick={p.onKeepMine} className="rounded-md border border-cyan/40 bg-cyan/6 px-2.5 py-1 text-[12px] font-medium text-cyan transition-colors hover:bg-cyan/12">
-            {t.editor.keepMine}
-          </button>
+          <span className="mr-auto">{p.conflict ? t.editor.changedOnDisk(note.title) : t.memory.notSaved(note.title)}</span>
+          {p.conflict ? (
+            <>
+              <button type="button" onClick={p.onLoadDisk} className={quietButton}>
+                {t.editor.loadDisk}
+              </button>
+              <button type="button" onClick={p.onKeepMine} className="rounded-md border border-cyan/40 bg-cyan/6 px-2.5 py-1 text-[12px] font-medium text-cyan transition-colors hover:bg-cyan/12">
+                {t.editor.keepMine}
+              </button>
+            </>
+          ) : (
+            <button type="button" onClick={p.onDiscard} className={quietButton}>
+              {t.memory.discardDraft}
+            </button>
+          )}
         </div>
       )}
 
