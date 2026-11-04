@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { tempDir } from './helpers'
@@ -14,7 +14,7 @@ import {
   MEMORY_READ_TOOLS,
   SYSTEM_HINT
 } from '../../../electron/main/services/agents/claudeLaunch'
-import { applyHook, approvalRisk, reachesOutside, staysInside, toolRisk, toolSummary, toolTitle, type SessionState } from '../../../electron/main/services/agents/transcript'
+import { applyHook, approvalRisk, landings, reachesOutside, runsByItself, staysInside, toolPaths, toolRisk, toolSummary, toolTitle, type SessionState } from '../../../electron/main/services/agents/transcript'
 import type { ChatMessage, ToolCallPart } from '../../../src/shared/types/ai'
 import type { AgentSession } from '../../../src/shared/types/agents'
 import { journalBody, journalTitle, vaultJournal } from '../../../electron/main/services/agents/journal'
@@ -217,6 +217,73 @@ describe('hook events → chat, status and plan', () => {
     applyHook(s, { hook_event_name: 'SomethingNew' })
     applyHook(s, { hook_event_name: 'SessionEnd', reason: 'other' })
     expect(s.status).toBe('ended')
+  })
+
+  it('a Glob looks everywhere its braces say: every alternative counts, any .. in one leaves', () => {
+    const cwd = '/work/app'
+    for (const pattern of ['{.,../..}/**/*', '.{.,x}/secret', '**/../x', 'a/{b,{c,..}}/*', '{x,y}{a,b}/../*', '{.env,a.ts}', '{~/x,a}', '{/etc,src}/*'])
+      expect(staysInside('Glob', { pattern }, cwd), pattern).toBe(false)
+    for (const pattern of ['**/*.ts', '{src,lib}/**/*.{ts,tsx}', 'unbalanced{/*', 'a..b/*', '{1..3}/*'])
+      expect(staysInside('Glob', { pattern }, cwd), pattern).toBe(true)
+    // Past a limit it isn't written out, and asks.
+    expect(toolPaths('Glob', { pattern: '{a,b}'.repeat(8) })).toHaveLength(256)
+    expect(toolPaths('Glob', { pattern: '{a,b}'.repeat(9) })).toEqual(['..'])
+    // Its pattern is relative to its path; what starts elsewhere doesn't care.
+    expect(toolPaths('Glob', { pattern: 'x/*', path: 'src' })).toEqual(['src', 'src/x/*'])
+    expect(toolPaths('Glob', { pattern: '/etc/*', path: 'src' })).toEqual(['src', '/etc/*'])
+    expect(toolPaths('Glob', { pattern: '~/x', path: 'src' })).toEqual(['src', '~/x'])
+    expect(toolPaths('Glob', { path: 'src' })).toEqual(['src'])
+    expect(toolPaths('Grep', { pattern: '../..', path: 'src' })).toEqual(['src'])
+    expect(toolPaths('Read')).toEqual([])
+  })
+
+  it('files that run by themselves: however a path names them, inside the folder only', () => {
+    const cwd = '/work/app'
+    for (const path of ['.claude/settings.json', '/work/app/.mcp.json', 'sub/.git/hooks/x', '.GIT/config', '.Claude/x', '.git./hooks/x', '.git ./hooks/x', '.git::$INDEX_ALLOCATION/hooks/x', '.git.::$DATA', '.husky/pre-commit', '.githooks/pre-commit', '.devcontainer/x.json', '.vscode/tasks.json', '.gemini/settings.json', '.codex/config.toml', '.cursor/hooks.json', 'a\\.git\\x'])
+      expect(runsByItself(path, cwd), path).toBe(true)
+    for (const path of ['src/a.ts', '.github/x.yml', '.mcp.json.bak', 'git/x', 'claude/x', '.gitignore', 'vscode']) expect(runsByItself(path, cwd), path).toBe(false)
+    expect(runsByItself('.git/x')).toBe(true) // no folder to compare with: all of it counts
+    // The folder's own place doesn't count: a project somewhere under ~/.claude writes its files like any other.
+    expect(runsByItself('a.ts', '/home/me/.claude/skills/x')).toBe(false)
+    // They are a matter of changing them: reading one is reading.
+    expect(staysInside('Write', { file_path: '.claude/settings.json' }, cwd)).toBe(false)
+    expect(staysInside('NotebookEdit', { notebook_path: '.vscode/a.ipynb' }, cwd)).toBe(false)
+    expect(staysInside('Read', { file_path: '.claude/settings.json' }, cwd)).toBe(true)
+    expect(approvalRisk('Read', { file_path: '.claude/settings.json' }, cwd)).toBe('read')
+  })
+
+  it('where a path really lands, named from the folder: links followed, the nearest parent deciding, unknown is outside', async () => {
+    const home = await tempDir()
+    const real = await tempDir()
+    await mkdir(join(real, 'src'))
+    await writeFile(join(real, 'src/a.ts'), '')
+    await symlink(home, join(real, 'vendor'))
+    await symlink(join(home, 'not-yet'), join(real, 'dangling.md'))
+    await symlink('src', join(real, 'lib'))
+    await symlink('.claude', join(real, 'docs'))
+    await symlink('loop', join(real, 'loop'))
+    await symlink('.ssh', join(real, 'conf'))
+    expect(await landings(['src/a.ts', 'lib/a.ts', 'lib/new/b.ts', 'docs/settings.json', join(real, 'src/a.ts')], real)).toEqual(['src/a.ts', 'src/a.ts', 'src/new/b.ts', '.claude/settings.json', 'src/a.ts'])
+    expect(await landings(['vendor/.zshenv', 'vendor/new/deep', 'dangling.md'], real)).toEqual([join(home, '.zshenv'), join(home, 'new/deep'), join(home, 'not-yet')])
+    expect(await landings([], real)).toEqual([])
+    expect(await landings([real], real)).toEqual([''])
+    expect(await landings(['loop/x'], real)).toEqual(['..'])
+    // Outside as written: decided without asking the disk.
+    expect(await landings(['/etc/passwd', '../x', '~/.ssh/x', '.env'], real)).toEqual([])
+    // A folder that isn't there has no links.
+    expect(await landings(['a.ts'], join(real, 'gone'))).toEqual([])
+    // The folder itself may be reached by a link: its files are still inside.
+    await symlink(real, join(home, 'project'))
+    const viaLink = join(home, 'project')
+    expect(await landings(['src/a.ts', join(viaLink, 'lib/a.ts')], viaLink)).toEqual(['src/a.ts', 'src/a.ts'])
+    // What they mean for a grant and for how a look outside counts.
+    const lands = await landings(['vendor/.zshenv'], real)
+    expect(staysInside('Write', { file_path: 'vendor/.zshenv' }, real, lands)).toBe(false)
+    expect(approvalRisk('Read', { file_path: 'vendor/.zshenv' }, real, lands)).toBe('write')
+    expect(approvalRisk('Read', { file_path: 'lib/a.ts' }, real, await landings(['lib/a.ts'], real))).toBe('read')
+    expect(staysInside('Write', { file_path: 'docs/settings.json' }, real, await landings(['docs/settings.json'], real))).toBe(false)
+    // A link to keys inside the folder is keys.
+    expect(staysInside('Read', { file_path: 'conf/notes' }, real, await landings(['conf/notes'], real))).toBe(false)
   })
 
   it('approvals: looking outside the project or fetching from the web count as changes (BE-SEC-17)', () => {

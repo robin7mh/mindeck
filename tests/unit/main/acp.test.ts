@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events'
 import { existsSync } from 'node:fs'
-import { readFile } from 'node:fs/promises'
+import { readFile, symlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
 import { pathToFileURL } from 'node:url'
@@ -79,6 +79,15 @@ describe('ACP updates → chat, tools, plan', () => {
     expect(acpStaysInside('read', ['/home/me/.ssh/id_ed25519'], '/w')).toBe(false)
     expect(acpStaysInside('read', [], '/w')).toBe(true)
     expect(acpStaysInside('fetch', [], '/w')).toBe(true)
+    // …and where it really lands; and a change never holds for files that run by themselves, a look does.
+    expect(acpStaysInside('edit', ['vendor/.zshenv'], '/w', ['/home/me/.zshenv'])).toBe(false)
+    expect(acpStaysInside('read', ['vendor/notes'], '/w', ['/home/me/notes'])).toBe(false)
+    expect(acpApprovalRisk('read', ['vendor/notes'], '/w', ['/home/me/notes'])).toBe('write')
+    expect(acpStaysInside('edit', ['.claude/settings.json'], '/w')).toBe(false)
+    expect(acpStaysInside('move', ['/w/.git/hooks/x'], '/w')).toBe(false)
+    expect(acpStaysInside('edit', ['docs/settings.json'], '/w', ['.claude/settings.json'])).toBe(false)
+    expect(acpStaysInside('edit', ['lib/a.ts'], '/w', ['src/a.ts'])).toBe(true)
+    expect(acpStaysInside('read', ['.claude/settings.json'], '/w')).toBe(true)
     const options = [
       { optionId: 'a1', name: 'Allow', kind: 'allow_once' as const },
       { optionId: 'aa', name: 'Always', kind: 'allow_always' as const },
@@ -643,6 +652,7 @@ describe('ACP agents in the composer: models, modes, commands, references, image
 
   it('approvals are kept by the tool\'s kind (from its tool call when the request leaves it out); pushes name the kind, never the title', async () => {
     const t = await acpSetup()
+    await symlink(await tempDir(), join(t.dir, 'vendor'))
     const push = vi.fn()
     t.deps.push = push
     const s = await t.svc.create({ kind: 'codex', projectId: 'p1' })
@@ -655,6 +665,8 @@ describe('ACP agents in the composer: models, modes, commands, references, image
       await conn.requestPermission({ sessionId: req.sessionId, toolCall: { toolCallId: 'w2', title: 'Write b.ts', kind: 'edit', locations: [{ path: 'b.ts' }] }, options })
       // …which holds inside the session's folder only: this one is asked, and can't be allowed for good.
       await conn.requestPermission({ sessionId: req.sessionId, toolCall: { toolCallId: 'w3', title: 'Write .zshenv', kind: 'edit', locations: [{ path: '/home/me/.zshenv' }] }, options })
+      // …by where it really lands, not by how it is written.
+      await conn.requestPermission({ sessionId: req.sessionId, toolCall: { toolCallId: 'w4', title: 'Write through a link', kind: 'edit', locations: [{ path: 'vendor/.zshenv' }] }, options })
       throw new Error('boom')
     }
     await t.svc.send(s.id, 'go')
@@ -665,6 +677,9 @@ describe('ACP agents in the composer: models, modes, commands, references, image
     await until(() => t.asks.length === 2) // the second edit was not asked, the third is
     expect(t.asks[1].input).toMatchObject({ toolName: 'edit', risk: 'write', allowAlways: false })
     t.asks[1].settle('once')
+    await until(() => t.asks.length === 3)
+    expect(t.asks[2].input).toMatchObject({ toolName: 'edit', toolTitle: 'Write through a link', allowAlways: false })
+    t.asks[2].settle('once')
     await t.settled(s.id, 'idle')
     expect(push).toHaveBeenLastCalledWith({ kind: 'agent_error', title: 'Codex', body: 'Stopped with an error · Demo', sessionId: s.id })
     expect(t.deps.notify).toHaveBeenLastCalledWith('Codex', 'Stopped with an error', s.id)

@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync, lstatSync } from 'node:fs'
-import { mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { onCleanup, tempDir, tick } from './helpers'
@@ -470,7 +470,7 @@ describe('AgentSessionService: hooks, approvals, memory', () => {
     expect(t.svc.get(s.id).messages[1].parts[0]).toMatchObject({ status: 'running' })
 
     const deny = t.hook(s.id, { hook_event_name: 'PermissionRequest', tool_name: 'Edit', tool_use_id: 'e1', tool_input: { file_path: 'a.ts' } })
-    await tick()
+    await vi.waitFor(() => expect(t.asks).toHaveLength(2)) // it looks at the disk first
     expect(t.asks[1].input).toMatchObject({ risk: 'write', allowAlways: true })
     t.asks[1].settle('deny')
     expect(await deny).toMatchObject({ hookSpecificOutput: { decision: { behavior: 'deny', message: expect.any(String) } } })
@@ -520,6 +520,54 @@ describe('AgentSessionService: hooks, approvals, memory', () => {
     // Inside, a Glob's pattern is what it always was.
     expect(await t.hook(s.id, { hook_event_name: 'PermissionRequest', tool_name: 'Glob', tool_use_id: 'g', tool_input: { pattern: 'src/**/*.ts' } })).toMatchObject({ hookSpecificOutput: { decision: { behavior: 'allow' } } })
     expect(t.asks).toHaveLength(cases.length)
+  })
+
+  it('"Always allow" goes by where a path really lands, and never covers files that run by themselves', async () => {
+    const s = await t.svc.create({ kind: 'claude-code', projectId: 'p1' })
+    for (const tool of ['Write', 'Edit', 'MultiEdit', 'NotebookEdit', 'Read', 'Glob', 'Grep', 'LS']) t.granted.add(tool)
+    const home = await tempDir()
+    await writeFile(join(home, 'notes.txt'), 'x')
+    await mkdir(join(t.projectPath, 'src'), { recursive: true })
+    await symlink(home, join(t.projectPath, 'vendor')) // what a cloned repository can bring along
+    await symlink(join(home, 'not-yet'), join(t.projectPath, 'dangling.md'))
+    await symlink('src', join(t.projectPath, 'lib'))
+    await symlink('.claude', join(t.projectPath, 'docs'))
+    const asked: [string, Record<string, unknown>, string][] = [
+      ['Write', { file_path: join(t.projectPath, 'vendor/.zshenv') }, 'write'],
+      ['Write', { file_path: 'vendor/new/deep/file' }, 'write'], // doesn't exist yet: its nearest parent decides
+      ['Write', { file_path: 'dangling.md' }, 'write'], // writing to it creates what it points to
+      ['Read', { file_path: 'vendor/notes.txt' }, 'write'],
+      ['LS', { path: 'vendor' }, 'write'],
+      ['Glob', { pattern: 'vendor/**/*' }, 'write'],
+      ['Glob', { pattern: '{src,vendor}/*' }, 'write'],
+      ['Glob', { pattern: '{.,../..}/**/*' }, 'write'],
+      ['Write', { file_path: '.claude/settings.json' }, 'write'], // hooks: run with no Bash approval
+      ['Edit', { file_path: join(t.projectPath, '.mcp.json') }, 'write'],
+      ['Write', { file_path: '.git/hooks/pre-commit' }, 'write'],
+      ['Write', { file_path: '.husky/pre-commit' }, 'write'],
+      ['MultiEdit', { file_path: '.devcontainer/devcontainer.json' }, 'write'],
+      ['Write', { file_path: '.vscode/tasks.json' }, 'write'],
+      ['Write', { file_path: 'docs/settings.json' }, 'write'] // a link to .claude is .claude
+    ]
+    for (const [i, [tool_name, tool_input, risk]] of asked.entries()) {
+      const answer = t.hook(s.id, { hook_event_name: 'PermissionRequest', tool_name, tool_use_id: `a${i}`, tool_input })
+      await vi.waitFor(() => expect(t.asks.length, `no question for ${tool_name} ${JSON.stringify(tool_input)}`).toBe(i + 1))
+      expect(t.asks[i].input, JSON.stringify(tool_input)).toMatchObject({ toolName: tool_name, risk, allowAlways: false })
+      t.asks[i].settle('deny')
+      await answer
+    }
+    // Inside it all holds as before: a link that stays inside, a file yet to come, reading the files above.
+    const held: [string, Record<string, unknown>][] = [
+      ['Write', { file_path: 'lib/a.ts' }],
+      ['Write', { file_path: 'src/new/deep/a.ts' }],
+      ['Read', { file_path: '.claude/settings.json' }],
+      ['Glob', { pattern: '{src,lib}/**/*.ts' }],
+      ['Grep', { pattern: '../..', path: 'src' }]
+    ]
+    for (const [i, [tool_name, tool_input]] of held.entries()) {
+      expect(await t.hook(s.id, { hook_event_name: 'PermissionRequest', tool_name, tool_use_id: `h${i}`, tool_input }), JSON.stringify(tool_input)).toMatchObject({ hookSpecificOutput: { decision: { behavior: 'allow' } } })
+    }
+    expect(t.asks).toHaveLength(asked.length)
   })
 
   it('ignores hooks for unknown sessions and junk; SessionEnd retires the token', async () => {

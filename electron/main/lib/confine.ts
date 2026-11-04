@@ -22,23 +22,28 @@ export async function confine(root: string, rel: string): Promise<string> {
   const inside = (p: string) => p === rootReal || p.startsWith(rootReal + sep)
   const outside = () => Object.assign(new Error('Path is outside the project'), { code: 'outside-project' })
   if (!inside(target)) throw outside()
-  // What exists is where it really is; anything else is where a write would land.
+  const real = await landsAt(rootReal, target)
+  if (!real || !inside(real)) throw outside()
+  return target
+}
+
+/**
+ * Where `target` (absolute, under the real folder `rootReal`) really ends up:
+ * what exists is where it really is; anything else is where a write would land.
+ * Null when that can't be told: a link loop, a link to another machine.
+ */
+export async function landsAt(rootReal: string, target: string): Promise<string | null> {
   const real = await realpath(target).catch(() => null)
-  if (real) {
-    if (!inside(real)) throw outside()
-    return target
-  }
-  const landing = await follow(rootReal, relative(rootReal, target), { links: 0 }).catch(() => {
-    throw outside()
-  })
+  if (real) return real
+  const landing = await follow(rootReal, relative(rootReal, target), { links: 0 }).catch(() => null)
+  if (!landing) return null
   let probe = landing
   while (!existsSync(probe)) {
     // dirname() of a root is the root itself: a link to a drive that doesn't exist (Windows `Z:\…`) must not loop forever.
-    if (dirname(probe) === probe) throw outside()
+    if (dirname(probe) === probe) return null
     probe = dirname(probe)
   }
-  if (!inside(join(await realpath(probe), relative(probe, landing)))) throw outside()
-  return target
+  return join(await realpath(probe), relative(probe, landing))
 }
 
 /**

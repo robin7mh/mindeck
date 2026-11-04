@@ -39,7 +39,7 @@ import { readJson, readJsonFile } from '../../lib/jsonFile'
 import { CLAUDE_MODELS, CLAUDE_MODES } from '@shared/types/claude'
 import { CLAUDE_COMMANDS, claudeArgs, claudeEnv, hookSettings, mcpConfig } from './claudeLaunch'
 import { detectAgents, loginShellProbe, type Probe } from './detect'
-import { applyHook, approvalRisk, conversationOnly, staysInside, toolSummary, toolTitle, type Applied, type HookEvent } from './transcript'
+import { applyHook, approvalRisk, conversationOnly, landings, staysInside, toolPaths, toolSummary, toolTitle, type Applied, type HookEvent } from './transcript'
 import { journalBody, journalTitle } from './journal'
 import {
   ACP_AGENTS,
@@ -767,9 +767,10 @@ export class AgentSessionService {
     const kind = call.kind ?? link.kinds.get(call.toolCallId)
     const key = grantKey(kind)
     const paths = (call.locations ?? []).map((loc) => loc.path)
-    const risk = acpApprovalRisk(kind, paths, l.session.cwd)
+    const lands = await landings(paths, l.session.cwd)
+    const risk = acpApprovalRisk(kind, paths, l.session.cwd, lands)
     // A grant holds in the session's folder: anywhere else it is asked every time.
-    const standing = risk !== 'execute' && acpStaysInside(kind, paths, l.session.cwd)
+    const standing = risk !== 'execute' && acpStaysInside(kind, paths, l.session.cwd, lands)
     if (hit) hit.part.status = 'awaiting-approval'
     let decision: ApprovalDecision = 'once'
     if (!standing || !(await this.deps.permissions.isGranted(agent, key, l.session.projectId))) {
@@ -809,10 +810,11 @@ export class AgentSessionService {
     const applied = applyHook(this.state(l), e)
     const name = e.tool_name ?? 'tool'
     // Reading outside the project or fetching from the web: allowed like a change (a device needs remote shells).
-    const risk = approvalRisk(name, e.tool_input, l.session.cwd)
+    const lands = await landings(toolPaths(name, e.tool_input), l.session.cwd)
+    const risk = approvalRisk(name, e.tool_input, l.session.cwd, lands)
     const part = this.tool(l, e.tool_use_id)
     // A grant holds in the session's folder: anywhere else it is asked every time.
-    const standing = risk !== 'execute' && staysInside(name, e.tool_input, l.session.cwd)
+    const standing = risk !== 'execute' && staysInside(name, e.tool_input, l.session.cwd, lands)
     let decision: ApprovalDecision = 'once'
     if (!standing || !(await this.deps.permissions.isGranted('claude-code', name, l.session.projectId))) {
       const input = e.tool_input ?? {}

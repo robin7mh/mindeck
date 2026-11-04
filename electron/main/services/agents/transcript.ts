@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto'
-import { isAbsolute, resolve, sep } from 'node:path'
+import { realpath } from 'node:fs/promises'
+import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import type { ChatMessage, ToolCallPart, ToolRisk } from '@shared/types/ai'
 import type { PlanItem, SessionStatus } from '@shared/types/agents'
+import { landsAt } from '../../lib/confine'
 import { isDeniedName } from '../../server/RemoteAccess'
 
 /** A Claude Code hook event (common fields + whatever the event adds). */
@@ -64,14 +66,78 @@ export function reachesOutside(path: string, cwd?: string): boolean {
 }
 
 /**
- * Whether a tool call stays in the session's folder and away from keys. Only
- * then an "Always allow" holds for it: a grant from `Write src/a.ts` must not
- * cover `Write ~/.zshenv`, which runs at the next login without any approval
- * of a command. A Glob's pattern says where it looks; a Grep's is what it looks for.
+ * Files in a folder that run by themselves once written, with no approval of a
+ * command: agents' hooks and servers, git's hooks and config, what an editor or
+ * a dev container runs when the folder opens.
  */
-export function staysInside(name: string, input: Record<string, unknown> = {}, cwd?: string): boolean {
-  const keys = ['file_path', 'notebook_path', 'path', ...(name === 'Glob' ? ['pattern'] : [])]
-  return !keys.map((k) => input[k]).some((v) => typeof v === 'string' && reachesOutside(v, cwd))
+const RUN_BY_THEMSELVES = new Set(['.claude', '.mcp.json', '.gemini', '.codex', '.cursor', '.git', '.githooks', '.husky', '.devcontainer', '.vscode'])
+
+/** A path among them, inside the folder, ignoring case and what Windows ignores (`.git.`, `.git::$INDEX_ALLOCATION`). */
+export function runsByItself(path: string, cwd?: string): boolean {
+  const inside = cwd ? relative(resolve(cwd), resolve(cwd, path)) : path
+  return inside.split(/[\\/]+/).some((name) => RUN_BY_THEMSELVES.has(name.toLowerCase().replace(/[. ]*(?::.*)?$/, '')))
+}
+
+/** A pattern's braces, written out; past this many it isn't looked at (and asks). */
+const MAX_ALTERNATIVES = 256
+
+function alternatives(pattern: string): string[] {
+  const open = [pattern]
+  const done: string[] = []
+  for (let p = open.pop(); p !== undefined; p = open.pop()) {
+    const brace = /\{([^{}]*)\}/.exec(p)
+    if (!brace) done.push(p)
+    else for (const option of brace[1].split(',')) open.push(p.slice(0, brace.index) + option + p.slice(brace.index + brace[0].length))
+    if (open.length + done.length > MAX_ALTERNATIVES) return ['..']
+  }
+  return done
+}
+
+/**
+ * The paths a tool call names. A Glob's pattern says where it looks, relative
+ * to its `path`, in every alternative of its braces, and any `..` in one leaves
+ * (`**\/../x` is `../x` when `**` is nothing); a Grep's is what it looks for.
+ */
+export function toolPaths(name: string, input: Record<string, unknown> = {}): string[] {
+  const named = ['file_path', 'notebook_path', 'path'].map((k) => input[k]).filter((v): v is string => typeof v === 'string')
+  if (name !== 'Glob' || typeof input.pattern !== 'string') return named
+  const { path } = input
+  const fromPath = (p: string) => (typeof path === 'string' && !isAbsolute(p) && !p.startsWith('~') ? join(path, p) : p)
+  return [...named, ...alternatives(input.pattern).map((p) => (p.split(/[\\/]+/).includes('..') ? '..' : fromPath(p)))]
+}
+
+/**
+ * Where paths that stay in the folder as written really land, named from `cwd`
+ * as `reachesOutside` and `runsByItself` read them: a cloned repository can
+ * bring `vendor -> ~`, and `vendor/.zshenv` looks inside. A file yet to come
+ * lands by its nearest existing parent. Those outside as written were decided
+ * without asking the disk (on Windows, asking `\\\\host\\share` sends the user's
+ * credentials there); one that can't be told counts as outside.
+ */
+export async function landings(paths: string[], cwd: string): Promise<string[]> {
+  const written = paths.filter((path) => !reachesOutside(path, cwd))
+  const root = written.length ? await realpath(cwd).catch(() => null) : null
+  if (!root) return []
+  return Promise.all(
+    written.map(async (path) => {
+      const real = await landsAt(root, resolve(root, relative(resolve(cwd), resolve(cwd, path))))
+      if (!real) return '..'
+      return real === root || real.startsWith(root + sep) ? relative(root, real) : real
+    })
+  )
+}
+
+/**
+ * Whether a tool call stays in the session's folder and away from keys, as
+ * written and where it really `lands` (see `landings`), and if it changes
+ * something, away from files that run by themselves. Only then an "Always
+ * allow" holds for it: a grant from `Write src/a.ts` must not cover
+ * `Write ~/.zshenv`, which runs at the next login without any approval of a command.
+ */
+export function staysInside(name: string, input: Record<string, unknown> = {}, cwd?: string, lands: string[] = []): boolean {
+  const paths = [...toolPaths(name, input), ...lands]
+  if (paths.some((path) => reachesOutside(path, cwd))) return false
+  return toolRisk(name) !== 'write' || !paths.some((path) => runsByItself(path, cwd))
 }
 
 /**
@@ -80,11 +146,11 @@ export function staysInside(name: string, input: Record<string, unknown> = {}, c
  * for whatever was read) count as changes — a device allows them only with
  * remote shells, like any change.
  */
-export function approvalRisk(name: string, input: Record<string, unknown> = {}, cwd?: string): ToolRisk {
+export function approvalRisk(name: string, input: Record<string, unknown> = {}, cwd?: string, lands: string[] = []): ToolRisk {
   const risk = toolRisk(name)
   if (risk !== 'read') return risk
   if (name === 'WebFetch') return 'write'
-  return staysInside(name, input, cwd) ? 'read' : 'write'
+  return staysInside(name, input, cwd, lands) ? 'read' : 'write'
 }
 
 const TITLES: Record<string, string> = {

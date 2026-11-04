@@ -7,7 +7,7 @@ import type { ApprovalDecision, ChatMessage, ToolCallPart, ToolCallStatus, ToolR
 import type { AgentCommand, AgentSession, SessionOption } from '@shared/types/agents'
 import { shellCommand, shellQuote } from '../terminal/TerminalService'
 import { spawnProgram } from '../../lib/executables'
-import { reachesOutside, type Applied, type SessionState } from './transcript'
+import { reachesOutside, runsByItself, type Applied, type SessionState } from './transcript'
 
 /** How Mindeck starts each ACP agent (the user's own CLI, signed in their way). */
 export type AcpKind = 'codex' | 'gemini'
@@ -81,19 +81,22 @@ export function kindRisk(kind: ToolKind | null | undefined): ToolRisk {
  * whatever was read) and reading outside the session's folder count as changes —
  * a device allows them only with remote shells.
  */
-export function acpApprovalRisk(kind: ToolKind | null | undefined, paths: string[], cwd: string): ToolRisk {
+export function acpApprovalRisk(kind: ToolKind | null | undefined, paths: string[], cwd: string, lands: string[] = []): ToolRisk {
   if (kind === 'fetch') return 'write'
   const risk = kindRisk(kind)
-  return risk === 'read' && paths.some((p) => reachesOutside(p, cwd)) ? 'write' : risk
+  return risk === 'read' && [...paths, ...lands].some((p) => reachesOutside(p, cwd)) ? 'write' : risk
 }
 
 /**
  * Whether "always allow" may hold for a call: it stays in the session's folder
- * and away from keys, as far as it says where it acts — and a change has to
- * say (an edit anywhere on the disk can run code later).
+ * and away from keys, as written and where it really `lands`, as far as it says
+ * where it acts — and a change has to say (an edit anywhere on the disk can run
+ * code later) and stay away from files that run by themselves.
  */
-export function acpStaysInside(kind: ToolKind | null | undefined, paths: string[], cwd: string): boolean {
-  return !paths.some((p) => reachesOutside(p, cwd)) && (paths.length > 0 || kindRisk(kind) !== 'write')
+export function acpStaysInside(kind: ToolKind | null | undefined, paths: string[], cwd: string, lands: string[] = []): boolean {
+  const all = [...paths, ...lands]
+  if (all.some((p) => reachesOutside(p, cwd))) return false
+  return kindRisk(kind) !== 'write' || (paths.length > 0 && !all.some((p) => runsByItself(p, cwd)))
 }
 
 /**
