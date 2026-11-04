@@ -26,8 +26,9 @@ describe('browser addresses', () => {
     }
     // Reading outright, whatever the file: fetch and XHR, a frame's document, anything else.
     for (const type of ['xhr', 'subFrame', 'object', 'ping', 'other']) expect(fileRequestAllowed('file:///Users/me/site/a.txt', type, page), type).toBe(false)
-    // Another page in the tab is a page: it reads nothing by that.
+    // Another page in the tab is a page: it reads nothing by that. A popup is no tab: its opener could read what loads there.
     expect(fileRequestAllowed('file:///Users/me/.ssh/id_rsa', 'mainFrame', page)).toBe(true)
+    expect(fileRequestAllowed('file:///Users/me/.aws/credentials', 'mainFrame', undefined)).toBe(false)
     // Ways out of the folder, as a URL writes them.
     expect(fileRequestAllowed('file:///Users/me/site/../secret.png', 'image', page)).toBe(false)
     expect(fileRequestAllowed('file:///Users/me/site/%2e%2e/secret.png', 'image', page)).toBe(false)

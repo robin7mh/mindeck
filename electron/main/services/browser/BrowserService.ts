@@ -88,6 +88,8 @@ export interface BrowserDeps {
 interface Tab {
   id: string
   url: string
+  /** Where the page came from: history.replaceState moves `url`, not this. */
+  document?: string
   title: string
   favicon?: string
   loading: boolean
@@ -1136,7 +1138,7 @@ export class BrowserService {
   }
 
   private view(t: Tab): BrowserTab {
-    const { live: _live, share: _share, nav: _nav, blocked, drm, drmOff: _drmOff, danger: _danger, ...rest } = t
+    const { live: _live, share: _share, nav: _nav, blocked, drm, drmOff: _drmOff, danger: _danger, document: _document, ...rest } = t
     const shield = isWebUrl(t.url) ? { shield: { on: this.settings().adblock && this.adblock.siteOn(t.url), blocked } } : {}
     return { ...rest, shared: this.isShared(t), ...(drm ? { drm } : {}), ...shield }
   }
@@ -1264,6 +1266,7 @@ export class BrowserService {
 
   private load(tab: Tab, url: string): void {
     tab.url = url
+    tab.document = undefined
     tab.nav = undefined
     tab.error = undefined
     tab.crashed = false
@@ -1345,6 +1348,7 @@ export class BrowserService {
     tab.error = undefined
     tab.crashed = false
     if (!nav.inPage) {
+      tab.document = nav.url
       tab.title = ''
       if (newOrigin) tab.favicon = undefined
       this.denyRequests(id)
@@ -1491,7 +1495,7 @@ export class BrowserService {
   /** A request of a page: the blocker decides; the tab counts what it blocked (from its page's main request on). */
   private onRequest(id: string | undefined, req: { url: string; type: string; referrer: string }): RequestVerdict {
     const tab = this.lookup(id ?? '')
-    if (req.url.startsWith('file:') && !fileRequestAllowed(req.url, req.type, tab?.url)) return { cancel: true }
+    if (req.url.startsWith('file:') && !fileRequestAllowed(req.url, req.type, tab && (tab.document ?? tab.url))) return { cancel: true }
     const main = req.type === 'mainFrame'
     if (tab && main) {
       tab.blocked = 0

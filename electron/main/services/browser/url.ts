@@ -34,10 +34,12 @@ const LOCAL_ASSETS = new Set(['stylesheet', 'script', 'image', 'font', 'media'])
  * Mindeck's own UI on file:// needs): a page opened from the disk can fetch any
  * file, read a frame's document, the pixels of any picture and the rules of any
  * style sheet — and send them anywhere. So: another page in the tab, yes; a
- * local page's assets from its own folder down; nothing else, ever.
+ * local page's assets from its own folder down; nothing else, ever. `page` is
+ * undefined where there is no tab: a popup's document belongs to its opener,
+ * which would read what loads there.
  */
 export function fileRequestAllowed(url: string, type: string, page: string | undefined): boolean {
-  if (type === 'mainFrame') return true
+  if (type === 'mainFrame') return page !== undefined
   if (!page?.startsWith('file:') || !LOCAL_ASSETS.has(type) || /%(?:2f|5c)/i.test(url)) return false
   return new URL(url).href.startsWith(new URL('.', page).href)
 }

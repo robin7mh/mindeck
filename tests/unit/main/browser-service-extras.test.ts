@@ -164,6 +164,18 @@ describe('BrowserService · blocking, malware and DRM', () => {
     expect(events.request(local.id, { url: 'file:///Users/me/site/a.png', type: 'image', referrer: '' })).toEqual({})
     expect(events.request(local.id, { url: 'file:///Users/me/site/index.html', type: 'mainFrame', referrer: '' })).toEqual({})
     expect(events.request(local.id, { url: 'https://cdn.dev/x.js', type: 'script', referrer: '' })).toEqual({})
+    // A popup it opens is no tab: nothing local loads there for it to read (confirmed in real Electron: w.location = 'file:///…').
+    expect(events.request(undefined, { url: 'file:///Users/me/.aws/credentials', type: 'mainFrame', referrer: '' })).toEqual({ cancel: true })
+    // replaceState moves the address, not the page: its folder is where it came from.
+    const nav = { canGoBack: false, canGoForward: false }
+    events.navigated(local.id, { url: 'file:///Users/me/site/index.html', ...nav })
+    events.navigated(local.id, { url: 'file:///x', inPage: true, ...nav })
+    expect(events.request(local.id, { url: 'file:///Users/me/secret.png', type: 'image', referrer: '' })).toEqual({ cancel: true })
+    expect(events.request(local.id, { url: 'file:///Users/me/site/a.png', type: 'image', referrer: '' })).toEqual({})
+    // A page that really is elsewhere has its assets there.
+    events.navigated(local.id, { url: 'file:///Users/me/other/index.html', ...nav })
+    expect(events.request(local.id, { url: 'file:///Users/me/other/a.png', type: 'image', referrer: '' })).toEqual({})
+    expect(events.request(local.id, { url: 'file:///Users/me/site/a.png', type: 'image', referrer: '' })).toEqual({ cancel: true })
   })
 
   it('asks the blocker about every request and counts what it blocked on the page', async () => {
