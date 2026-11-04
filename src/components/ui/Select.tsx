@@ -130,7 +130,7 @@ export function Select({ value, options, onChange, label, placeholder, icon: Ico
           'group flex min-w-0 items-center gap-2 text-left outline-hidden transition-colors disabled:opacity-50',
           variant === 'field'
             ? 'w-full rounded-md border bg-surface/50 px-2.5 py-1.5 font-sans text-[12.5px] text-text-primary hover:border-hud-strong focus-visible:border-cyan/60'
-            : 'max-w-[240px] rounded-sm px-1.5 py-0.5 font-mono text-[11px] hover:bg-elevated/60 focus-visible:bg-elevated/60',
+            : 'max-w-[240px] rounded-sm px-2 py-1 font-sans text-[12.5px] hover:bg-elevated/60 focus-visible:bg-elevated/60',
           variant === 'field' && (open ? 'border-cyan/50' : 'border-hud/60'),
           variant === 'quiet' && (current?.value ? 'text-text-secondary' : 'text-text-muted'),
           className
