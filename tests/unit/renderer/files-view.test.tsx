@@ -115,7 +115,7 @@ describe('FilesView', () => {
     setup()
     await act(settle)
     const sort = vi.spyOn(Array.prototype, 'sort')
-    const entrySorts = () => sort.mock.contexts.filter((list: unknown[]) => (list[0] as FinderEntry | undefined)?.mtimeMs !== undefined).length
+    const entrySorts = () => (sort.mock.contexts as unknown[][]).filter((list) => (list[0] as FinderEntry | undefined)?.mtimeMs !== undefined).length
     act(() => useFiles.setState({ notice: { key: 'copied' } }))
     act(() => useFiles.setState({ jobs: { j: { id: 'j', kind: 'copy', done: 1, total: 2 } } }))
     expect(entrySorts()).toBe(0)
@@ -131,7 +131,7 @@ describe('FilesView', () => {
     await act(() => useFiles.getState().open('/home/shop'))
     await act(settle)
     const sort = vi.spyOn(Array.prototype, 'sort')
-    const entrySorts = () => sort.mock.contexts.filter((list: unknown[]) => (list[0] as FinderEntry | undefined)?.mtimeMs !== undefined).length
+    const entrySorts = () => (sort.mock.contexts as unknown[][]).filter((list) => (list[0] as FinderEntry | undefined)?.mtimeMs !== undefined).length
     act(() => useFiles.setState({ notice: { key: 'copied' } }))
     expect(entrySorts()).toBe(0)
     sort.mockRestore()

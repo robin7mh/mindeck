@@ -718,6 +718,22 @@ describe('memory store', () => {
     expect(m().error).toBe('disk full')
   })
 
+  it('a note closed while its text is being written stays closed', async () => {
+    const v = vault()
+    await m().open('Willkommen.md')
+    const write = v.routes['memory:writeBody']
+    let answer: () => void = () => {}
+    v.routes['memory:writeBody'] = ((p: never) => new Promise((r) => (answer = () => r(write(p))))) as never
+    m().setDraft('last words')
+    const saving = m().save()
+    await settle()
+    useMemory.setState({ note: undefined, draft: '' })
+    answer()
+    expect(await saving).toBe(true)
+    expect(m()).toMatchObject({ draft: '', saving: false })
+    expect(m().note).toBeUndefined()
+  })
+
   it('a read that failed says nothing about the note: it stays open', async () => {
     const v = vault()
     await m().open('Willkommen.md')
