@@ -233,7 +233,7 @@ Jede App bekommt ihr eigenes Dockerfile, CI und CD laufen pro Workspace.
   in Cyan. Es ändern sich nur die Variablen, nie die Komponenten. Glows hängen am Token `--glow`,
   sind dezent und im hellen Modus aus.
 - **Ein `Panel`-Baustein** (`src/components/ui/Panel.tsx`) gibt jeder gerahmten Fläche denselben
-  Rahmen und Kopf. `HudFrame` ergänzt optionale Eckmarken. Ein gemeinsamer Glow-Token, sparsam
+  Rahmen und Kopf. Ein gemeinsamer Glow-Token, sparsam
   eingesetzt.
 - **Typografie**: Inter für Oberfläche und Überschriften, JetBrains Mono für alle technischen
   Werte, kleine Großbuchstaben-Labels über `TechLabel`.
@@ -502,7 +502,7 @@ Each app gets its own Dockerfile, and CI and CD run per workspace.
   change, never the components. Glows scale with the `--glow` token, are kept subtle and switch
   off in light mode.
 - **One `Panel` primitive** (`src/components/ui/Panel.tsx`) gives every framed surface the same
-  border and header treatment. `HudFrame` adds optional corner ticks. One shared glow token is
+  border and header treatment. One shared glow token is
   used sparingly.
 - **Typography**: Inter for UI and headlines, JetBrains Mono for all technical values, and small
   uppercase labels via `TechLabel`.

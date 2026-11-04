@@ -24,7 +24,7 @@ Guiding doctrine (unchanged from the masterplan, restated because everything bel
 | Shell | Electron 44 (Chromium 152, Node 24 — updated from 37 on 2026-10-15: a browser that loads foreign pages needs a supported Chromium), frameless window, `contextIsolation: true`, `nodeIntegration: false` |
 | Build | electron-vite 2 (CJS main/preload, Vite renderer), dual tsconfig (`typecheck:node` + `typecheck:web`) |
 | Renderer | React 18, TypeScript 5.5, Zustand (one store per feature), Framer Motion |
-| Design system | Tailwind driven by CSS custom properties (`src/index.css` + `tailwind.config.ts`); primitives `Panel`, `TechLabel`, `StatusDot`, `HudFrame`; Inter Variable + JetBrains Mono, bundled locally |
+| Design system | Tailwind driven by CSS custom properties (`src/index.css` + `tailwind.config.ts`); primitives `Panel`, `TechLabel`, `StatusDot`; Inter Variable + JetBrains Mono, bundled locally |
 | Persistence | Atomic JSON (tmp + rename) under `userData/mindeck/` |
 | Telemetry | `systeminformation` (main-process sampling, push stream) |
 
