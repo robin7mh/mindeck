@@ -72,7 +72,7 @@ import { RemoteAccess } from '../server/RemoteAccess'
 import { RemoteScope } from '../server/RemoteScope'
 import { RemoteActivity } from '../server/RemoteActivity'
 import { SecretStore, type Cipher } from '../services/ai/SecretStore'
-import { AiService, type ProviderFactory } from '../services/ai/AiService'
+import { AiService, releasedAnthropic, type ProviderFactory } from '../services/ai/AiService'
 import { InlineService } from '../services/ai/InlineService'
 import { ConversationStore } from '../services/ai/ConversationStore'
 import { RunStore } from '../services/ai/RunStore'
@@ -107,6 +107,12 @@ export interface CoreOptions {
   cipher?: Cipher
   /** Injected LLM provider factory (tests). */
   providerFactory?: ProviderFactory
+  /**
+   * A packaged desktop app: the environment names no program to start and no address for its key.
+   * Whoever sets it could otherwise run code as the signed app, with its macOS permissions. E2E and
+   * `npm run dev` run unpackaged; the server entry doesn't set this, its environment is its admin's.
+   */
+  released?: boolean
   /** Tell the user an agent needs them (desktop: a notification while the window is in the background). */
   notify?: (title: string, body: string) => void
   /** Mindeck Cloud: address, entitlement key, whether a license is required. Default: dev settings. */
@@ -308,7 +314,7 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
   const ai = new AiService({
     settings,
     secrets,
-    factory: opts.providerFactory,
+    factory: opts.providerFactory ?? (opts.released ? releasedAnthropic : undefined),
     cloud: { baseUrl: `${(opts.cloud ?? cloudConfig(false)).url}/ai`, token: () => cloud.sessionToken(), info: () => cloud.aiInfo() }
   })
 
@@ -394,7 +400,7 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
     vaultRoot: async () => (await vault.status()).root,
     // npx in a folder of Mindeck's: never the adapter (or registry) a cloned repository brings.
     spawnAcp: acpSpawner(join(paths.agentsDir, 'npm')),
-    claudeBin: process.env.MINDECK_CLAUDE_BIN || undefined,
+    claudeBin: (!opts.released && process.env.MINDECK_CLAUDE_BIN) || undefined,
     openFolder: (path) => openInVsCode(path, platform)
   })
   await Promise.all([agents.init(), local.start()])
@@ -512,7 +518,8 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
       hub.publish('remote:changed', list)
       cloud.setRemoteSessions(list.filter((c) => c.state === 'ready').length)
     },
-    sshConfig: process.env.MINDECK_SSH_CONFIG || undefined,
+    // ProxyCommand and LocalCommand in it run when connecting.
+    sshConfig: (!opts.released && process.env.MINDECK_SSH_CONFIG) || undefined,
     node: platform.node
   })
   registerRemoteIpc(router, remote, (id) => projects.getProjectPath(id), (id) => trust.project(id))

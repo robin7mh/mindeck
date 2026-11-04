@@ -479,11 +479,14 @@ describe('main process boot', () => {
     const win = await boot({ devUrl: 'http://127.0.0.1:9/evil' })
     expect(win.loadURL).not.toHaveBeenCalled()
     expect(win.loadFile).toHaveBeenCalledWith(expect.stringMatching(/renderer[\\/]index\.html$/))
+    expect(h.coreOpts).toMatchObject({ released: true }) // nor programs: see createCore
     const trusted = h.bound.mock.calls[0][1] as (url: string) => boolean
     expect(trusted('http://127.0.0.1:9/evil')).toBe(false)
     expect(h.exit).not.toHaveBeenCalled()
 
-    for (const name of ['remote-debugging-port', 'remote-debugging-pipe']) {
+    // Debugging, and every switch that makes Chromium start a program of the caller's in place of, or around, its own
+    // (--gpu-launcher and --browser-subprocess-path confirmed in Electron with a release's fuses on macOS).
+    for (const name of ['remote-debugging-port', 'remote-debugging-pipe', 'renderer-cmd-prefix', 'gpu-launcher', 'utility-cmd-prefix', 'browser-subprocess-path', 'zygote-cmd-prefix']) {
       h.exit.mockReset()
       h.switches.clear()
       h.switches.add(name)
@@ -495,6 +498,7 @@ describe('main process boot', () => {
     h.packaged = false
     await boot()
     expect(h.exit).not.toHaveBeenCalled()
+    expect(h.coreOpts).toMatchObject({ released: false })
   })
 
   it('logs a successful legacy-data copy and survives a failing one', async () => {

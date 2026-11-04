@@ -499,6 +499,52 @@ describe('createCore — paired devices without remote shells', () => {
   })
 })
 
+describe('a packaged desktop app and the environment', () => {
+  afterEach(() => vi.unstubAllEnvs())
+
+  it('starts no agent the environment names; development, E2E and the server entry still can', async () => {
+    vi.stubEnv('MINDECK_CLAUDE_BIN', '/opt/evil-claude')
+    const start = async (released: boolean) => {
+      const c = await core({ mode: 'desktop', notify: vi.fn(), released })
+      const { data: project } = (await c.router.dispatch('projects:add', { path: await tempDir() }, { transport: 'ipc' })) as { data: { id: string } }
+      await c.router.dispatch('agents:create', { kind: 'claude-code', projectId: project.id }, { transport: 'ipc' })
+      return h.ptyArgs.at(-1)
+    }
+    expect(await start(false)).toMatch(/^exec \/opt\/evil-claude /)
+    expect(await start(true)).toMatch(/^exec claude /)
+  })
+
+  it('reads no ssh config the environment names: ProxyCommand in it would run when connecting', async () => {
+    const file = join(await tempDir(), 'config')
+    await writeFile(file, 'Host from-the-environment\n  ProxyCommand /tmp/evil\n')
+    vi.stubEnv('MINDECK_SSH_CONFIG', file)
+    const hosts = async (released: boolean) => {
+      const c = await core({ mode: 'desktop', notify: vi.fn(), released })
+      return (await c.router.dispatch('remote:hosts', undefined, { transport: 'ipc' })) as { data: { name: string }[] }
+    }
+    expect((await hosts(false)).data.map((h) => h.name)).toContain('from-the-environment')
+    expect((await hosts(true)).data.map((h) => h.name)).not.toContain('from-the-environment')
+  })
+
+  it('sends the stored API key to Anthropic, wherever ANTHROPIC_BASE_URL points', async () => {
+    vi.stubEnv('ANTHROPIC_BASE_URL', 'http://127.0.0.1:1/evil')
+    const asked: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (url: unknown) => (asked.push(String(url)), new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } }))))
+    try {
+      const setKey = async (released: boolean) => {
+        const c = await core({ mode: 'desktop', notify: vi.fn(), released })
+        await c.router.dispatch('ai:setKey', { key: 'sk-a-key-long-enough-to-be-one' }, { transport: 'ipc' })
+      }
+      await setKey(false)
+      expect(asked.at(-1)).toContain('127.0.0.1:1/evil') // what tests and a gateway use
+      await setKey(true)
+      expect(asked.at(-1)).toMatch(/^https:\/\/api\.anthropic\.com\//)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+})
+
 describe('standalone server entry', () => {
   it('runs a coding agent session: hooks and memory reach it over the local endpoint', async () => {
     process.env.MINDECK_CLAUDE_BIN = '/opt/fake-claude'

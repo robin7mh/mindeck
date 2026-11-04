@@ -78,8 +78,9 @@ export class AnthropicProvider implements LlmProvider {
     private readonly cloud = false
   ) {}
 
-  static fromKey(apiKey: string): AnthropicProvider {
-    return new AnthropicProvider(new Anthropic({ apiKey }))
+  /** Without `baseURL` the SDK takes ANTHROPIC_BASE_URL: for tests and gateways, never a released app's stored key. */
+  static fromKey(apiKey: string, baseURL?: string): AnthropicProvider {
+    return new AnthropicProvider(new Anthropic({ apiKey, baseURL }))
   }
 
   /** Mindeck Cloud speaks the Messages API below `baseUrl`, signed in with the account's session — never with a key from the environment. */

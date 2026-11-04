@@ -29,9 +29,11 @@ const IDLE_SECONDS = TRIAL_IDLE_MS / 1000
 const DISPOSE_TIMEOUT_MS = 5000
 
 // The fuses keep a signed Mindeck from running as anyone else's Node (electron-builder.yml) — but
-// Chromium's own debugging switches are no fuse: with one, whoever started the app would drive its
-// window, bridge included, under Mindeck's name and permissions.
-if (app.isPackaged && ['remote-debugging-port', 'remote-debugging-pipe'].some((name) => app.commandLine.hasSwitch(name))) app.exit(1)
+// Chromium's own switches are no fuse: with a debugging one, whoever started the app would drive its
+// window, bridge included, under Mindeck's name and permissions; with a launcher one, Chromium starts
+// their program as or around its own helpers. Gone before any helper starts: this runs first.
+const REFUSED_SWITCHES = ['remote-debugging-port', 'remote-debugging-pipe', 'renderer-cmd-prefix', 'gpu-launcher', 'utility-cmd-prefix', 'browser-subprocess-path', 'zygote-cmd-prefix']
+if (app.isPackaged && REFUSED_SWITCHES.some((name) => app.commandLine.hasSwitch(name))) app.exit(1)
 
 // ~/Mindeck/{data,vault,logs} holds everything — every location derives from paths.ts.
 const paths = mindeckPaths()
@@ -291,6 +293,7 @@ async function startCore(): Promise<void> {
     isFocused: () => !!BrowserWindow.getFocusedWindow(),
     // The packaged app needs a license; `npm run dev` only with MINDECK_LICENSE=required.
     cloud: cloudConfig(app.isPackaged),
+    released: app.isPackaged,
     // The trial counts only while Mindeck is in front of someone — not while it runs in the background.
     isUserActive: () => usingMindeck(mainWindow, lastFocusAt, Date.now(), powerMonitor.getSystemIdleTime() >= IDLE_SECONDS),
     isUserAway: () => powerMonitor.getSystemIdleTime() >= IDLE_SECONDS

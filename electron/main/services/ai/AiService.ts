@@ -17,6 +17,9 @@ const anthropic: ProviderFactory = {
   cloud: (baseUrl, token) => AnthropicProvider.forCloud(baseUrl, token)
 }
 
+/** A released app: the stored key goes to Anthropic, whatever the environment says. */
+export const releasedAnthropic: ProviderFactory = { ...anthropic, create: (key) => AnthropicProvider.fromKey(key, 'https://api.anthropic.com') }
+
 /** What the assistant needs from the Mindeck account. */
 export interface CloudAi {
   /** The cloud's AI endpoint (the Messages API lives below it). */
