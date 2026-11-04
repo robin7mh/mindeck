@@ -55,6 +55,9 @@ describe('workspace trust in the editor', () => {
 
   it('speaks German too', () => {
     expect(de.trust.restricted('demo')).toContain('demo')
+    // Everything of a project's own that restricted mode keeps from running: a Dev Container is one.
+    expect(en.trust.restricted('demo')).toContain('Dev Containers')
+    expect(de.trust.restricted('demo')).toContain('Dev Container')
     expect(de.trust.trust).toBe('Diesem Projekt vertrauen')
     expect(de.trust.trusting).toBeTruthy()
   })

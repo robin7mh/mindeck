@@ -1029,7 +1029,7 @@ agents: {
   },
   trust: {
     restricted: (name: string) =>
-      `Restricted mode: Mindeck runs none of ${name}’s own tools — not its TypeScript, ESLint / Prettier, Python, Git hooks and config or SFTP config. Trust this project only if you trust its authors.`,
+      `Restricted mode: Mindeck runs none of ${name}’s own tools — not its TypeScript, ESLint / Prettier, Python, Git hooks and config, SFTP config or Dev Containers. Trust this project only if you trust its authors.`,
     trust: 'Trust this project',
     trusting: 'Trusting…'
   },
