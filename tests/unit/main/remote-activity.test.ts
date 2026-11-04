@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { RemoteActivity } from '../../../electron/main/server/RemoteActivity'
+import { IPC_CHANNELS } from '../../../src/shared/ipc/contract'
 import type { CallContext } from '../../../electron/ipc/router'
 
 const phone: CallContext = { transport: 'remote', deviceId: 'd1', role: 'admin' }
@@ -37,11 +38,29 @@ describe('what counts as someone using a paired device (the trial clock)', () =>
     }
     // An agent changing an open file: the editor reloads it by itself, with everything that follows.
     for (const channel of ['files:read', 'lsp:change', 'lint:file', 'scm:blame', 'scm:original'] as const) a.observe(channel, {}, {}, phone)
+    // Monaco asks these itself of a visible editor: its outline and sticky scroll on every change, its light bulb when the cursor rests on a new error.
+    for (const channel of ['lsp:symbols', 'lsp:codeFixes'] as const) a.observe(channel, {}, {}, phone)
     // Free of the license: no use of it.
     for (const channel of ['cloud:status', 'cloud:refresh', 'app:info'] as const) a.observe(channel, {}, {}, phone)
     // The desktop has its own signal.
     a.observe('terminal:write', {}, {}, { transport: 'ipc' })
     expect(used).not.toHaveBeenCalled()
+  })
+})
+
+describe('the language channels, each decided on purpose', () => {
+  // What Monaco asks of an open file with nobody there, and what takes a hand: a hover, typing, a click. A new channel fails here until it is decided.
+  const BY_ITSELF = ['lsp:change', 'lsp:close', 'lsp:codeFixes', 'lsp:diagnostics', 'lsp:open', 'lsp:symbols']
+  const BY_A_PERSON = ['lsp:completionDetails', 'lsp:completions', 'lsp:definition', 'lsp:hover', 'lsp:references', 'lsp:rename', 'lsp:signature']
+
+  it('all of them are one or the other', () => {
+    const channels = IPC_CHANNELS.filter((channel) => channel.startsWith('lsp:'))
+    expect([...channels].sort()).toEqual([...BY_ITSELF, ...BY_A_PERSON].sort())
+    const { a, used } = setup()
+    for (const channel of BY_ITSELF) a.observe(channel as never, {}, {}, phone)
+    expect(used).not.toHaveBeenCalled()
+    for (const channel of BY_A_PERSON) a.observe(channel as never, {}, {}, phone)
+    expect(used).toHaveBeenCalledTimes(BY_A_PERSON.length)
   })
 })
 

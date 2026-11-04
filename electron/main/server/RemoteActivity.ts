@@ -11,7 +11,8 @@ const LOGGED_PATHS = 20
  * doing it, and an agent at work sets it off. None of it says anyone is there
  * — the trial clock must not run on it: the editor's look at the disk and git
  * every few seconds, a session's changes every minute, what follows a push or
- * a reconnect, and an open file the agent changed (reloaded, parsed, linted).
+ * a reconnect, and an open file the agent changed (reloaded, parsed, linted,
+ * and what Monaco asks itself: outline and sticky scroll, the light bulb).
  */
 const BY_ITSELF: ReadonlySet<IpcChannel> = new Set<IpcChannel>([
   'agents:branch',
@@ -34,8 +35,10 @@ const BY_ITSELF: ReadonlySet<IpcChannel> = new Set<IpcChannel>([
   'liveServer:status',
   'lsp:change',
   'lsp:close',
+  'lsp:codeFixes',
   'lsp:diagnostics',
   'lsp:open',
+  'lsp:symbols',
   'memory:folders',
   'memory:graph',
   'memory:list',
