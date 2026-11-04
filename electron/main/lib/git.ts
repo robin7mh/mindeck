@@ -145,6 +145,11 @@ export async function untrustedOverrides(cwd: string, exec: GitExec = execGit): 
 /** Overrides as git's leading arguments. */
 export const overrideArgs = (overrides: readonly GitOverride[]): string[] => overrides.flatMap(([k, v]) => ['-c', `${k}=${v}`])
 
+/** Where a folder sits in its repository (`pkg/`, '' at its root). Rejects outside a repository; reading it runs nothing of the repository's. */
+export async function repoPrefix(cwd: string, exec: GitExec = execGit): Promise<string> {
+  return (await exec([...overrideArgs(UNTRUSTED_GIT), 'rev-parse', '--show-prefix'], cwd)).trim()
+}
+
 /**
  * The leading arguments for a git call in `cwd`: none when the project is
  * trusted, else the untrusted overrides (see untrustedOverrides).

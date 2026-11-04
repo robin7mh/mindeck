@@ -20,7 +20,7 @@ import type { ScmStatus } from '@shared/types/scm'
 import { shellCommand, shellEnv, shellQuote } from '../terminal/TerminalService'
 import { shellArgs } from '../../lib/shellArgs'
 import { spawnProgram } from '../../lib/executables'
-import { overrideEnv, untrustedOverrides } from '../../lib/git'
+import { overrideEnv, repoPrefix, untrustedOverrides } from '../../lib/git'
 
 function coded(code: string, message: string): Error {
   return Object.assign(new Error(message), { code })
@@ -36,6 +36,8 @@ export interface GhResult {
 export type GhRunner = (args: string[], cwd: string, input?: string, env?: Record<string, string>) => Promise<GhResult>
 
 const TIMEOUT_MS = 120_000
+/** A comparison lists this many files at most, however many a pull request has. */
+const COMPARE_FILES = 300
 
 /** A program (gh) started from the user's login shell (their PATH), never prompting; killed after `timeoutMs`. */
 export const shellRunner =
@@ -297,9 +299,16 @@ export class GitHubService {
     }
   }
 
-  /** One file as the pull request changes it: its merge base vs. its head (GitHub's own view). */
-  async fileDiff(projectId: string, number: number, path: string): Promise<PullFileDiff> {
+  /**
+   * One file as the pull request changes it: its merge base vs. its head (GitHub's own view) — a
+   * file it touches, nothing else of the repository. `device`: a paired device's call, which stays
+   * in the project: its paths are the repository's, and a shared subfolder doesn't share the rest.
+   */
+  async fileDiff(projectId: string, number: number, path: string, device = false): Promise<PullFileDiff> {
     const root = this.root(projectId)
+    const prefix = device ? await repoPrefix(root) : ''
+    const inProject = (p: string) => p.startsWith(prefix) && !p.split('/').includes('..')
+    if (device && !inProject(path)) throw coded('outside-project', `${path} is not in this project`)
     const refs = JSON.parse(await this.run(root, ['pr', 'view', String(number), '--json', 'baseRefOid,headRefOid'])) as { baseRefOid: string; headRefOid: string }
     const key = `${root}#${refs.baseRefOid}...${refs.headRefOid}`
     let compare = this.compareCache.get(key)
@@ -316,8 +325,10 @@ export class GitHubService {
       this.compareCache.set(key, compare)
     }
     const file = compare.files.find((f) => f.filename === path)
+    if (!file && compare.files.length < COMPARE_FILES) throw coded('not-found', `${path} is not part of this pull request`)
+    const earlier = file?.previous_filename ?? path
     const [original, modified] = await Promise.all([
-      file?.status === 'added' ? '' : this.content(root, file?.previous_filename ?? path, compare.base),
+      file?.status === 'added' || (device && !inProject(earlier)) ? '' : this.content(root, earlier, compare.base),
       file?.status === 'removed' ? '' : this.content(root, path, refs.headRefOid)
     ])
     return { path, original, modified }

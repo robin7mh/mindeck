@@ -6,7 +6,7 @@ export function registerGitHubIpc(router: Router, service: GitHubService): void 
   router.register('github:status', ({ projectId }) => service.status(projectId))
   router.register('github:list', ({ projectId, filter, state }) => service.list(projectId, filter, state))
   router.register('github:view', ({ projectId, number }) => service.view(projectId, number))
-  router.register('github:fileDiff', ({ projectId, number, path }) => service.fileDiff(projectId, number, path))
+  router.register('github:fileDiff', ({ projectId, number, path }, ctx) => service.fileDiff(projectId, number, path, ctx.transport === 'remote'))
   router.register('github:checkout', ({ projectId, number }) => service.checkout(projectId, number))
   router.register('github:create', ({ projectId, ...pr }) => service.create(projectId, pr))
   router.register('github:merge', ({ projectId, number, method, deleteBranch }) => service.merge(projectId, number, method, deleteBranch))

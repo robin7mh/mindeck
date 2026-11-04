@@ -482,7 +482,7 @@ describe('ipc handler modules bind every channel to its service', () => {
         ['github:status', { projectId: 'p' }, 'status', ['p']],
         ['github:list', { projectId: 'p', filter: 'mine', state: 'all' }, 'list', ['p', 'mine', 'all']],
         ['github:view', { projectId: 'p', number: 8 }, 'view', ['p', 8]],
-        ['github:fileDiff', { projectId: 'p', number: 8, path: 'a.ts' }, 'fileDiff', ['p', 8, 'a.ts']],
+        ['github:fileDiff', { projectId: 'p', number: 8, path: 'a.ts' }, 'fileDiff', ['p', 8, 'a.ts', false]],
         ['github:checkout', { projectId: 'p', number: 8 }, 'checkout', ['p', 8]],
         ['github:create', { projectId: 'p', title: 'T', body: 'B', base: 'main', draft: true }, 'create', ['p', { title: 'T', body: 'B', base: 'main', draft: true }]],
         ['github:merge', { projectId: 'p', number: 8, method: 'squash', deleteBranch: true }, 'merge', ['p', 8, 'squash', true]],

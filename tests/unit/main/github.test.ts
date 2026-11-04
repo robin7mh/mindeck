@@ -1,5 +1,5 @@
-import { chmod, writeFile } from 'node:fs/promises'
-import { execFile } from 'node:child_process'
+import { chmod, mkdir, writeFile } from 'node:fs/promises'
+import { execFile, execFileSync } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
@@ -137,6 +137,50 @@ describe('GitHub through gh', () => {
     expect(await service(bare.gh).view('p', 8)).toMatchObject({ checks: [], files: [] })
   })
 
+  it('a paired device reads a pull request\'s files inside its project: a shared subfolder doesn\'t share the rest of the repository', async () => {
+    const dir = await tempDir('mindeck-gh-')
+    execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: dir })
+    await mkdir(join(dir, 'pkg'))
+    const { gh, calls } = fake([
+      [/pr view 8 --json baseRefOid/, ok({ baseRefOid: 'B', headRefOid: 'H' })],
+      [
+        /compare\/B\.\.\.H/,
+        ok({
+          base: 'M',
+          files: [
+            { filename: 'pkg/a.ts', status: 'modified' },
+            { filename: 'other/secret.txt', status: 'modified' },
+            { filename: 'pkg/moved.ts', status: 'renamed', previous_filename: 'other/old.ts' }
+          ]
+        })
+      ],
+      [/contents\/pkg\/a\.ts\?ref=M/, ok('before')],
+      [/contents\/pkg\/a\.ts\?ref=H/, ok('after')],
+      [/contents\/pkg\/moved\.ts\?ref=H/, ok('moved here')]
+    ])
+    const s = service(gh, join(dir, 'pkg'))
+    expect(await s.fileDiff('p', 8, 'pkg/a.ts', true)).toEqual({ path: 'pkg/a.ts', original: 'before', modified: 'after' })
+    // Touched by the pull request, but not this project's; and asked for from outside, whatever the pull request does.
+    for (const path of ['other/secret.txt', 'pkg/../other/secret.txt', '../other/secret.txt', 'pkg/none.ts/../../other/secret.txt']) {
+      await expect(s.fileDiff('p', 8, path, true), path).rejects.toMatchObject({ code: 'outside-project' })
+    }
+    // Where it came from isn't either: only where it is now.
+    expect(await s.fileDiff('p', 8, 'pkg/moved.ts', true)).toEqual({ path: 'pkg/moved.ts', original: '', modified: 'moved here' })
+    expect(calls.some((c) => /contents\/other/.test(c.args.join(' ')))).toBe(false)
+    // A folder that is no repository can't say what is inside it: refused for a device.
+    await expect(service(gh, await tempDir('mindeck-gh-plain-')).fileDiff('p', 8, 'pkg/a.ts', true)).rejects.toThrow()
+  })
+
+  it('a comparison lists 300 files at most: past that, a file can\'t be told apart from one the pull request leaves alone', async () => {
+    const { gh } = fake([
+      [/pr view 9 --json baseRefOid/, ok({ baseRefOid: 'B', headRefOid: 'H' })],
+      [/compare\/B\.\.\.H/, ok({ base: 'M', files: Array.from({ length: 300 }, (_, i) => ({ filename: `f${i}.ts`, status: 'modified' })) })],
+      [/contents\/later\.ts\?ref=M/, err('HTTP 404: Not Found')],
+      [/contents\/later\.ts\?ref=H/, ok('x')]
+    ])
+    expect(await service(gh).fileDiff('p', 9, 'later.ts')).toEqual({ path: 'later.ts', original: '', modified: 'x' })
+  })
+
   it('check states', () => {
     expect(['SUCCESS', 'FAILURE', 'TIMED_OUT', 'SKIPPED', 'NEUTRAL', 'STALE', 'QUEUED'].map((conclusion) => checkState({ conclusion }))).toEqual(['success', 'failure', 'failure', 'skipped', 'neutral', 'neutral', 'pending'])
     expect(checkState({ state: 'error' })).toBe('failure')
@@ -165,9 +209,7 @@ describe('GitHub through gh', () => {
       [/contents\/gone\.ts\?ref=M/, ok('old content')],
       [/contents\/old\.ts\?ref=M/, ok('was here')],
       [/contents\/moved\.ts\?ref=H/, ok('is here')],
-      [/contents\/logo\.png/, ok('\x89PNG\0\0')],
-      [/contents\/unknown\.ts\?ref=M/, err('HTTP 404: Not Found')],
-      [/contents\/unknown\.ts\?ref=H/, ok('x')]
+      [/contents\/logo\.png/, ok('\x89PNG\0\0')]
     ])
     const s = service(gh)
     expect(await s.fileDiff('p', 8, 'src/a b.ts')).toEqual({ path: 'src/a b.ts', original: 'before', modified: 'after' })
@@ -175,7 +217,10 @@ describe('GitHub through gh', () => {
     expect(await s.fileDiff('p', 8, 'gone.ts')).toEqual({ path: 'gone.ts', original: 'old content', modified: '' })
     expect(await s.fileDiff('p', 8, 'moved.ts')).toEqual({ path: 'moved.ts', original: 'was here', modified: 'is here' })
     expect(await s.fileDiff('p', 8, 'logo.png')).toEqual({ path: 'logo.png', original: '', modified: '' })
-    expect(await s.fileDiff('p', 8, 'unknown.ts')).toEqual({ path: 'unknown.ts', original: '', modified: 'x' })
+    // Not part of the pull request: nothing of it is fetched.
+    const before = calls.length
+    await expect(s.fileDiff('p', 8, 'unknown.ts')).rejects.toMatchObject({ code: 'not-found' })
+    expect(calls.slice(before).some((c) => c.args.join(' ').includes('contents'))).toBe(false)
     expect(calls.filter((c) => c.args.join(' ').includes('compare'))).toHaveLength(1)
     expect(calls.find((c) => c.args.includes('-H'))!.args.slice(0, 3)).toEqual(['api', '-H', 'Accept: application/vnd.github.raw'])
   })
