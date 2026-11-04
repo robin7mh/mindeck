@@ -2001,7 +2001,7 @@ agents: {
     seen: (when: string) => ` · seen ${when}`,
     revoke: (name: string) => `Revoke ${name}`,
     permissionsCard: 'Agent permissions',
-    permissionsIntro: 'Reading is always allowed. Changes ask first; "Always allow" is remembered per agent, tool and project, and only given on the desktop. Commands are asked every time.',
+    permissionsIntro: 'Reading inside the project is always allowed. Changes ask first; "Always allow" is remembered per agent, tool and project, holds inside the session\'s folder only, and is only given on the desktop. Anything outside that folder and commands are asked every time.',
     allProjects: 'All projects (from before grants were per project)',
     noProject: 'Outside projects',
     removedProject: 'A removed project',

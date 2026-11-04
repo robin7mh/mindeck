@@ -1975,7 +1975,7 @@ agents: {
     seen: (when) => ` · zuletzt ${when}`,
     revoke: (name) => `${name} entfernen`,
     permissionsCard: 'Agent-Berechtigungen',
-    permissionsIntro: 'Lesen ist immer erlaubt. Änderungen fragen zuerst; „Immer erlauben“ wird pro Agent, Werkzeug und Projekt gespeichert und nur am Desktop vergeben. Befehle werden jedes Mal gefragt.',
+    permissionsIntro: 'Lesen im Projekt ist immer erlaubt. Änderungen fragen zuerst; „Immer erlauben“ wird pro Agent, Werkzeug und Projekt gespeichert, gilt nur im Ordner der Sitzung und wird nur am Desktop vergeben. Alles außerhalb dieses Ordners und Befehle werden jedes Mal gefragt.',
     allProjects: 'Alle Projekte (aus der Zeit vor Freigaben pro Projekt)',
     noProject: 'Außerhalb von Projekten',
     removedProject: 'Ein entferntes Projekt',
