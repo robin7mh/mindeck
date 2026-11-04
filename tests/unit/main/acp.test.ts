@@ -521,25 +521,34 @@ describe('ACP agents in the composer: models, modes, commands, references, image
     expect(JSON.parse(await readFile(join(t.deps.dir, `${s.id}.json`), 'utf8')).at(-1).parts[0].text).toHaveLength(chunks)
   })
 
-  it('what streamed last is on the disk when Mindeck quits, and a batch still waiting goes with a removed session', async () => {
+  it('streamed text is on the disk within a second and when Mindeck quits; a batch still waiting goes with a removed session', async () => {
     const t = await acpSetup()
     const a = await t.svc.create({ kind: 'codex', projectId: 'p1' })
     const b = await t.svc.create({ kind: 'codex', projectId: 'p1' })
     await t.settled(a.id, 'idle')
     await t.settled(b.id, 'idle')
-    const conn = (i: number) => t.agents[i].conn!
+    const chunk = (i: number, content: { type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }) =>
+      t.agents[i].conn!.sessionUpdate({ sessionId: 'acp-1', update: { sessionUpdate: 'agent_message_chunk', content } })
+    const saved = async () => (JSON.parse(await readFile(join(t.deps.dir, `${a.id}.json`), 'utf8')) as { parts: { text?: string }[] }[]).flatMap((m) => m.parts).map((p) => p.text)
     await t.svc.send(a.id, 'go')
     await t.svc.send(b.id, 'go')
-    await conn(0).sessionUpdate({ sessionId: 'acp-1', update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'saved at the end' } } })
-    await conn(1).sessionUpdate({ sessionId: 'acp-2', update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'gone with it' } } })
-    await until(() => t.svc.get(a.id).messages.at(-1)!.parts.length === 1 && t.svc.get(b.id).messages.at(-1)!.parts.length === 1)
+    await t.settled(a.id, 'idle')
+    // A picture in the stream: nothing to show, nothing to send.
+    const before = t.svc.get(a.id).messages.length
+    await chunk(0, { type: 'image', data: 'x', mimeType: 'image/png' })
+    await chunk(0, { type: 'text', text: 'the first' })
+    await chunk(1, { type: 'text', text: 'gone with it' })
+    await until(() => t.svc.get(a.id).messages.length > before && t.svc.get(b.id).messages.at(-1)!.parts.length === 1)
     await t.svc.remove(b.id)
     const pushes = t.published.length
-    await tick(120)
+    await tick(1100)
     expect(t.published.slice(pushes).some((p) => (p.payload as { sessionId?: string }).sessionId === b.id)).toBe(false)
+    expect(await saved()).toContain('the first')
+
+    await chunk(0, { type: 'text', text: ' and the last' })
+    await until(() => (t.svc.get(a.id).messages.at(-1)!.parts[0] as { text: string }).text === 'the first and the last')
     await t.svc.dispose()
-    const saved = JSON.parse(await readFile(join(t.deps.dir, `${a.id}.json`), 'utf8')) as { parts: { text?: string }[] }[]
-    expect(saved.at(-1)!.parts[0].text).toBe('saved at the end')
+    expect(await saved()).toContain('the first and the last')
   })
 
   it('offers the agent\'s models, modes and commands, takes the wished model, switches through config options', async () => {
