@@ -306,22 +306,32 @@ function SystemTile() {
           {warnings.length > 1 && (
             <p className="mt-1 font-sans text-[12px] text-amber">{warnings.slice(1).join(' · ')}</p>
           )}
-          <div className="mt-auto grid grid-cols-4 gap-2 pt-4">
-            {stats.map(([label, value]) => (
-              <div key={label} className="min-w-0">
-                <div className="font-sans text-[18px] font-semibold tracking-[-0.01em] text-text-primary tabular-nums">
-                  {Math.round(value)}
-                  <span className="ml-0.5 text-[12px] font-normal text-text-muted">%</span>
+          <div className="mt-auto grid grid-cols-2 gap-x-6 gap-y-4 pt-5">
+            {stats.map(([label, value]) => {
+              const isBattery = label === t.dashboard.battery
+              // High is bad for load and space, low is bad for the battery.
+              const warn = isBattery ? value < 20 : value > 85
+              return (
+                <div key={label} className="min-w-0">
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span className="truncate font-sans text-[12.5px] text-text-secondary">
+                      {label}
+                      {isBattery && battery.charging ? ' ⚡' : ''}
+                    </span>
+                    <span className="font-sans text-[15px] font-semibold tracking-[-0.01em] text-text-primary tabular-nums">
+                      {Math.round(value)}
+                      <span className="ml-0.5 text-[11.5px] font-normal text-text-muted">%</span>
+                    </span>
+                  </div>
+                  <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-elevated">
+                    <div
+                      className={cn('h-full rounded-full transition-[width] duration-500', warn ? 'bg-amber' : 'bg-cyan')}
+                      style={{ width: `${Math.max(0, Math.min(100, value))}%` }}
+                    />
+                  </div>
                 </div>
-                <div className="mt-1 truncate font-sans text-[12px] text-text-muted">
-                  {label}
-                  {label === t.dashboard.battery && battery.charging ? ' ⚡' : ''}
-                </div>
-                <div className="mt-2 h-1 overflow-hidden rounded-full bg-elevated">
-                  <div className={cn('h-full rounded-full', value > 85 ? 'bg-amber' : 'bg-cyan')} style={{ width: `${Math.max(0, Math.min(100, value))}%` }} />
-                </div>
-              </div>
-            ))}
+              )
+            })}
           </div>
         </>
       )}
