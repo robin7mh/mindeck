@@ -196,7 +196,8 @@ test('editor: three editor groups — split right and down, one file edited in a
   await expect(group(3).locator('.monaco-editor .view-lines')).toContainText('export function greet')
 
   // An edit in the third group shows in all three (one buffer), unsaved until ⌘S.
-  await page.keyboard.press('ControlOrMeta+End')
+  // The end of the file (on a Mac ⌘↓: ⌘End is bound to nothing, and the comment would swallow the first line).
+  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+ArrowDown' : 'Control+End')
   await page.keyboard.type('// edited in group 3')
   for (const n of [1, 2, 3]) await expect(group(n).locator('.monaco-editor .view-lines')).toContainText('edited in group 3')
   await expect(page.getByText('Unsaved', { exact: true })).toBeVisible()

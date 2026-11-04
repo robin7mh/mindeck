@@ -95,7 +95,7 @@ In der Checkliste (Abschnitt 5) heißt `[x]` erledigt, `[~]` heißt teilweise er
 | BE-BUG-09 | 🟠 | Exception im node-pty-Exit-Callback beendet die ganze App (SIGABRT) | ✅ behoben |
 | FE-QA-06 | 🟡 | Dev-Server lädt das Fenster mitten in der Sitzung neu: sieht aus wie ein Absturz | ✅ behoben |
 | FE-TEST-04 | 🟡 | Suite nur unter Linux grün: unter macOS 15 Unit- und 5 E2E-Fehlschläge | ✅ behoben |
-| FE-BUG-12 | 🟡 | Outline bleibt für manche TypeScript-Dateien dauerhaft leer | ❌ offen |
+| FE-BUG-12 | 🟡 | Outline bleibt für manche TypeScript-Dateien dauerhaft leer | ✅ kein Produktfehler (Testfehler, 2026-11-04) |
 | FE-BUG-10 | 🟢 | xterm: Terminal in derselben Task geöffnet und entsorgt, ein Timer wirft „reading 'dimensions'“ | ✅ behoben |
 | FE-BUG-11 | 🟢 | Web-UI-Transport: Ein werfender Event-Listener blockiert die übrigen und den Resync | ✅ behoben |
 | FE-TEST-05 | 🟢 | Wackelnde Tests und Coverage: `tls.test.ts` (unbehandeltes `ECONNRESET`), `live.test.ts` (verspätete FSEvents), Batch-Timer der Suche nur zufällig abgedeckt | ✅ behoben |
@@ -153,7 +153,8 @@ Bewegungen laufen über `window` und hängen nicht mehr an einem React-State.
 - Das E2E-Profil startet mit `terminal.gpu: false` (`tests/e2e/fixtures.ts`), wie ein CI-Runner ohne GPU.
 - Die Kürzel sind plattformabhängig (`ControlOrMeta`, ⌘F).
 
-#### FE-BUG-12 · Outline bleibt für manche TypeScript-Dateien leer (offen)
+#### FE-BUG-12 · Outline bleibt für manche TypeScript-Dateien leer (geklärt 2026-11-04: Testfehler)
+**Ergebnis:** Kein Produktfehler. Der Test drückte `ControlOrMeta+End`, auf dem Mac ist ⌘End aber nicht belegt. Der Kommentar landete deshalb am Dateianfang (`// edited in group 3export function greet(…`) und kommentierte die Funktion aus. 0 Symbole waren die richtige Antwort; bestanden hat der Test auf dem Mac nur, wenn die Antwort noch vom Stand vor der Bearbeitung kam. Unter Linux (CI) stimmt die Taste. Der Test nimmt jetzt ⌘↓: 12 von 12 Läufen bestanden. Die Annahme unten („falscher Stand im Worker“) war falsch.
 **Ort:** `src/features/editor/monaco/symbols.ts` → `_executeDocumentSymbolProvider` → Monacos eingebauter TS-Worker (`setup.ts`, `documentSymbols: true`).
 **Problem:** Im E2E „editor: three editor groups … an outline“ (`tests/e2e/app.spec.ts:175`) zeigt das Outline für `shared.ts` in etwa jedem zweiten Lauf „No symbols in this file“. Das bleibt so, auch über 30 s und nach Bearbeitungen. Ein Trace in der echten App zeigt: Der Worker liefert für `shared.ts` bei jeder Version 0 Symbole (Version 1 bis 21), für `other.ts` im selben Moment korrekt 1. Der Worker hat also einen falschen Stand genau dieses Modells. Die Datei ist in drei Editor-Gruppen offen. Wiederholte Abfragen helfen nicht, getestet und verworfen.
 **Nächster Schritt:** Den Modell-Sync des TS-Workers für Modelle in mehreren Editoren untersuchen (`createBufferModel` / `setValue` bei schon vorhandenem Modell, `getNavigationTree` direkt über `monaco.typescript.getTypeScriptWorker` prüfen). Notfalls Symbole für TS/JS über den Projekt-tsserver holen (`lsp:symbols`). Der E2E-Test wackelt so lange.
@@ -920,7 +921,7 @@ Für den Frontend-Teil gibt es kein Problem: Renderer 935/935 grün. Kein `.only
 - [x] **BE-BUG-09** (🟠) – Exception im node-pty-Exit-Callback beendet die App (SIGABRT)
 - [x] **FE-QA-06** (🟡) – Dev-Server lädt das Fenster mitten in der Sitzung neu (`monaco-vim`, nur Entwicklung)
 - [x] **FE-TEST-04** (🟡) – Suite nur unter Linux grün (macOS: 15 Unit-, 5 E2E-Fehlschläge)
-- [ ] **FE-BUG-12** (🟡) – Outline bleibt für manche TypeScript-Dateien leer (TS-Worker liefert 0 Symbole); E2E `app.spec.ts:175` wackelt
+- [x] **FE-BUG-12** (🟡) – Testfehler, kein Produktfehler: ⌘End ist auf dem Mac nicht belegt; E2E `app.spec.ts:175` nimmt ⌘↓
 - [x] **FE-BUG-10** (🟢) – xterm: „reading 'dimensions'“ beim Entsorgen in derselben Task
 - [x] **FE-BUG-11** (🟢) – Web-UI-Transport: Listener ohne Isolierung
 - [x] **FE-TEST-05** (🟢) – Wackelnde Tests (`tls`, `live`) und zufällige Coverage (Batch-Timer der Suche)
