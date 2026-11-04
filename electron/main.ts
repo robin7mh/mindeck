@@ -31,7 +31,9 @@ const DISPOSE_TIMEOUT_MS = 5000
 // The fuses keep a signed Mindeck from running as anyone else's Node (electron-builder.yml) — but
 // Chromium's own switches are no fuse: with a debugging one, whoever started the app would drive its
 // window, bridge included, under Mindeck's name and permissions; with a launcher one, Chromium starts
-// their program as or around its own helpers. Gone before any helper starts: this runs first.
+// their program as or around its own helpers. This runs first: on macOS no helper has started by then
+// (tried, on a copy with the release fuses). On Linux the zygote starts earlier, so a zygote prefix may
+// have run already (not tried).
 const REFUSED_SWITCHES = ['remote-debugging-port', 'remote-debugging-pipe', 'renderer-cmd-prefix', 'gpu-launcher', 'utility-cmd-prefix', 'browser-subprocess-path', 'zygote-cmd-prefix']
 if (app.isPackaged && REFUSED_SWITCHES.some((name) => app.commandLine.hasSwitch(name))) app.exit(1)
 

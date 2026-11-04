@@ -225,7 +225,9 @@ Approvals from a device: `deny` always works, read requests may be allowed; chan
 commands (`execute`) can be allowed only while remote shells are on (`remote-terminal-disabled`
 otherwise). An agent that wants to read outside its folder (or keys and credentials) or fetch a web
 page asks with `risk: "write"`: what it reads could leave with it. `always` from a device counts as `once`, and requests reach devices with
-`allowAlways: false` — "Always allow" is given at the desktop only. An assistant run started by a
+`allowAlways: false` — "Always allow" is given at the desktop only. It holds inside the session's
+folder, by where a path really lands, and not for files that run by themselves (`.git`, `.claude`,
+`.vscode` and the like): those are asked every time. An assistant run started by a
 device uses no write or command tool without remote shells.
 
 Error codes worth handling in the UI:
