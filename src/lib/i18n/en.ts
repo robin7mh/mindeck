@@ -1399,6 +1399,8 @@ agents: {
     binary: 'Binary file',
     tooLarge: 'Larger than 5 MB',
     textOnly: 'Mindeck only edits text files up to 5 MB.',
+    notUtf8: 'Not UTF-8 text',
+    notUtf8Hint: 'This file isn’t UTF-8, so Mindeck doesn’t open it, to protect it: saving it would damage its special characters.',
     cantOpen: "Couldn't open this file",
     tryAgain: 'Try again',
     noProjects: 'No projects yet',

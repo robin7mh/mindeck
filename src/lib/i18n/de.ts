@@ -1380,6 +1380,8 @@ agents: {
     binary: 'Binärdatei',
     tooLarge: 'Größer als 5 MB',
     textOnly: 'Mindeck bearbeitet nur Textdateien bis 5 MB.',
+    notUtf8: 'Kein UTF-8-Text',
+    notUtf8Hint: 'Diese Datei ist nicht in UTF-8 gespeichert. Mindeck öffnet sie deshalb nicht, um sie zu schützen: Beim Speichern gingen Sonderzeichen verloren.',
     cantOpen: 'Diese Datei konnte nicht geöffnet werden',
     tryAgain: 'Erneut versuchen',
     noProjects: 'Noch keine Projekte',

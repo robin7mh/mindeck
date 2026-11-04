@@ -20,5 +20,6 @@ export interface FileContent extends FileStat {
   path: string
   /** UTF-8 text; absent when the file can't be edited (see `unsupported`). */
   content?: string
-  unsupported?: 'binary' | 'too-large'
+  /** `encoding`: text, but not UTF-8 (opened as UTF-8, the next save would damage it). */
+  unsupported?: 'binary' | 'too-large' | 'encoding'
 }

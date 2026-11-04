@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { errorMessage, ipc, IpcError } from '@shared/ipc/client'
-import type { FileEntry, FileStat } from '@shared/types/files'
+import type { FileContent, FileEntry, FileStat } from '@shared/types/files'
 import { groupOrder, leaf, neighbour, parseGrid, removeGroup, splitGroup, moveSash, evenSizes, type GridNode, type Sash, type Side } from './groups'
 
 export interface EditorTab {
@@ -14,7 +14,7 @@ export interface EditorTab {
   /** Text as last read from / written to disk. Absent until loaded, or when not editable. */
   content?: string
   mtimeMs?: number
-  unsupported?: 'binary' | 'too-large'
+  unsupported?: FileContent['unsupported']
   /** Bumped whenever `content` was re-read from disk — the view swaps the buffer text. */
   revision: number
   dirty: boolean
@@ -66,6 +66,9 @@ export function editBuffer(id: string, edits: Parameters<NonNullable<BufferHost[
 }
 
 export const tabKey = (projectId: string, path: string): string => `${projectId}:${path}`
+
+/** What a file Mindeck doesn't open is called in `t.editor`. */
+export const UNSUPPORTED_LABEL = { binary: 'binary', 'too-large': 'tooLarge', encoding: 'notUtf8' } as const
 
 /** Runs after every successful save (Live Sass compiles, SFTP uploads). */
 type SavedListener = (file: { projectId: string; path: string }) => void

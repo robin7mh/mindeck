@@ -4,7 +4,7 @@ import { isMac } from '@/lib/platform'
 import { cn } from '@/lib/cn'
 import { useT } from '@/lib/i18n'
 import { ModuleBoundary } from '@/components/shell/ErrorBoundary'
-import { useEditor, type EditorTab } from '../store'
+import { UNSUPPORTED_LABEL, useEditor, type EditorTab } from '../store'
 import type { Side } from '../groups'
 import { EditorTabs, copyDrag, draggedTab, isTabDrag } from './EditorTabs'
 import { ConflictBar } from './ConflictBar'
@@ -64,8 +64,8 @@ function Placeholder({ tab }: { tab?: EditorTab }) {
   if (tab.loading) return <Centered icon={<RefreshCw size={22} className="animate-spin text-text-muted" />} title={t.common.loading} />
   if (tab.unsupported) {
     return (
-      <Centered icon={<FileWarning size={28} className="text-text-muted" />} title={tab.unsupported === 'binary' ? t.editor.binary : t.editor.tooLarge}>
-        <p className="font-sans text-[13px] text-text-secondary">{t.editor.textOnly}</p>
+      <Centered icon={<FileWarning size={28} className="text-text-muted" />} title={t.editor[UNSUPPORTED_LABEL[tab.unsupported]]}>
+        <p className="font-sans text-[13px] text-text-secondary">{tab.unsupported === 'encoding' ? t.editor.notUtf8Hint : t.editor.textOnly}</p>
       </Centered>
     )
   }
