@@ -279,23 +279,6 @@ export const en = {
     ]
   },
 
-  monitor: {
-    title: 'System Monitor',
-    live: 'LIVE',
-    offline: 'OFFLINE',
-    uptime: 'System Uptime',
-    cpu: 'CPU Load',
-    memory: 'Memory',
-    disk: 'Disk Used',
-    network: 'Network',
-    battery: 'Battery',
-    na: 'N/A',
-    processes: 'Top Processes',
-    cpuMem: 'cpu · mem',
-    sampling: 'sampling…',
-    noData: 'no data'
-  },
-
 
   pair: {
     web: 'Command Center · Web',
@@ -565,6 +548,8 @@ agents: {
     allActivity: 'All activity',
     hideSide: 'Hide side panel',
     showSide: 'Show side panel',
+    hideChats: 'Hide chat list',
+    showChats: 'Show chat list',
     nothingYet: 'Nothing happened here yet',
     noActivity: 'No activity yet',
     moreWaiting: (n: number) => `+${n} more waiting`,

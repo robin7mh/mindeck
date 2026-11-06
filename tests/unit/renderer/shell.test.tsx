@@ -1,7 +1,6 @@
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { installBridge, settle } from './bridge'
-import type { SystemSnapshot } from '@shared/types/system'
 
 import { Panel } from '@/components/ui/Panel'
 import { StatusDot } from '@/components/ui/StatusDot'
@@ -13,7 +12,6 @@ import { StatusIndicator } from '@/components/topbar/StatusIndicator'
 import { Clock } from '@/components/topbar/Clock'
 import { RadialGauge } from '@/components/monitor/RadialGauge'
 import { Sparkline } from '@/components/monitor/Sparkline'
-import { SystemMonitorPanel } from '@/components/monitor/SystemMonitorPanel'
 import { BootSequence, BOOT_TOTAL_MS } from '@/components/boot/BootSequence'
 import { MindeckMark } from '@/components/brand/MindeckMark'
 import { useAssistant as staticAssistant } from '@/features/agents/store'
@@ -224,7 +222,7 @@ describe('TopStatusBar in a browser', () => {
   })
 })
 
-describe('monitor', () => {
+describe('gauges', () => {
   it('RadialGauge clamps and labels', () => {
     const { container, rerender } = render(<RadialGauge value={150} label="CPU" />)
     expect(screen.getByText('150')).toBeInTheDocument()
@@ -238,46 +236,6 @@ describe('monitor', () => {
     expect(container.querySelector('path')).toBeNull()
     rerender(<Sparkline data={[0, 50, 200]} />)
     expect(container.querySelectorAll('path')).toHaveLength(2)
-  })
-
-  const snap = (over: Partial<SystemSnapshot> = {}): SystemSnapshot => ({
-    cpu: { total: 12, cores: [] },
-    mem: { usedPct: 40, usedGb: 4, totalGb: 8 },
-    disk: { usedPct: 70, mount: '/' },
-    net: { rxMbps: 1.25, txMbps: 0.5 },
-    battery: { pct: 80, charging: false, hasBattery: true },
-    uptimeSec: 90061,
-    processes: [{ pid: 7, name: 'node', cpu: 3.21, mem: 120 }],
-    ts: 1,
-    ...over
-  })
-
-  it('SystemMonitorPanel: offline without a bridge', () => {
-    render(<SystemMonitorPanel />)
-    expect(screen.getByText('OFFLINE')).toBeInTheDocument()
-    expect(screen.getByText('no data')).toBeInTheDocument()
-    expect(screen.getByText('—')).toBeInTheDocument()
-    expect(screen.getByText('N/A')).toBeInTheDocument()
-  })
-
-  it('SystemMonitorPanel: live data, uptime formats, battery states', async () => {
-    const bridge = installBridge({ 'system:snapshot': () => snap() })
-    render(<SystemMonitorPanel />)
-    await act(settle)
-    expect(screen.getByText('LIVE')).toBeInTheDocument()
-    expect(screen.getByText('1d 1h')).toBeInTheDocument()
-    expect(screen.getByText('1.8')).toBeInTheDocument() // network MB/s
-    expect(screen.getByText('Battery')).toBeInTheDocument()
-    expect(screen.getByText('node')).toBeInTheDocument()
-    expect(screen.getByText('3.2')).toBeInTheDocument()
-
-    act(() => bridge.emit('system:tick', snap({ uptimeSec: 3720, battery: { pct: 50, charging: true, hasBattery: true } })))
-    expect(screen.getByText('1h 2m')).toBeInTheDocument()
-    expect(screen.getByText('Battery ⚡')).toBeInTheDocument()
-
-    act(() => bridge.emit('system:tick', snap({ uptimeSec: 120, processes: [] })))
-    expect(screen.getByText('2m')).toBeInTheDocument()
-    expect(screen.getByText('sampling…')).toBeInTheDocument()
   })
 })
 
@@ -324,7 +282,6 @@ describe('AppShell', () => {
     }))
     vi.doMock('@/features/projects/components/ProjectsView', () => ({ ProjectsView: () => <div>PROJECTS</div> }))
     vi.doMock('@/features/memory/components/MemoryView', () => ({ MemoryView: () => <div>MEMORY</div> }))
-    vi.doMock('@/components/monitor/SystemMonitorPanel', () => ({ SystemMonitorPanel: () => <div>MONITOR</div> }))
     vi.doMock('@/features/agents/components/AgentsView', () => ({
       AgentsView: ({ onOpenNote, onOpenSettings }: { onOpenNote: (p: string) => void; onOpenSettings: () => void }) => (
         <div>
@@ -361,20 +318,16 @@ describe('AppShell', () => {
     })
     expect(screen.getByText('00:00:02')).toBeInTheDocument() // uptime
 
-    expect(screen.getByText('MONITOR')).toBeInTheDocument() // the rail is Core's
     fireEvent.click(screen.getByText('DASHBOARD'))
     expect(screen.getByText('PROJECTS')).toBeInTheDocument()
-    expect(screen.queryByText('MONITOR')).toBeNull()
 
     expect(screen.queryByText('TERMINAL')).toBeNull()
     fireEvent.click(screen.getByTitle('Terminal'))
     expect(screen.getByText('TERMINAL').parentElement!).not.toHaveClass('hidden')
-    expect(screen.queryByText('MONITOR')).toBeNull()
 
     expect(screen.queryByText(/EDITOR/)).toBeNull()
     fireEvent.click(screen.getByTitle('Editor'))
     expect(screen.getByText('EDITOR ON').parentElement!).not.toHaveClass('hidden')
-    expect(screen.queryByText('MONITOR')).toBeNull()
     expect(screen.getByText('TERMINAL').parentElement!.className).toBe('hidden')
     fireEvent.click(screen.getByTitle('Terminal')) // second visit: both stay mounted
     expect(screen.getByText('EDITOR OFF').parentElement!.className).toBe('hidden')
@@ -384,7 +337,6 @@ describe('AppShell', () => {
 
     fireEvent.click(screen.getByTitle('Memory'))
     expect(screen.getByText('MEMORY')).toBeInTheDocument()
-    expect(screen.queryByText('MONITOR')).toBeNull()
     expect(screen.getByText('TERMINAL').parentElement!.className).toBe('hidden')
 
     fireEvent.click(screen.getByTitle('Agents'))
@@ -451,7 +403,6 @@ describe('AppShell', () => {
     vi.doUnmock('@/features/dashboard/components/Dashboard')
     vi.doUnmock('@/features/projects/components/ProjectsView')
     vi.doUnmock('@/features/memory/components/MemoryView')
-    vi.doUnmock('@/components/monitor/SystemMonitorPanel')
   })
 })
 
@@ -459,7 +410,6 @@ describe('AppShell in a browser without remote shells', () => {
   it('explains instead of opening a terminal', async () => {
     vi.doMock('@/features/terminal/components/TerminalView', () => ({ TerminalView: () => <div>TERMINAL</div> }))
     vi.doMock('@/features/dashboard/components/Dashboard', () => ({ Dashboard: () => <div>DASHBOARD</div> }))
-    vi.doMock('@/components/monitor/SystemMonitorPanel', () => ({ SystemMonitorPanel: () => <div>MONITOR</div> }))
     vi.resetModules()
     const { AppShell } = await import('@/components/shell/AppShell')
     const { useSession } = await import('@/features/session/store')
@@ -473,7 +423,6 @@ describe('AppShell in a browser without remote shells', () => {
     useSession.setState({ info: undefined })
     vi.doUnmock('@/features/terminal/components/TerminalView')
     vi.doUnmock('@/features/dashboard/components/Dashboard')
-    vi.doUnmock('@/components/monitor/SystemMonitorPanel')
   })
 })
 
@@ -485,7 +434,6 @@ describe('AppShell with the Browser and Files', () => {
     }))
     vi.doMock('@/features/terminal/components/TerminalView', () => ({ TerminalView: () => <div>TERMINAL</div> }))
     vi.doMock('@/features/dashboard/components/Dashboard', () => ({ Dashboard: () => <div>DASHBOARD</div> }))
-    vi.doMock('@/components/monitor/SystemMonitorPanel', () => ({ SystemMonitorPanel: () => <div>MONITOR</div> }))
     vi.doMock('@/components/topbar/TopStatusBar', () => ({ TopStatusBar: () => null }))
     vi.doMock('@/features/agents/components/AgentsView', () => ({ AgentsView: () => <div>AGENTS</div> }))
     vi.doMock('@/features/settings/components/SettingsView', () => ({ SettingsView: () => <div>SETTINGS</div> }))
@@ -556,7 +504,6 @@ describe('AppShell with the Browser and Files', () => {
       '@/features/files/components/FilesView',
       '@/features/terminal/components/TerminalView',
       '@/features/dashboard/components/Dashboard',
-      '@/components/monitor/SystemMonitorPanel',
       '@/components/topbar/TopStatusBar',
       '@/features/agents/components/AgentsView',
       '@/features/settings/components/SettingsView'
@@ -572,7 +519,6 @@ describe('AppShell with panes', () => {
     vi.doMock('@/features/agents/components/AgentsView', () => ({ AgentsView: () => <div>AGENTS</div> }))
     vi.doMock('@/features/terminal/components/TerminalView', () => ({ TerminalView: () => <div>TERMINAL</div> }))
     vi.doMock('@/features/dashboard/components/Dashboard', () => ({ Dashboard: () => <div>DASHBOARD</div> }))
-    vi.doMock('@/components/monitor/SystemMonitorPanel', () => ({ SystemMonitorPanel: () => <div>MONITOR</div> }))
     vi.doMock('@/components/topbar/TopStatusBar', () => ({ TopStatusBar: ({ showClock }: { showClock: boolean }) => <div>{showClock ? 'TOPBAR CLOCK' : 'TOPBAR'}</div> }))
     vi.resetModules()
     installBridge({}, 'linux')
@@ -627,7 +573,6 @@ describe('AppShell with panes', () => {
     fireEvent.click(screen.getByTitle('Core')) // the side navigation fills the focused pane
     expect(useWorkspace.getState().layout.panes.map((p) => p.module)).toEqual(['agents', 'core'])
     expect(screen.getByText('DASHBOARD')).toBeInTheDocument()
-    expect(screen.getByText('MONITOR')).toBeInTheDocument()
     expect(screen.getByText('TOPBAR')).toBeInTheDocument()
     expect(screen.getByText('BROWSER OFF')).toBeInTheDocument() // kept, hidden
 
@@ -643,7 +588,6 @@ describe('AppShell with panes', () => {
       '@/features/agents/components/AgentsView',
       '@/features/terminal/components/TerminalView',
       '@/features/dashboard/components/Dashboard',
-      '@/components/monitor/SystemMonitorPanel',
       '@/components/topbar/TopStatusBar'
     ])
       vi.doUnmock(m)

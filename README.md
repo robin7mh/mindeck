@@ -203,7 +203,6 @@ Jede App bekommt ihr eigenes Dockerfile, CI und CD laufen pro Workspace.
 | Obere Leiste | `TopStatusBar` | Codename, Live-Uhr und Modus/Laufzeit/Verbindung. Native Fensterknöpfe unter macOS, eigene unter Windows/Linux. Ziehbarer Bereich. |
 | Linke Leiste | `SideNavigation` | Core · Editor · Terminal · Projects · Memory · Agents · System · Settings, dazu der verbundene Core. Bei schmalen Fenstern nur Icons. |
 | Mitte | das aktive Modul | Siehe [Module](#module) unten. |
-| Rechte Leiste | `SystemMonitorPanel` | CPU/RAM-Anzeigen, Verlaufskurven und eine Prozess-Vorschau. Nur auf Core; alle anderen Module nutzen die volle Breite. |
 | Unten | `BottomDashboard` | *Command Deck*: laufende Agent-Sitzungen (öffnen / beenden), wartende Freigaben, Live-Aktivität. |
 | Overlay | `ApprovalToasts` | Ein Agent, der auf eine Freigabe wartet, ist in jedem Modul sichtbar. |
 
@@ -473,7 +472,6 @@ Each app gets its own Dockerfile, and CI and CD run per workspace.
 | Top bar | `TopStatusBar` | Codename, live clock and mode/uptime/link status. Native traffic lights on macOS, custom window controls on Windows/Linux. Draggable region. |
 | Left rail | `SideNavigation` | Core · Editor · Terminal · Projects · Memory · Agents · System · Settings, plus which core it is linked to. Collapses to icons only on narrow widths. |
 | Center | the active module | See [Modules](#modules) below. |
-| Right rail | `SystemMonitorPanel` | CPU/RAM gauges, sparklines and a process preview. Shown on Core only; every other module uses the full width. |
 | Bottom | `BottomDashboard` | *Command Deck*: running agent sessions (jump in / end), waiting approvals, live activity. |
 | Overlay | `ApprovalToasts` | An agent waiting for approval is visible in every module. |
 

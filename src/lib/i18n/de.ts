@@ -272,23 +272,6 @@ export const de: Dict = {
     ]
   },
 
-  monitor: {
-    title: 'Systemmonitor',
-    live: 'LIVE',
-    offline: 'OFFLINE',
-    uptime: 'System-Laufzeit',
-    cpu: 'CPU-Last',
-    memory: 'Arbeitsspeicher',
-    disk: 'Festplatte belegt',
-    network: 'Netzwerk',
-    battery: 'Akku',
-    na: 'k. A.',
-    processes: 'Top-Prozesse',
-    cpuMem: 'cpu · ram',
-    sampling: 'messe …',
-    noData: 'keine Daten'
-  },
-
 
   pair: {
     web: 'Command Center · Web',
@@ -558,6 +541,8 @@ agents: {
     allActivity: 'Alle Aktivitäten',
     hideSide: 'Seitenleiste ausblenden',
     showSide: 'Seitenleiste einblenden',
+    hideChats: 'Chatleiste ausblenden',
+    showChats: 'Chatleiste einblenden',
     nothingYet: 'Hier ist noch nichts passiert',
     noActivity: 'Noch keine Aktivität',
     moreWaiting: (n) => `+${n} weitere warten`,

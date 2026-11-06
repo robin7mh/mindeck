@@ -26,7 +26,6 @@ import { useBrowser } from '@/features/browser/store'
 import { FilesView } from '@/features/files/components/FilesView'
 import { getT, useT } from '@/lib/i18n'
 import { useSession } from '@/features/session/store'
-import { SystemMonitorPanel } from '@/components/monitor/SystemMonitorPanel'
 import { BootSequence, BOOT_TOTAL_MS } from '@/components/boot/BootSequence'
 import { ModuleBoundary } from '@/components/shell/ErrorBoundary'
 import { useBoot } from '@/hooks/useBoot'
@@ -146,17 +145,10 @@ export function AppShell() {
     if (id === 'editor') return <EditorView active={visible} onNavigate={show} />
     // The page is a native view over the UI: not while the boot screen is up.
     if (id === 'browser') return <BrowserView active={visible && booted} />
-    // The monitor rail belongs to the Core dashboard, when its pane is wide enough.
+    // Core: the dashboard over the pane's full width (the machine's load lives in the System module).
     return (
-      <div className="flex min-h-0 min-w-0 flex-1 gap-2.5">
-        <div className="flex min-w-0 flex-1 flex-col">
-          <Dashboard onNavigate={show} />
-        </div>
-        <div className="hidden w-72 shrink-0 pane-lg:flex pane-2xl:w-80">
-          <ModuleBoundary id="monitor" name={t.monitor.title}>
-            <SystemMonitorPanel />
-          </ModuleBoundary>
-        </div>
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <Dashboard onNavigate={show} />
       </div>
     )
   }

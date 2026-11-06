@@ -1020,6 +1020,31 @@ describe('AgentsView', () => {
     localStorage.removeItem('mindeck.agents.side')
   })
 
+  it('the list of chats folds away to a strip that still starts one — and stays so', async () => {
+    installBridge({ 'agents:list': () => ag().sessions, 'agents:changes': () => [] })
+    localStorage.removeItem('mindeck.agents.list')
+    useAgents.setState({ sessions: [session()], activeId: 's1', view: 'session', messages: { s1: [] } })
+    const { unmount } = view()
+    await act(settle)
+    expect(screen.getByLabelText('Delete Fix login')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Hide chat list' }))
+    expect(screen.queryByLabelText('Delete Fix login')).toBeNull()
+    expect(screen.getByRole('tab', { name: 'Changes' })).toBeInTheDocument() // the column on the right stays
+    expect(localStorage.getItem('mindeck.agents.list')).toBe('0')
+    fireEvent.click(screen.getByRole('button', { name: 'New chat' })) // the strip's +
+    expect(ag().dialog).toEqual({ prompt: undefined })
+    act(() => ag().closeDialog())
+    unmount()
+
+    view() // remembered
+    await act(settle)
+    expect(screen.queryByLabelText('Delete Fix login')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Show chat list' }))
+    expect(screen.getByLabelText('Delete Fix login')).toBeInTheDocument()
+    expect(localStorage.getItem('mindeck.agents.list')).toBe('1')
+    localStorage.removeItem('mindeck.agents.list')
+  })
+
   it('without storage (private window, blocked site data) the column shows and folds all the same', async () => {
     installBridge({ 'agents:list': () => ag().sessions, 'agents:changes': () => [] })
     const blocked = () => {
@@ -1033,6 +1058,8 @@ describe('AgentsView', () => {
     expect(screen.getByRole('tab', { name: 'Changes' })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Hide side panel' }))
     expect(screen.getByRole('button', { name: 'Show side panel' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Hide chat list' }))
+    expect(screen.getByRole('button', { name: 'Show chat list' })).toBeInTheDocument()
     get.mockRestore()
     set.mockRestore()
   })
