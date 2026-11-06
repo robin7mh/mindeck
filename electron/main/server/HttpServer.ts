@@ -1,15 +1,15 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { createServer as createHttpsServer, type Server as HttpsServer } from 'node:https'
 import { X509Certificate, randomUUID } from 'node:crypto'
-import { createServer as createNetServer, isIP, type Server as NetServer, type Socket } from 'node:net'
+import { connect as connectTcp, createServer as createNetServer, isIP, type Server as NetServer, type Socket } from 'node:net'
 import { hostname as osHostname } from 'node:os'
 import type { TLSSocket } from 'node:tls'
 import { readFile, realpath, stat } from 'node:fs/promises'
 import { extname, join, resolve, sep } from 'node:path'
 import type { Duplex } from 'node:stream'
-import { WebSocketServer, type WebSocket } from 'ws'
+import { WebSocketServer, createWebSocketStream, type WebSocket } from 'ws'
 import { DESKTOP_EVENTS, TERMINAL_EVENTS, type IpcEvent } from '@shared/ipc/contract'
-import { EVENTS_PROTOCOL, TOKEN_PROTOCOL_PREFIX } from '@shared/ipc/transport'
+import { EVENTS_PROTOCOL, FORWARD_PROTOCOL, TOKEN_PROTOCOL_PREFIX } from '@shared/ipc/transport'
 import type { PermissionRequest } from '@shared/types/ai'
 import type { CoreMode, Device } from '@shared/types/server'
 import type { Router } from '../../ipc/router'
@@ -39,6 +39,16 @@ const TLS_HANDSHAKE = 0x16
 const FIRST_BYTE_MS = 10_000
 /** A well-formed Host header (name or IP, optional port). */
 const HOST = /^([a-z0-9.-]+|\[[0-9a-f:.]+\])(:\d{1,5})?$/i
+/** What a connection through the Mindeck Cloud relay counts as: no address of its own, never this computer. */
+export const RELAY_ADDRESS = 'relay'
+/** Relay pipes open at once at most (a phone's calls, its events socket, a browser preview's connections). */
+const MAX_RELAY_PIPES = 128
+/** Dev-server tunnels per device at most (a page opens a handful, a dev server's HMR one more). */
+const MAX_FORWARDS_PER_DEVICE = 64
+/** How long a dev server gets to take the tunnel's connection. */
+const FORWARD_CONNECT_MS = 5000
+/** Idle HTTP connections stay open this long: over the relay, a new one costs a round through the cloud and a TLS handshake. */
+const KEEP_ALIVE_MS = 30_000
 
 const CONTENT_TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -91,12 +101,22 @@ export interface HttpServerOptions {
   hostname?: () => string
   /** How long one scope check may take, and how many events may wait for theirs (defaults below; tests shorten them). */
   outbox?: { timeoutMs?: number; max?: number }
+  /**
+   * May `device` open a tunnel to `localhost:<port>` (`WS /api/forward`)? The address to
+   * connect to, or the refusal's code. Without it there are no tunnels.
+   */
+  forward?: (device: Device, port: number) => ForwardDecision | Promise<ForwardDecision>
+  /** Dev-server tunnels per device at most (default MAX_FORWARDS_PER_DEVICE; tests shrink it). */
+  maxForwards?: number
   /** Per-device limits for channels that cost money or quota (`MINDECK_RATE_LIMITS`; default DEFAULT_RATE_LIMITS). */
   rateLimits?: RateLimits
   /** How many events are kept per device for a reconnect (default REPLAY_LIMITS; tests shrink them). */
   replay?: ReplayLimits
   now?: () => number
 }
+
+/** A dev-server tunnel: where to connect (the names tried in order), or why not. */
+export type ForwardDecision = { hosts: string[]; port: number } | { error: 'remote-terminal-disabled' | 'not-a-dev-server' | 'forbidden' }
 
 /** `MINDECK_ALLOWED_HOSTS=mindeck.example.com,.ts.net` → the names, trimmed. */
 export function allowedHostsFromEnv(env: NodeJS.ProcessEnv = process.env): string[] {
@@ -133,6 +153,14 @@ function resumeOf(url: URL): { stream: string; since: number } | null {
 
 interface Client {
   ws: WebSocket
+  deviceId: string
+  alive: boolean
+}
+
+/** An open dev-server tunnel: its socket, whose it is, and whether it answered the last ping. */
+interface Forward {
+  ws: WebSocket
+  tcp: Socket
   deviceId: string
   alive: boolean
 }
@@ -225,8 +253,9 @@ function socketToken(req: IncomingMessage): string | null {
   return offered ? offered.slice(TOKEN_PROTOCOL_PREFIX.length) : null
 }
 
+/** The caller's address — a pipe through the relay has none (it is no TCP socket): `relay`, never loopback. */
 function clientIp(req: IncomingMessage): string {
-  return String(req.socket.remoteAddress)
+  return req.socket.remoteAddress ?? RELAY_ADDRESS
 }
 
 /** This computer itself (IPv4, IPv6 or IPv4-mapped loopback). */
@@ -309,6 +338,8 @@ async function readJson(req: IncomingMessage, limit = MAX_BODY): Promise<unknown
  *   POST /api/rpc/<channel>    payload → IpcResult (Bearer token; calls that cost money or quota are rate limited per device)
  *   WS   /api/events           push events as { channel, payload, seq } (token as subprotocol;
  *                              ?stream=&since= replays what a reconnecting client missed)
+ *   WS   /api/forward?port=    raw TCP to a dev server on this machine (`forward` decides which;
+ *                              token as subprotocol) — how a phone's browser opens localhost:5173
  *   GET  /*                    the built web UI (single-page app)
  *
  * No CORS. Credentials are explicit headers (the app, the desktop) — or, for
@@ -323,6 +354,11 @@ async function readJson(req: IncomingMessage, limit = MAX_BODY): Promise<unknown
  * plain HTTP only for this computer itself (127.0.0.1 — the local web UI,
  * health checks). The network gets no answer in the clear: a page request is
  * sent to the HTTPS address, anything else (a token, a pairing code) is refused.
+ *
+ * Pipes from the Mindeck Cloud relay (`attachRelay`) speak the same HTTPS: the
+ * phone's TLS ends here, with the certificate it pinned, so the cloud passes
+ * bytes it cannot read. They go through the very same checks as any network
+ * connection — they have no address and are never this computer.
  */
 export class HttpServer {
   /** The listening socket; it hands each connection to `web` or `secure`. */
@@ -330,7 +366,9 @@ export class HttpServer {
   private web?: Server
   private secure?: HttpsServer
   private tls?: TlsCredentials
-  private readonly sockets = new Set<Socket>()
+  private readonly sockets = new Set<Duplex>()
+  /** Pipes from the relay open now. */
+  private relayPipes = 0
   private readonly wss = new WebSocketServer({
     noServer: true,
     maxPayload: 64 * 1024,
@@ -338,6 +376,18 @@ export class HttpServer {
     handleProtocols: (offered) => (offered.has(EVENTS_PROTOCOL) ? EVENTS_PROTOCOL : false)
   })
   private readonly clients = new Set<Client>()
+  /** Dev-server tunnels: raw bytes, so a larger message size than events. */
+  private readonly forwardWss = new WebSocketServer({
+    noServer: true,
+    maxPayload: 1024 * 1024,
+    perMessageDeflate: false,
+    handleProtocols: (offered) => (offered.has(FORWARD_PROTOCOL) ? FORWARD_PROTOCOL : false)
+  })
+  private readonly forwards = new Set<Forward>()
+  /** Tunnels per device, open or being set up. */
+  private readonly forwardSlots = new Map<string, number>()
+  /** Counts up with every revocation (a device removed, remote shells off): a tunnel set up meanwhile is asked again. */
+  private revocations = 0
   private readonly pairFailures = new Map<string, number[]>()
   /** The names in the certificate the server presents. */
   private certNames: string[] = []
@@ -366,6 +416,11 @@ export class HttpServer {
     return this.clients.size
   }
 
+  /** Pipes from the relay open now. */
+  get relayCount(): number {
+    return this.relayPipes
+  }
+
   /** Listen on `host:port` — with `tls`, HTTPS (and HTTP for this computer only). */
   async listen(host: string, port: number, tls?: TlsCredentials): Promise<void> {
     const serve = <T extends Server | HttpsServer>(server: T): T => {
@@ -374,7 +429,7 @@ export class HttpServer {
       return server
     }
     const web = serve(createServer())
-    const secure = tls ? serve(createHttpsServer({ cert: tls.cert, key: tls.key, minVersion: 'TLSv1.2' })) : undefined
+    const secure = tls ? serve(createHttpsServer({ cert: tls.cert, key: tls.key, minVersion: 'TLSv1.2', keepAliveTimeout: KEEP_ALIVE_MS })) : undefined
     const server = createNetServer((socket) => this.accept(socket, web, secure))
     server.maxConnections = MAX_CONNECTIONS
     await new Promise<void>((resolveListen, reject) => {
@@ -412,6 +467,7 @@ export class HttpServer {
     this.unsubscribe = undefined
     for (const client of [...this.clients]) client.ws.terminate()
     this.clients.clear()
+    this.closeForwards()
     this.opts.onClients?.(0)
     const server = this.server
     this.server = undefined
@@ -437,6 +493,26 @@ export class HttpServer {
       ;(chunk[0] === TLS_HANDSHAKE ? secure : web).emit('connection', socket)
       process.nextTick(() => socket.resume())
     })
+  }
+
+  /**
+   * A pipe from the Mindeck Cloud relay: the phone's TLS, end to end. It goes
+   * straight to the HTTPS server — never the plain one — and has no address,
+   * so nothing treats it as this computer. False when the server speaks no
+   * HTTPS (the pipe is not taken: in the clear the cloud would read along) or
+   * too many pipes are open.
+   */
+  attachRelay(pipe: Duplex): boolean {
+    if (!this.server || !this.secure || this.relayPipes >= MAX_RELAY_PIPES) return false
+    this.relayPipes += 1
+    this.sockets.add(pipe)
+    pipe.once('close', () => {
+      this.relayPipes -= 1
+      this.sockets.delete(pipe)
+    })
+    pipe.on('error', () => pipe.destroy())
+    this.secure.emit('connection', pipe)
+    return true
   }
 
   /** Plain HTTP while the server speaks HTTPS: only this computer may use it (not a proxy on it). */
@@ -476,6 +552,18 @@ export class HttpServer {
     this.streams.drop(deviceId)
     for (const client of [...this.clients]) {
       if (client.deviceId === deviceId) client.ws.close(4401, 'revoked')
+    }
+    this.closeForwards(deviceId)
+  }
+
+  /** Ends the dev-server tunnels (of one device, or all: remote shells were switched off). */
+  closeForwards(deviceId?: string): void {
+    this.revocations += 1
+    for (const f of [...this.forwards]) {
+      if (deviceId !== undefined && f.deviceId !== deviceId) continue
+      this.forwards.delete(f)
+      f.tcp.destroy()
+      f.ws.terminate()
     }
   }
 
@@ -686,6 +774,7 @@ export class HttpServer {
     }
     // Nothing here may reject unhandled. A malformed URL is simply not authenticated.
     const url = URL.canParse(req.url as string, 'http://local') ? new URL(req.url as string, 'http://local') : null
+    if (url?.pathname === '/api/forward') return this.forward(req, socket, head, url, offered)
     const device = url?.pathname === '/api/events' ? await this.opts.auth.verify(offered ?? fromCookie).catch(() => undefined) : null
     // The device store failed: nothing is known about the token, so the cookie stays for the next attempt.
     if (device === undefined) {
@@ -719,6 +808,102 @@ export class HttpServer {
       if (!missed) return ws.send(this.resyncMessage(stream))
       for (const message of missed) ws.send(message)
     })
+  }
+
+  /**
+   * A tunnel to a dev server on this machine: the device's token (a subprotocol — no cookie: the
+   * web UI has no use for it), then `forward` decides, then the dev server must take the connection
+   * — only then the upgrade is answered, so a phone sees a refusal as one (403/404/502).
+   */
+  private async forward(req: IncomingMessage, socket: Duplex, head: Buffer, url: URL, token: string | null): Promise<void> {
+    const refuse = (status: number, text: string, code: string) => {
+      const body = JSON.stringify({ ok: false, error: { code, message: text } })
+      socket.write(`HTTP/1.1 ${status} ${text}\r\nContent-Type: application/json\r\nContent-Length: ${Buffer.byteLength(body)}\r\nConnection: close\r\n\r\n${body}`)
+      socket.destroy()
+    }
+    // A device removed, or remote shells switched off, while this tunnel is set up: asked again before it opens.
+    const revocations = this.revocations
+    const device = token ? await this.opts.auth.verify(token).catch(() => undefined) : null
+    if (device === undefined) return refuse(503, 'Service Unavailable', 'unavailable')
+    if (!device) return refuse(401, 'Unauthorized', 'unauthorized')
+    const port = Number(url.searchParams.get('port'))
+    if (!Number.isInteger(port) || port < 1 || port > 65535) return refuse(400, 'Bad Request', 'bad-request')
+    // Counted from here, open or on its way: requests at once cannot pass the limit together.
+    const held = this.forwardSlots.get(device.id) ?? 0
+    if (held >= (this.opts.maxForwards ?? MAX_FORWARDS_PER_DEVICE)) return refuse(429, 'Too Many Requests', 'rate-limited')
+    this.forwardSlots.set(device.id, held + 1)
+    // Exactly once: when it opens, at its end; else when setting it up stops.
+    const free = () => {
+      const left = this.forwardSlots.get(device.id)! - 1
+      if (left > 0) this.forwardSlots.set(device.id, left)
+      else this.forwardSlots.delete(device.id)
+    }
+    let opened = false
+    try {
+      const decision = (await this.opts.forward?.(device, port)) ?? { error: 'forbidden' as const }
+      if ('error' in decision) return refuse(decision.error === 'not-a-dev-server' ? 404 : 403, decision.error === 'not-a-dev-server' ? 'Not Found' : 'Forbidden', decision.error)
+      const tcp = await this.dial(decision.hosts, decision.port)
+      if (!tcp) return refuse(502, 'Bad Gateway', 'not-listening')
+      if (this.revocations !== revocations && !(await this.stillAllowed(token!, device.id, port))) {
+        tcp.destroy()
+        return refuse(403, 'Forbidden', 'revoked')
+      }
+      // The phone gave up meanwhile — or the handshake is one ws refuses (400) without calling back.
+      if (socket.destroyed) return void tcp.destroy()
+      socket.once('close', () => {
+        if (!opened) tcp.destroy()
+      })
+      this.forwardWss.handleUpgrade(req, socket, head, (ws) => {
+        opened = true
+        const forward: Forward = { ws, tcp, deviceId: device.id, alive: true }
+        this.forwards.add(forward)
+        const pipe = createWebSocketStream(ws)
+        const end = () => {
+          if (!this.forwards.delete(forward)) return
+          free()
+          tcp.destroy()
+          pipe.destroy()
+        }
+        ws.on('pong', () => (forward.alive = true))
+        pipe.on('error', end)
+        pipe.on('close', end)
+        tcp.on('close', end)
+        tcp.pipe(pipe).pipe(tcp)
+      })
+    } finally {
+      if (!opened) free()
+    }
+  }
+
+  /** The token still names that device, and the policy still lets it through (asked after a revocation during setup). */
+  private async stillAllowed(token: string, deviceId: string, port: number): Promise<boolean> {
+    const device = await this.opts.auth.verify(token).catch(() => null)
+    if (device?.id !== deviceId) return false
+    const decision = await this.opts.forward?.(device, port)
+    return !!decision && !('error' in decision)
+  }
+
+  /** A TCP connection to the first of `hosts` that takes it (Vite on macOS listens on ::1 only, others on 127.0.0.1). */
+  private async dial(hosts: string[], port: number): Promise<Socket | null> {
+    for (const host of hosts) {
+      const tcp = await new Promise<Socket | null>((resolveDial) => {
+        const s = connectTcp({ host, port, timeout: FORWARD_CONNECT_MS })
+        const fail = () => {
+          s.destroy()
+          resolveDial(null)
+        }
+        s.once('connect', () => {
+          s.setTimeout(0)
+          s.off('timeout', fail)
+          resolveDial(s)
+        })
+        // Stays: an error later (the dev server resets the connection) destroys the socket, nothing escapes.
+        s.on('error', fail)
+        s.once('timeout', fail)
+      })
+      if (tcp) return tcp
+    }
+    return null
   }
 
   private push(channel: IpcEvent, payload: unknown): void {
@@ -809,6 +994,15 @@ export class HttpServer {
       }
       client.alive = false
       client.ws.ping()
+    }
+    // A phone that left the Wi-Fi leaves its tunnels half open: they go like a dead events socket.
+    for (const forward of [...this.forwards]) {
+      if (!forward.alive) {
+        forward.ws.terminate()
+        continue
+      }
+      forward.alive = false
+      forward.ws.ping()
     }
   }
 }

@@ -19,7 +19,7 @@ import { useAssistant } from '@/features/agents/store'
 import { useAgents } from '@/features/agents/sessions'
 import { relativeTime } from '@/features/agents/format'
 import { useComposerPrefs } from '@/features/agents/composerPrefs'
-import { canManage, myDeviceId, useSettings } from '../store'
+import { canManage, isLoopback, myDeviceId, useSettings } from '../store'
 import { AppearanceCard } from './AppearanceCard'
 import { LanguagesCard } from './LanguagesCard'
 import { MigrateCard } from './MigrateCard'
@@ -144,6 +144,25 @@ function SharedFolders({ roots, disabled, onChange }: { roots: string[]; disable
   )
 }
 
+/** Where away access stands — re-read every few seconds while it is on (connecting → online, a cloud restart). */
+function RelayLine() {
+  const t = useT()
+  const relay = useSettings((s) => s.server?.relay)
+  const refresh = useSettings((s) => s.refreshServer)
+  useEffect(() => {
+    const timer = setInterval(() => void refresh(), 4000)
+    return () => clearInterval(timer)
+  }, [refresh])
+  if (!relay || relay.state === 'off') return null
+  const tone = relay.state === 'online' ? 'ok' : relay.state === 'connecting' ? 'warn' : 'muted'
+  return (
+    <p className="mb-1 flex items-start gap-1.5 pl-1 font-sans text-[11.5px] text-text-secondary">
+      <StatusDot tone={tone} pulse={relay.state === 'connecting'} />
+      <span>{t.settings.relayState(relay.state, relay.reason, relay.pipes ?? 0)}</span>
+    </p>
+  )
+}
+
 function RemoteCard() {
   const t = useT()
   const s = useSettings()
@@ -185,7 +204,12 @@ function RemoteCard() {
         <div className="mt-3 border-t border-hud/40 pt-2">
           <Toggle label={t.settings.runServer} hint={t.settings.runServerHint} checked={cfg.enabled} disabled={s.busy} onChange={(v) => void s.configureServer({ enabled: v })} />
           <Toggle label={t.settings.lan} hint={t.settings.lanHint} checked={cfg.lan} disabled={s.busy || !cfg.enabled} onChange={(v) => void s.configureServer({ lan: v })} />
-          <Toggle label={t.settings.tls} hint={t.settings.tlsHint} checked={cfg.tls} disabled={s.busy || !cfg.enabled || !cfg.lan} onChange={(v) => void s.configureServer({ tls: v })} />
+          <Toggle label={t.settings.relay} hint={t.settings.relayHint} checked={cfg.relay} disabled={s.busy || !cfg.enabled} onChange={(v) => void s.configureServer({ relay: v })} />
+          {cfg.enabled && cfg.relay && <RelayLine />}
+          {cfg.relay && desktop && (
+            <Toggle label={t.settings.keepAwake} hint={t.settings.keepAwakeHint} checked={cfg.keepAwake} disabled={s.busy || !cfg.enabled} onChange={(v) => void s.configureServer({ keepAwake: v })} />
+          )}
+          <Toggle label={t.settings.tls} hint={t.settings.tlsHint} checked={cfg.tls} disabled={s.busy || !cfg.enabled || !(cfg.lan || cfg.relay)} onChange={(v) => void s.configureServer({ tls: v })} />
           {cfg.lan && !cfg.tls && (
             <p className="mb-1 flex items-start gap-1.5 font-sans text-[11.5px] text-amber">
               <AlertTriangle size={12} className="mt-0.5 shrink-0" /> {t.settings.tlsOff}
@@ -235,9 +259,13 @@ function RemoteCard() {
             <div className="min-w-0 flex-1 space-y-1">
               <p className="font-mono text-[22px] tracking-[0.25em] text-text-primary">{s.pairing.code}</p>
               {s.pairing.role === 'admin' && <p className="font-sans text-[12px] font-medium text-amber">{t.settings.adminCode}</p>}
-              {s.pairing.reachable ? (
+              {s.pairing.reachable && s.pairing.installId && isLoopback(s.pairing.url) ? (
+                // Only through the relay (the LAN is off): no address to open, no browser to warn — the app scans and pairs.
+                <p className="font-sans text-[12px] text-text-secondary">{t.settings.pairingRelayOnly}</p>
+              ) : s.pairing.reachable ? (
                 <>
                   <p className="font-sans text-[12px] text-text-secondary">{t.settings.pairingHint}</p>
+                  {s.pairing.installId && <p className="font-sans text-[11.5px] text-text-secondary">{t.settings.pairingRelay}</p>}
                   <p className="break-all font-mono text-[11px] text-cyan">{s.pairing.url}</p>
                   {/* The link names the certificate: the phone's browser will warn about it. */}
                   {s.pairing.url.includes('&fp=') && (

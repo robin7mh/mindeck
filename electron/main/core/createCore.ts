@@ -42,6 +42,7 @@ import { registerAgentsIpc } from '../../ipc/agents.ipc'
 import { registerBrowserIpc } from '../../ipc/browser.ipc'
 import { registerFinderIpc } from '../../ipc/finder.ipc'
 import { BrowserService } from '../services/browser/BrowserService'
+import { tunnelTarget } from '../services/browser/devServers'
 import { FinderService, spotlightFor } from '../services/finder/FinderService'
 import { BROWSER_TOOLS, browserTools } from '../services/ai/tools/browser'
 import { TERMINAL_TOOLS, terminalTools } from '../services/ai/tools/terminal'
@@ -296,16 +297,29 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
     webRoot: opts.webRoot,
     certificates: new Certificates({ dir: paths.tlsDir, files: opts.tlsFiles }),
     onClients: (count) => system.setRemoteClients(count),
-    scope: remoteScope.event.bind(remoteScope)
+    scope: remoteScope.event.bind(remoteScope),
+    // A phone's browser opens a dev server through the core: one a terminal here started, as far as remote shells reach.
+    forward: (_device, port) => {
+      if (!controller.remoteTerminal()) return { error: 'remote-terminal-disabled' }
+      // Never the core's own doors, whatever a terminal printed — nor a Remote-SSH tunnel (another machine's core, which sees it as its own loopback).
+      if (port === controller.port() || port === local.port || remote.list().some((r) => r.url && Number(new URL(r.url).port) === port)) return { error: 'forbidden' }
+      return tunnelTarget(browser.devServers.list(), port) ?? { error: 'not-a-dev-server' }
+    },
+    // Away access: the relay finds the core by its install id, with the core's own session.
+    relay: { cloudUrl: () => cloudCfg.url, token: () => cloud.sessionToken(), installId: () => cloud.installId() }
   })
 
-  const info = (): AppInfo => ({
-    mode: opts.mode,
-    version: opts.version,
-    platform: process.platform,
-    hostname: hostname(),
-    remoteTerminal: controller.remoteTerminal()
-  })
+  const info = (): AppInfo => {
+    const relay = controller.relayInfo()
+    return {
+      mode: opts.mode,
+      version: opts.version,
+      platform: process.platform,
+      hostname: hostname(),
+      remoteTerminal: controller.remoteTerminal(),
+      ...(relay ? { relay } : {})
+    }
+  }
 
   // The assistant: provider, context engine, tools behind the permission gate.
   // One store for every secret (LLM key, cloud session) — one writer per file.
@@ -334,7 +348,11 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
     secrets,
     isUserActive: opts.isUserActive,
     isUserAway: opts.isUserAway,
-    onStatus: (status) => hub.publish('cloud:status', status),
+    onStatus: (status) => {
+      hub.publish('cloud:status', status)
+      // Signed in or out: the relay link goes with the core's session.
+      controller.relayRefresh()
+    },
     fetch: cloudCfg.fetch
   })
   await cloud.init()
@@ -450,6 +468,7 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
     })
   )
   router.register('app:info', () => info())
+  router.register('devServers:list', () => browser.devServers.list())
   router.register('fs:dirs', ({ path }, ctx) => (ctx.transport === 'remote' ? remoteAccess.dirs(path) : fs.dirs(path)))
   router.register('server:status', () => controller.status())
   router.register('server:configure', async ({ remoteRoots, ...patch }) =>

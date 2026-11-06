@@ -1939,9 +1939,31 @@ agents: {
     certificateOwn: (until) => `Eigenes Zertifikat · gültig bis ${until}`,
     shells: 'Remote-Shells erlauben',
     shellsHint: 'Gekoppelte Geräte dürfen Terminals öffnen, Agents Befehle ausführen und Dateien ändern lassen und Änderungen freigeben. Standardmäßig aus.',
+    relay: 'Unterwegs erreichbar',
+    relayHint: 'Gekoppelte Handys erreichen diesen Computer von überall (Mobilfunk, fremdes WLAN) über Mindeck Cloud — ohne offenen Port. Ende-zu-Ende verschlüsselt: Die Cloud reicht nur Bytes weiter, die sie nicht lesen kann. Dieser Computer muss bei deinem Mindeck-Konto angemeldet sein.',
+    relayState: (state, reason, pipes) =>
+      state === 'online'
+        ? `Erreichbar über Mindeck Cloud${pipes ? ` · ${pipes} ${pipes === 1 ? 'Verbindung' : 'Verbindungen'} offen` : ''}`
+        : state === 'connecting'
+          ? 'Verbinde mit Mindeck Cloud …'
+          : reason === 'signed-out'
+            ? 'Melde diesen Computer unter Profil bei deinem Mindeck-Konto an, damit er unterwegs erreichbar ist.'
+            : reason === 'server-off'
+              ? 'Braucht den API-Server.'
+              : reason === 'tls-off'
+                ? 'Braucht „Verschlüsselt (HTTPS)“ — die Cloud darf die Verbindung nie im Klartext sehen.'
+                : reason === 'session-invalid'
+                  ? 'Die Anmeldung beim Mindeck-Konto ist abgelaufen — melde dich unter Profil neu an.'
+                  : reason === 'license-required'
+                    ? 'Unterwegs erreichbar gehört zur Mindeck-Lizenz — der Test ist vorbei oder die E-Mail-Adresse noch nicht bestätigt (Profil).'
+                  : reason === 'replaced'
+                    ? 'Ein anderes Mindeck mit diesem Konto und Datenordner hat die Verbindung übernommen.'
+                    : `Mindeck Cloud ist gerade nicht erreichbar${reason ? ` (${reason})` : ''} — neuer Versuch läuft.`,
+    keepAwake: 'Mac am Strom wach halten',
+    keepAwakeHint: 'Solange er am Strom hängt und unterwegs erreichbar ist, schläft der Mac nicht von selbst ein. Zuklappen (ohne externen Monitor) schickt ihn trotzdem schlafen.',
     port: 'Port',
     desktopOnly: 'Server-Einstellungen lassen sich nur in der Desktop-App ändern.',
-    envOnly: 'Dieser Core wird über seine Umgebung konfiguriert (MINDECK_PORT, MINDECK_LAN, MINDECK_TLS, MINDECK_REMOTE_TERMINAL, MINDECK_REMOTE_ROOTS).',
+    envOnly: 'Dieser Core wird über seine Umgebung konfiguriert (MINDECK_PORT, MINDECK_LAN, MINDECK_TLS, MINDECK_REMOTE_TERMINAL, MINDECK_REMOTE_ROOTS, MINDECK_RELAY).',
     sharedFolders: 'Freigegebene Ordner',
     sharedFoldersHint: 'Ohne Remote-Shells erreichen gekoppelte Geräte nur diese Ordner und die hier hinzugefügten Projekte — nie den Benutzerordner selbst, versteckte oder Systemordner, Schlüssel oder Zugangsdaten.',
     addSharedFolder: 'Ordner hinzufügen…',
@@ -1959,7 +1981,9 @@ agents: {
     pairDevice: 'Gerät koppeln',
     pairingQr: 'Kopplungs-QR-Code',
     pairingHint: 'Mit der Handykamera scannen oder die Adresse öffnen und den Code eingeben. 10 Minuten gültig, einmalig.',
-    pairingLocalOnly: 'Gerade kann sich nur dieser Computer verbinden. Schalte „Im lokalen Netzwerk erreichbar“ ein, um ein Handy zu koppeln.',
+    pairingLocalOnly: 'Gerade kann sich nur dieser Computer verbinden. Schalte „Im lokalen Netzwerk erreichbar“ oder „Unterwegs erreichbar“ ein, um ein Handy zu koppeln.',
+    pairingRelayOnly: 'Mit der Mindeck-App scannen: Sie koppelt über Mindeck Cloud, Ende-zu-Ende verschlüsselt — das Handy prüft das Zertifikat dieses Computers selbst. 10 Minuten gültig, einmalig.',
+    pairingRelay: 'Außerhalb dieses WLANs koppelt die App über Mindeck Cloud. Die Cloud reicht nur verschlüsselte Bytes weiter — das Handy prüft das Zertifikat dieses Computers selbst.',
     pairingTls: 'Der Browser dort warnt, dass dem Zertifikat nicht vertraut wird — dieser Core hat es selbst ausgestellt. Fahre nur fort, wenn sein SHA-256-Fingerabdruck dieser ist:',
     closePairing: 'Kopplung schließen',
     noDevices: 'Keine Geräte gekoppelt',

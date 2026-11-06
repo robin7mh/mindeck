@@ -346,6 +346,7 @@ export const REQUEST_SCHEMAS: Schemas = {
   'remote:disconnect': z.object({ id: z.string().min(1).max(5000) }),
 
   'app:info': none,
+  'devServers:list': none,
   'fs:dirs': z
     .object({ path: path.optional() })
     .optional()
@@ -358,7 +359,9 @@ export const REQUEST_SCHEMAS: Schemas = {
     tls: z.boolean().optional(),
     port: z.number().int().min(1024).max(65535).optional(),
     remoteTerminal: z.boolean().optional(),
-    remoteRoots: z.array(path).max(50).optional()
+    remoteRoots: z.array(path).max(50).optional(),
+    relay: z.boolean().optional(),
+    keepAwake: z.boolean().optional()
   }),
   'server:createPairingCode': z
     .object({ role: z.enum(DEVICE_ROLES).optional() })

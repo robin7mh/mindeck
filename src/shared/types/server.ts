@@ -13,6 +13,12 @@ export interface AppInfo {
   hostname: string
   /** Whether remote clients may open shells (opt-in). */
   remoteTerminal: boolean
+  /**
+   * The core is reachable through the Mindeck Cloud relay (signed in, "Away
+   * access" on): a paired phone dials it there by this id when the Wi-Fi
+   * does not reach it. The pinned TLS inside keeps the cloud out.
+   */
+  relay?: { installId: string }
 }
 
 /** Embedded/standalone API server settings. */
@@ -36,6 +42,15 @@ export interface ServerConfig {
    * they are all a device can reach.
    */
   remoteRoots: string[]
+  /**
+   * "Away access": the core keeps a connection out to Mindeck Cloud, and paired
+   * phones reach it through there from anywhere (mobile data, another Wi-Fi).
+   * The cloud passes bytes of the TLS the phone pinned at pairing — it reads
+   * nothing. Needs the account signed in and `tls`. On by default.
+   */
+  relay: boolean
+  /** Desktop: the Mac does not go to sleep on its own while it is on power and away access is on. */
+  keepAwake: boolean
 }
 
 export const DEFAULT_SERVER_CONFIG: ServerConfig = {
@@ -44,7 +59,26 @@ export const DEFAULT_SERVER_CONFIG: ServerConfig = {
   tls: true,
   port: 7420,
   remoteTerminal: false,
-  remoteRoots: []
+  remoteRoots: [],
+  relay: true,
+  keepAwake: false
+}
+
+/**
+ * Where the relay link stands. `off`: switched off. `unavailable`: it would
+ * be on but cannot run (`reason`: the server is off, TLS is off, the account
+ * is signed out). `connecting` / `online` / `error` as they say.
+ */
+export type RelayState = 'off' | 'unavailable' | 'connecting' | 'online' | 'error'
+
+export interface RelayStatus {
+  state: RelayState
+  /** Why it is unavailable or failed: `server-off`, `tls-off`, `signed-out`, `session-invalid`, `replaced`, or the cloud's error code. */
+  reason?: string
+  /** Online since (ISO). */
+  since?: string
+  /** Pipes open now (phones' connections through the cloud). */
+  pipes?: number
 }
 
 export interface ServerStatus {
@@ -58,6 +92,8 @@ export interface ServerStatus {
   configurable: boolean
   /** The certificate the running server presents (only while it speaks HTTPS). */
   tls?: TlsInfo
+  /** The link to Mindeck Cloud that lets paired phones in from anywhere. */
+  relay?: RelayStatus
 }
 
 /** The certificate of a core that speaks HTTPS. */
@@ -86,6 +122,8 @@ export interface PairingCode {
   fingerprint?: string
   /** Its public key's SHA-256 (see `TlsInfo.spkiFingerprint`): goes into the pairing link as `&pk=`. */
   spkiFingerprint?: string
+  /** The core's id at Mindeck Cloud while away access works: goes into the pairing link as `&ci=` (pairing from outside the Wi-Fi). */
+  installId?: string
 }
 
 /**

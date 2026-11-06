@@ -672,3 +672,18 @@ User decision: Mindeck should be the one app for building things — after Edito
 - **Pictures without copies:** `mindeck-file://local/<path>` streams a file to the Mindeck window (Range requests, so videos seek; non-media served as `text/plain` + `nosniff`), `mindeck-file://thumb/<path>?size=` returns the OS thumbnail (Quick Look via `nativeImage.createThumbnailFromPath`). The CSP allows the scheme only for `img-src` and `media-src`.
 - **Renderer** (`features/files`): sidebar (favorites, Memory vault, projects, drives — drop targets, ⌥ copies), path bar (⌘⇧G / double-click: type a path, `~` works), list with sortable columns or an icon grid, preview pane (Markdown rendered, links open in the browser), context menus, Finder's keys (arrows, ⇧ range, ⌘A, Enter/⌘↓ open, F2 rename, ⌘⌫ trash, ⌘[ / ⌘] / ⌘↑, Space preview, ⌘⇧N). Opening decides: folders in place, text files of a registered project in the Editor, HTML/PDF in the Browser, the rest with its app; "Open Terminal here" (`terminal:create` with `cwd`) and "Ask an agent about it" connect it to the other modules.
 
+
+### 12.10 Away access: relay and dev-server tunnels (2026-11-06)
+
+Phase 1 of [`docs/ANYWHERE_PLAN.md`](docs/ANYWHERE_PLAN.md): the phone reaches the core from anywhere, and opens what the core's terminals serve. Reference: [`docs/API.md`](docs/API.md) §7.
+
+- **The relay is a byte pipe.** The core dials out to Mindeck Cloud (`RelayLink`, its own account session). The cloud splices a phone's socket to a pipe the core dials back.
+  - The core hands each pipe to its HTTPS server (`HttpServer.attachRelay`). The phone's TLS ends there, pinned at pairing.
+  - The plan's own Noise channel was dropped for this: same promise (the cloud reads nothing, cannot stand in between), no own cryptography, and one code path for auth, the Router, rights, rate limits and replay.
+- **"The core stays local" holds.** The cloud passes bytes and keeps byte counts per account and month, nothing else.
+  - A pipe has no address (`relay`) and never gets loopback treatment.
+  - Without HTTPS there is no relay: the relay alone switches HTTPS on.
+- **Dev-server tunnels** (`WS /api/forward`): raw TCP to a dev server one of the core's terminals announced (`DevServerDetector` → `devServers:list`).
+  - Allowed only with remote shells, only to loopback, never the core's own ports. The tunnels end with the device or the shells.
+  - The phone listens on the same port and its browser loads `localhost:<port>`, so module scripts and HMR sockets work unchanged.
+- **Phone:** a native loopback forwarder (`mindeck-net`) carries both, the relay and the tunnels. Wi-Fi and relay are raced (`link.ts`), and a switch moves the transport's base URL with replay (`RemoteTransport.reconnect`).

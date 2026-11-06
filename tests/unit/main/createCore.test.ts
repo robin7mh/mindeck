@@ -67,7 +67,7 @@ async function core(opts: Partial<Parameters<typeof createCore>[0]> = {}) {
 
 describe('createCore', () => {
   it('wires every service onto one router', async () => {
-    const c = await core({ serverConfig: { enabled: false, lan: false, tls: true, port: 0, remoteTerminal: false, remoteRoots: [] } })
+    const c = await core({ serverConfig: { enabled: false, lan: false, tls: true, port: 0, remoteTerminal: false, remoteRoots: [], relay: false, keepAwake: false } })
     expect(await c.router.dispatch('app:info', undefined, { transport: 'ipc' })).toMatchObject({
       ok: true,
       data: { mode: 'server', version: '1.2.3', remoteTerminal: false }
@@ -218,7 +218,7 @@ describe('createCore', () => {
     const realPlatform = process.platform
     Object.defineProperty(process, 'platform', { value: 'linux' }) // no Spotlight here: Files walks
     const openExternal = vi.fn(async () => {})
-    const c = await core({ mode: 'desktop', serverConfig: { enabled: false, lan: false, tls: true, port: 0, remoteTerminal: true, remoteRoots: [] }, platform: { ...headlessPlatform, kind: 'desktop', openExternal } })
+    const c = await core({ mode: 'desktop', serverConfig: { enabled: false, lan: false, tls: true, port: 0, remoteTerminal: true, remoteRoots: [], relay: false, keepAwake: false }, platform: { ...headlessPlatform, kind: 'desktop', openExternal } })
     Object.defineProperty(process, 'platform', { value: realPlatform })
     const pushed: string[] = []
     c.hub.subscribe((channel) => pushed.push(channel))
@@ -283,9 +283,126 @@ describe('createCore', () => {
   })
 })
 
+describe('createCore — a phone opens the dev servers its terminals started', () => {
+  it('lists them for remote shells only, and tunnels to exactly those ports — never the core’s own', async () => {
+    const { createServer } = await import('node:net')
+    const { WebSocket } = await import('ws')
+    const { forwardProtocols, forwardUrl } = await import('@shared/ipc/transport')
+    const dev = createServer((s) => s.on('data', (d) => s.write(`echo:${d}`)))
+    await new Promise<void>((r) => dev.listen(0, '127.0.0.1', r))
+    const devPort = (dev.address() as { port: number }).port
+    const c = await core()
+    await c.server.configure({ enabled: true, port: 0, remoteTerminal: true, relay: false })
+    const base = `http://127.0.0.1:${c.server.port()}`
+    const { token } = await c.auth.pair((await c.auth.createPairingCode()).code, 'phone')
+    const phone = { transport: 'remote' as const, deviceId: 'phone', role: 'member' as const }
+    const changed: unknown[] = []
+    c.hub.subscribe((channel, payload) => channel === 'devServers:changed' && changed.push(payload))
+    const status = (port: number) =>
+      new Promise<number>((resolve) => {
+        const ws = new WebSocket(forwardUrl(base, port), forwardProtocols(token))
+        ws.on('unexpected-response', (_req, res) => resolve(res.statusCode ?? 0))
+        ws.on('open', () => {
+          ws.close()
+          resolve(101)
+        })
+        ws.on('error', () => {})
+      })
+    // Nothing started yet: nothing to open.
+    expect(await c.router.dispatch('devServers:list', undefined, phone)).toEqual({ ok: true, data: [] })
+    expect(await status(devPort)).toBe(404)
+    // `npm run dev` prints its address in a terminal — the same line the desktop's chips read.
+    c.browser.devServers.feed({ id: 't1', projectId: 'p1' }, `  ➜  Local:   http://localhost:${devPort}/\r\n`)
+    c.browser.devServers.feed({ id: 't2' }, `serving on http://127.0.0.1:${c.server.port()}\n`)
+    expect(changed.at(-1)).toEqual(expect.arrayContaining([expect.objectContaining({ url: `http://localhost:${devPort}/`, projectId: 'p1' })]))
+    expect(await c.router.dispatch('devServers:list', undefined, phone)).toMatchObject({ ok: true, data: expect.arrayContaining([expect.objectContaining({ label: `localhost:${devPort}` })]) })
+    const ws = new WebSocket(forwardUrl(base, devPort), forwardProtocols(token))
+    await new Promise((r) => ws.once('open', r))
+    const got = new Promise<string>((r) => ws.once('message', (d) => r(String(d))))
+    ws.send('ping')
+    expect(await got).toBe('echo:ping')
+    ws.close()
+    // A terminal that prints the core's own address does not open the core to itself.
+    expect(await status(c.server.port())).toBe(403)
+    // Nor a Remote-SSH tunnel's (another machine's core, which would take it as its own loopback).
+    vi.spyOn(RemoteService.prototype, 'list').mockReturnValue([{ id: 'r', kind: 'ssh', label: 'box', state: 'ready', url: 'http://127.0.0.1:47999' }, { id: 'q', kind: 'ssh', label: 'off', state: 'closed' }])
+    c.browser.devServers.feed({ id: 't3' }, 'proxy on http://127.0.0.1:47999\n')
+    expect(await status(47999)).toBe(403)
+    // Remote shells off: neither the list nor a tunnel.
+    await c.server.configure({ remoteTerminal: false })
+    expect(await c.router.dispatch('devServers:list', undefined, phone)).toMatchObject({ ok: false, error: { code: 'remote-terminal-disabled' } })
+    expect(await status(devPort)).toBe(403)
+    await new Promise((r) => dev.close(r))
+  })
+})
+
+describe('createCore — away access through the relay', () => {
+  it('signs in, goes online at the relay, tells phones where to find it, and serves them through a pipe', async () => {
+    const { createServer } = await import('node:http')
+    const { WebSocketServer, createWebSocketStream } = await import('ws')
+    const { connect } = await import('node:tls')
+    // Just enough of Mindeck Cloud: sign-in, and the relay's control and accept sockets.
+    const wss = new WebSocketServer({ noServer: true })
+    const controls: import('ws').WebSocket[] = []
+    const accepted = new Map<string, import('ws').WebSocket>()
+    const cloud = createServer((req, res) => {
+      res.setHeader('content-type', 'application/json')
+      if (req.url === '/v1/auth/login') {
+        return res.end(JSON.stringify({ user: { id: 'u1', email: 'a@b.de', name: null }, license: { plan: 'trial', trial: { limitSeconds: 60, usedSeconds: 0, remainingSeconds: 60 } }, session: { token: 'core-session' } }))
+      }
+      res.statusCode = 404
+      res.end(JSON.stringify({ error: { code: 'not_found' } }))
+    })
+    cloud.on('upgrade', (req, socket, head) => {
+      if (req.headers.authorization !== 'Bearer core-session') return void socket.destroy()
+      const url = new URL(req.url!, 'http://x')
+      wss.handleUpgrade(req, socket, head, (ws) => {
+        if (url.pathname === '/v1/relay/core') {
+          controls.push(ws)
+          ws.send(JSON.stringify({ t: 'ready' }))
+        } else accepted.set(url.searchParams.get('pipe')!, ws)
+      })
+    })
+    await new Promise<void>((r) => cloud.listen(0, '127.0.0.1', r))
+    const url = `http://127.0.0.1:${(cloud.address() as { port: number }).port}`
+    try {
+      const c = await core({ mode: 'desktop', cloud: { url, enforced: false } })
+      const ipcCall = (channel: string, payload?: unknown) => c.router.dispatch(channel, payload, { transport: 'ipc' })
+      await c.server.configure({ enabled: true, port: 0 })
+      // Away access is on by default; signed out, it waits for the account.
+      expect(c.server.status().relay).toEqual({ state: 'unavailable', reason: 'signed-out' })
+      expect((await ipcCall('app:info')) as { data: object }).not.toHaveProperty('data.relay')
+      await ipcCall('cloud:login', { email: 'a@b.de', password: 'long enough!' })
+      await vi.waitFor(() => expect(c.server.status().relay?.state).toBe('online'))
+      const installId = c.cloud.installId()
+      expect(await ipcCall('app:info')).toMatchObject({ ok: true, data: { relay: { installId } } })
+      expect(await ipcCall('server:createPairingCode')).toMatchObject({ ok: true, data: { installId } })
+      // A phone wants in: the core dials the pipe back, and its HTTPS answers through it.
+      const pipe = 'cd'.repeat(16)
+      controls[0].send(JSON.stringify({ t: 'open', pipe }))
+      await vi.waitFor(() => expect(accepted.has(pipe)).toBe(true))
+      const tls = connect({ socket: createWebSocketStream(accepted.get(pipe)!), rejectUnauthorized: false })
+      await new Promise((r) => tls.once('secureConnect', r))
+      tls.write('GET /api/health HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n')
+      const answer = await new Promise<string>((resolve) => {
+        let text = ''
+        tls.on('data', (d) => (text += d))
+        tls.on('end', () => resolve(text))
+      })
+      expect(answer).toContain('"name":"Mindeck"')
+      // Signed out again: the link follows.
+      await ipcCall('cloud:logout')
+      await vi.waitFor(() => expect(c.server.status().relay).toEqual({ state: 'unavailable', reason: 'signed-out' }))
+    } finally {
+      for (const ws of wss.clients) ws.terminate()
+      await new Promise((r) => cloud.close(r))
+    }
+  })
+})
+
 describe('createCore — the browser stays on the desktop', () => {
   it('answers paired devices, admins too, that the browser and its tabs are the desktop\'s', async () => {
-    const c = await core({ serverConfig: { enabled: false, lan: false, tls: true, port: 0, remoteTerminal: true, remoteRoots: [] } })
+    const c = await core({ serverConfig: { enabled: false, lan: false, tls: true, port: 0, remoteTerminal: true, remoteRoots: [], relay: false, keepAwake: false } })
     const phone = { transport: 'remote' as const, deviceId: 'phone', role: 'admin' as const }
     for (const [channel, payload] of [['browser:state', undefined], ['browser:open', { url: 'github.com' }], ['browser:bookmarks', undefined], ['browser:history', { limit: 5 }]] as const) {
       expect(await c.router.dispatch(channel, payload, phone), channel).toMatchObject({ ok: false, error: { code: 'desktop-only' } })
@@ -339,7 +456,7 @@ describe('createCore — assistant end to end (scripted model)', () => {
     }
     try {
       const c = await core({
-        serverConfig: { enabled: false, lan: false, tls: true, port: 0, remoteTerminal: false, remoteRoots: [] },
+        serverConfig: { enabled: false, lan: false, tls: true, port: 0, remoteTerminal: false, remoteRoots: [], relay: false, keepAwake: false },
         providerFactory: { create: () => provider as never }
       })
       await c.router.dispatch('memory:createVault', undefined, { transport: 'ipc' })
@@ -610,15 +727,21 @@ describe('standalone server entry', () => {
   })
 
   it('reads its config from the environment', () => {
-    expect(serverConfigFromEnv({})).toEqual({ enabled: true, lan: false, tls: true, port: 7420, remoteTerminal: false, remoteRoots: ['/projects'] })
-    expect(serverConfigFromEnv({ MINDECK_PORT: '8000', MINDECK_LAN: '1', MINDECK_TLS: '0', MINDECK_REMOTE_TERMINAL: 'true', MINDECK_REMOTE_ROOTS: `/srv/code${delimiter}${delimiter}/data/notes` })).toEqual({
+    expect(serverConfigFromEnv({})).toEqual({ enabled: true, lan: false, tls: true, port: 7420, remoteTerminal: false, remoteRoots: ['/projects'], relay: true, keepAwake: false })
+    expect(serverConfigFromEnv({ MINDECK_PORT: '8000', MINDECK_LAN: '1', MINDECK_TLS: '0', MINDECK_REMOTE_TERMINAL: 'true', MINDECK_REMOTE_ROOTS: `/srv/code${delimiter}${delimiter}/data/notes`, MINDECK_RELAY: '0' })).toEqual({
       enabled: true,
       lan: true,
       tls: false,
       port: 8000,
       remoteTerminal: true,
-      remoteRoots: ['/srv/code', '/data/notes']
+      remoteRoots: ['/srv/code', '/data/notes'],
+      relay: false,
+      keepAwake: false
     })
+    // Away access is on unless switched off — never for a follower (the desktop's Remote-SSH core).
+    expect(serverConfigFromEnv({ MINDECK_RELAY: '1' }).relay).toBe(true)
+    expect(serverConfigFromEnv({ MINDECK_LICENSE: 'follower' }).relay).toBe(false)
+    expect(serverConfigFromEnv({ MINDECK_LICENSE: 'follower', MINDECK_RELAY: '1' }).relay).toBe(false)
     expect(serverConfigFromEnv({ MINDECK_PORT: 'abc' }).port).toBe(7420)
     expect(serverConfigFromEnv({ MINDECK_PORT: '70000' }).port).toBe(7420)
     expect(serverConfigFromEnv({ MINDECK_PORT: '0' }).port).toBe(0)
@@ -635,6 +758,9 @@ describe('standalone server entry', () => {
     expect(console.log).toHaveBeenCalledWith(expect.stringMatching(/Code: {2}[A-Z2-9]{4}-[A-Z2-9]{4} {3}\(valid 10 minutes, one use\)/))
     expect(await run(['pair', '--admin'], {})).toBeNull()
     expect(console.log).toHaveBeenLastCalledWith(expect.stringContaining('one use, admin device'))
+    // Away access is on by default, so the core speaks HTTPS (pipes from the relay carry the phone's TLS).
+    expect(console.log).toHaveBeenLastCalledWith(expect.stringContaining('Open:  https://127.0.0.1:7420'))
+    expect(await run(['pair'], { MINDECK_RELAY: '0' })).toBeNull()
     expect(console.log).toHaveBeenLastCalledWith(expect.stringContaining('Open:  http://127.0.0.1:7420'))
   })
 

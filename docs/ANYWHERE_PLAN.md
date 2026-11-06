@@ -1,6 +1,6 @@
 # Plan: Mindeck Anywhere – die App lebt auch ohne Mac
 
-**Stand:** 2026-10-27 · freigegeben von Robin, noch nichts umgesetzt
+**Stand:** 2026-11-06 · freigegeben von Robin am 2026-10-27 · **Phase 1 (Relay) umgesetzt**, dazu Dev-Server am Handy öffnen (siehe „Umsetzung Phase 1“ unten), noch nicht committet
 **Gegenstück:** `mindeck-cloud` (Relay, Inbox, Cloud-Cores), `mindeck-mobile` (Wegwahl, Pocket). Alle Repos auf `develop`.
 **Vor jeder Phase lesen:** `Mindeck_ARCHITECTURE.md` §1.2, §2.1, §9, §12.4, §12.7, dazu [`API.md`](API.md) (Encryption, Pairing) und [`MOBILE-REMOTE-2026-10.md`](MOBILE-REMOTE-2026-10.md) (Stand der App, M1–M5).
 **Regeln:** Neue Fähigkeiten werden **einmal** in `src/shared/ipc/contract.ts` und `schemas.ts` angelegt. Jeder neue Weg zum Core läuft durch den Router, eine eigene Policy gibt es nicht.
@@ -142,6 +142,71 @@ Die App wählt selbst: direkt vor Relay, Mac vor Cloud-Core. Ein Chip zeigt den 
   - Die Pipe bekommt nie Loopback-Rechte.
 - **Cloud integration** (gegen echtes Postgres wie bisher): falsches Konto, falscher Client, Limits, Bytezähler; ist der Core weg, schließt die Pipe.
 - **E2E `tests/e2e/app-relay.spec.ts`:** Core, lokale Cloud und ein Node-Client über das Relay. Koppeln per QR-Link, Echo im Terminal, Event-Replay nach einem Abriss.
+
+### Umsetzung Phase 1 (2026-11-06)
+
+**Entscheidung beim Bau: gepinntes TLS statt eines eigenen Noise-Kanals.** Das Relay ist eine reine Byte-Röhre. Der Mac speist jede Pipe in seinen bestehenden HTTPS-Server ein (`HttpServer.attachRelay`). Das Handy spricht hindurch genau das TLS, dessen Zertifikat es beim Koppeln gepinnt hat (`fp`/`pk` aus dem QR-Code).
+- **Gleiche Zusage:** Die Cloud sieht nur TLS-Bytes und kann sich nicht dazwischenschalten.
+- **Kein eigener Krypto-Code:** Es gibt kein `noise.ts`, keine Frames und keine zweite Senke im HttpServer.
+- **Ein Pfad für Rechte:** Auth, Router, Rechte, Rate-Limits und Replay laufen 1:1 wie im WLAN.
+- **Restrisiko, ehrlich benannt:** Eine gekaperte Cloud steht da, wo heute schon jeder im selben WLAN steht, vor der TLS-Tür und ohne Token.
+
+**Gebaut:**
+- **Core (`mindeck`):**
+  - `electron/main/server/RelayLink.ts`; `HttpServer.attachRelay` (Adresse `relay`, nie Loopback).
+  - `ServerConfig.relay` (Standard an) und `keepAwake`; Settings → „Unterwegs erreichbar“, Status, „Mac am Strom wach halten“.
+  - `powerMonitor` meldet Schlaf und Aufwachen.
+  - `app:info.relay`; der QR-Link bekommt `&ci=`.
+  - `MINDECK_RELAY` für headless.
+- **Cloud (`mindeck-cloud`):**
+  - `src/modules/relay/` mit `/v1/relay/core|connect|accept` und `GET /v1/relay/cores`.
+  - Tabelle `relay_usage` (Bytes und Pipes pro Konto und Monat, kein Inhalt).
+  - Caddy komprimiert `/v1/relay/*` nicht.
+- **App (`mindeck-mobile`):**
+  - Nativer Forwarder (`modules/mindeck-net`, iOS und Android).
+  - Wegwahl WLAN ↔ Relay (`src/lib/link.ts`). Der Wechsel geht ohne Neuladen über `RemoteTransport.reconnect()`.
+  - Koppeln über das Relay.
+  - LinkChip: „Verbunden · unterwegs“ und „Mac schläft seit …“.
+- **Dazu, nicht im ursprünglichen Plan: Projekte am Handy öffnen.**
+  - `devServers:list` und `devServers:changed` (nur mit Remote-Shells).
+  - `WS /api/forward?port=`: ein roher TCP-Tunnel zu einem Dev-Server, den ein Terminal des Macs gemeldet hat; nur Loopback, nie die eigenen Ports.
+  - Das Handy lauscht auf demselben Port (`localhost:5173`), so laufen Vite-HMR und Next unverändert.
+  - Im Browser gibt es die Sektion „Läuft auf deinem Mac“, im Terminal einen Chip „localhost:5173 öffnen“.
+
+**Geprüft:**
+- Core: 2452 Unit-Tests, 100 % Coverage.
+- Cloud: 343 Tests.
+- App: 94 Tests, tsc und lint.
+- Live gegen die lokale Cloud: Core online, Handy über die Pipe, fremdes Konto bekommt 404, Schlaf wird angezeigt.
+- iOS-Simulator Ende-zu-Ende:
+  - Koppeln über das Relay bei unerreichbarer WLAN-Adresse.
+  - RPC und Live-Terminal über das Relay.
+  - Tunnel zum Dev-Server über das Relay (39 ms).
+  - Hintergrund und zurück: zu Hause WLAN in 112 ms, unterwegs Relay in 1,6 s.
+- Nativer Forwarder auf iOS-Simulator und Android-Emulator: Pinning, 24 MiB byte-genau, Port belegt, Neustart.
+
+**Zwei unabhängige Reviews, alle Befunde behoben** (getestet; der letzte Simulator-Lauf ging gegen die gehärtete Cloud):
+- Cloud:
+  - Speicherbudget pro Pipe, Konto und gesamt; eine Pipe ohne Fortschritt schließt nach 60 s.
+  - Lizenzpflicht und 100 GiB Fair Use im Monat.
+  - Prüfung von Token-Format und IP vor jeder DB-Abfrage.
+  - Sofortiger Widerruf bei Logout und Reset.
+- Core:
+  - Tunnel überleben keinen Widerruf; das Limit zählt auch Tunnel im Aufbau.
+  - Kein Socket-Leck; Heartbeat für Tunnel.
+  - Höchstens 128 Pipes; Pipe-Nachrichten in Stücken von 64 KiB (ein großer Download kam vorher als eine 6-MB-Nachricht).
+- App:
+  - Keine Forwarder bleiben nach Entkoppeln, Abmelden oder einer fehlgeschlagenen Kopplung.
+  - Das Relay hat beim Wechsel ins WLAN 60 s Schonfrist; Aufrufe gehen den aktuellen Weg.
+  - Tunnel laufen nur, solange ein Screen sie braucht.
+- Nativ: höchstens 32 Verbindungen pro Forwarder; keine Pings auf Android-Pipes.
+
+**Offen:**
+- Deploy der Cloud (Admin).
+- Eine Zeile in der Datenschutzerklärung (`mindeck-web`).
+- Handtest auf dem iPhone mit Mobilfunk, inklusive iOS-Hintergrund.
+- Ein per-IP-Limit für Relay-Upgrades (die Cloud hat ein globales).
+- Das E2E `tests/e2e/app-relay.spec.ts`; der Kettentest steckt bisher in `tests/unit/main/relay.test.ts`.
 
 ---
 
