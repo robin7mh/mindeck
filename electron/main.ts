@@ -1,4 +1,4 @@
-import { app, BrowserWindow, crashReporter, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, powerMonitor, protocol, session, shell, Tray } from 'electron'
+import { app, BrowserWindow, crashReporter, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, powerMonitor, powerSaveBlocker, protocol, session, shell, Tray } from 'electron'
 import { existsSync } from 'node:fs'
 import { isAbsolute, join } from 'node:path'
 import { release, type } from 'node:os'
@@ -339,6 +339,36 @@ async function startCore(): Promise<void> {
 
   bindIpc(core.router, isAppUrl)
   await core.server.start()
+  watchPower(c)
+}
+
+/** The blocker that keeps the Mac from sleeping on its own (Settings → "Keep the Mac awake"), while one runs. */
+let awakeBlocker: number | undefined
+
+/**
+ * Away access and the Mac's sleep: the cloud tells phones "the Mac sleeps"
+ * instead of "offline", and right after waking the relay is dialled anew (the
+ * old connection died with the network). With "keep awake" on, the Mac does
+ * not go to sleep on its own while it is on power and away access runs —
+ * closing the lid (without an external display) still sends it to sleep.
+ */
+function watchPower(c: Core): void {
+  powerMonitor.on('suspend', () => c.server.relaySleep())
+  powerMonitor.on('resume', () => c.server.relayWake())
+  const check = () => {
+    const status = c.server.status()
+    const relay = status.relay?.state
+    const wanted = status.config.keepAwake && (relay === 'online' || relay === 'connecting') && !powerMonitor.isOnBatteryPower()
+    if (wanted && awakeBlocker === undefined) awakeBlocker = powerSaveBlocker.start('prevent-app-suspension')
+    if (!wanted && awakeBlocker !== undefined) {
+      powerSaveBlocker.stop(awakeBlocker)
+      awakeBlocker = undefined
+    }
+  }
+  for (const event of ['on-ac', 'on-battery', 'resume'] as const) powerMonitor.on(event as 'resume', check)
+  // Often enough that the switch in Settings takes effect at once, cheap enough to not matter.
+  setInterval(check, 5_000).unref()
+  check()
 }
 
 app.whenReady().then(async () => {

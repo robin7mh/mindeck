@@ -52,8 +52,13 @@ interface SocketLike {
 type SocketCtor = new (url: string, protocols?: string[]) => SocketLike
 
 export interface RemoteTransportOptions {
-  /** Core base URL, e.g. `http://192.168.1.20:7420` ('' = same origin). */
-  baseUrl: string
+  /**
+   * Core base URL, e.g. `http://192.168.1.20:7420` ('' = same origin) — or a
+   * function asked before each call and connect: the phone switches between
+   * the Wi-Fi address and the relay without a new transport (and so keeps
+   * the event replay; `reconnect()` moves the socket at once).
+   */
+  baseUrl: string | (() => string)
   /**
    * The device token (Bearer). Absent: the web UI on the core's own address,
    * where the browser's HttpOnly cookie carries it (`pairBrowser`) — no
@@ -73,6 +78,11 @@ export interface RemoteTransportOptions {
 export interface RemoteTransport extends Transport {
   readonly kind: 'remote'
   close(): void
+  /**
+   * The base URL changed (another way to the same core): the events socket
+   * reconnects there now and resumes where it stopped — the core replays.
+   */
+  reconnect(): void
 }
 
 const trimSlash = (url: string) => url.replace(/\/+$/, '')
@@ -105,7 +115,7 @@ export function eventsProtocols(token?: string): string[] {
 export function createRemoteTransport(opts: RemoteTransportOptions): RemoteTransport {
   const doFetch = opts.fetch ?? (globalThis.fetch as unknown as FetchLike)
   const Socket = opts.WebSocket ?? (globalThis.WebSocket as unknown as SocketCtor)
-  const base = trimSlash(opts.baseUrl)
+  const base = () => trimSlash(typeof opts.baseUrl === 'function' ? opts.baseUrl() : opts.baseUrl)
   const listeners = new Map<string, Set<(payload: unknown) => void>>()
   const resyncs = new Set<() => void>()
   const minDelay = opts.minDelayMs ?? 500
@@ -150,7 +160,7 @@ export function createRemoteTransport(opts: RemoteTransportOptions): RemoteTrans
     setLink('connecting')
     const origin = (globalThis as { location?: { origin?: string } }).location?.origin
     const resuming = stream !== null
-    const ws = new Socket(eventsUrl(base, origin, resuming ? { stream: stream!, since: lastSeq } : undefined), eventsProtocols(opts.token))
+    const ws = new Socket(eventsUrl(base(), origin, resuming ? { stream: stream!, since: lastSeq } : undefined), eventsProtocols(opts.token))
     socket = ws
     let opened = false
     // A blocked SYN can keep a socket "connecting" for a minute or more — give up
@@ -209,7 +219,7 @@ export function createRemoteTransport(opts: RemoteTransportOptions): RemoteTrans
       setLink('offline')
       if (!listenerCount()) return
       // A socket that never opened may mean a bad token — ask the API once.
-      if (!opened) void doFetch(`${base}/api/rpc/app:info`, request(null)).then((r) => r.status === 401 && rejectToken(), () => {})
+      if (!opened) void doFetch(`${base()}/api/rpc/app:info`, request(null)).then((r) => r.status === 401 && rejectToken(), () => {})
       retry = setTimeout(() => {
         retry = null
         connect()
@@ -230,7 +240,7 @@ export function createRemoteTransport(opts: RemoteTransportOptions): RemoteTrans
     async invoke(channel, payload) {
       let res: Awaited<ReturnType<FetchLike>>
       try {
-        res = await doFetch(`${base}/api/rpc/${channel}`, request(payload))
+        res = await doFetch(`${base()}/api/rpc/${channel}`, request(payload))
       } catch (err) {
         setLink('offline')
         return { ok: false, error: { code: 'offline', message: `Mindeck core unreachable: ${(err as Error).message}` } }
@@ -263,6 +273,25 @@ export function createRemoteTransport(opts: RemoteTransportOptions): RemoteTrans
       socket?.close()
       socket = null
       socketOpen = false
+    },
+    reconnect() {
+      if (closed || unauthorized) return
+      if (retry) clearTimeout(retry)
+      retry = null
+      delay = minDelay
+      const old = socket
+      if (old) {
+        // Its close must not count as this transport's: the next socket is on its way already.
+        socket = null
+        socketOpen = false
+        old.onclose = null
+        old.onerror = null
+        old.onmessage = null
+        old.close()
+      }
+      // Whatever came after the last event it saw, the core replays on the new socket.
+      dropped = true
+      if (listenerCount()) connect()
     }
   }
 }
@@ -283,11 +312,16 @@ export function formatFingerprint(fingerprint: string): string {
  * speaks HTTPS, `&fp=<sha256>` — the certificate a client should find there —
  * and `&pk=<sha256>`, its public key (the same after the core renews the certificate).
  */
-export function pairingLink(baseUrl: string, code: string, fingerprint?: string, spkiFingerprint?: string): string {
+export function pairingLink(baseUrl: string, code: string, fingerprint?: string, spkiFingerprint?: string, installId?: string): string {
   const fp = fingerprint ? normalizeFingerprint(fingerprint) : null
   const pk = fp && spkiFingerprint ? normalizeFingerprint(spkiFingerprint) : null
-  return `${trimSlash(baseUrl)}/#pair=${encodeURIComponent(code)}${fp ? `&fp=${fp.toLowerCase()}` : ''}${pk ? `&pk=${pk.toLowerCase()}` : ''}`
+  // The relay's id only next to a pin: through the cloud, the phone trusts the core by its certificate alone.
+  const ci = fp && installId && INSTALL_ID.test(installId) ? installId : null
+  return `${trimSlash(baseUrl)}/#pair=${encodeURIComponent(code)}${fp ? `&fp=${fp.toLowerCase()}` : ''}${pk ? `&pk=${pk.toLowerCase()}` : ''}${ci ? `&ci=${encodeURIComponent(ci)}` : ''}`
 }
+
+/** A core's id at Mindeck Cloud (its install id): what the relay finds it by. */
+const INSTALL_ID = /^[\w-]{8,128}$/
 
 export interface PairingLink {
   baseUrl: string
@@ -296,6 +330,11 @@ export interface PairingLink {
   fingerprint?: string
   /** `AB:CD:…`, when the link also names the certificate's public key. */
   spkiFingerprint?: string
+  /**
+   * The core's id at Mindeck Cloud (`&ci=`), when it is reachable through the relay: a phone outside
+   * the Wi-Fi pairs through there — trusting the core by the fingerprint above, never the cloud.
+   */
+  installId?: string
 }
 
 /** A scanned pairing link taken apart (null when it is none). */
@@ -306,12 +345,31 @@ export function parsePairingLink(link: string): PairingLink | null {
   if (!m || !code) return null
   const fingerprint = normalizeFingerprint(params.get('fp') ?? '')
   const spki = normalizeFingerprint(params.get('pk') ?? '')
+  const installId = params.get('ci') ?? ''
   return {
     baseUrl: m[1],
     code,
     ...(fingerprint ? { fingerprint: formatFingerprint(fingerprint) } : {}),
-    ...(fingerprint && spki ? { spkiFingerprint: formatFingerprint(spki) } : {})
+    ...(fingerprint && spki ? { spkiFingerprint: formatFingerprint(spki) } : {}),
+    ...(fingerprint && INSTALL_ID.test(installId) ? { installId } : {})
   }
+}
+
+/** The dev-server tunnel's subprotocol (`WS /api/forward?port=`) — the core answers with it. */
+export const FORWARD_PROTOCOL = 'mindeck.forward'
+
+/**
+ * The core's tunnel to one of its dev servers: a WebSocket that carries the
+ * raw TCP bytes to `localhost:<port>` on the core's machine. The token goes
+ * as a subprotocol, like the events socket's.
+ */
+export function forwardUrl(baseUrl: string, port: number): string {
+  return `${trimSlash(baseUrl).replace(/^http/, 'ws')}/api/forward?port=${port}`
+}
+
+/** What a client offers when it opens a dev-server tunnel. */
+export function forwardProtocols(token: string): string[] {
+  return [FORWARD_PROTOCOL, `${TOKEN_PROTOCOL_PREFIX}${token}`]
 }
 
 /** Liveness check — also tells a client whether a URL really is a Mindeck core. */

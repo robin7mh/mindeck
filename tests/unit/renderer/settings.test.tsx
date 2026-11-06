@@ -33,7 +33,7 @@ const PK_HEX = 'EF'.repeat(32)
 const PK = formatFingerprint(PK_HEX)
 
 const server = (over: Partial<ServerStatus> = {}): ServerStatus => ({
-  config: { enabled: true, lan: false, tls: true, port: 7420, remoteTerminal: false, remoteRoots: [] },
+  config: { enabled: true, lan: false, tls: true, port: 7420, remoteTerminal: false, remoteRoots: [], relay: false, keepAwake: false },
   running: true,
   urls: ['http://127.0.0.1:7420'],
   configurable: true,
@@ -89,6 +89,10 @@ describe('settings store', () => {
     // …and its public key, which stays the same when the core renews the certificate.
     expect(pairingUrl('X', tls, undefined, true, FP, PK)).toBe(`https://192.168.1.9:7420/#pair=X&fp=${HEX.toLowerCase()}&pk=${PK_HEX.toLowerCase()}`)
     expect(pairingUrl('X', lan, undefined, true, FP, PK)).toBe('http://192.168.1.9:7420/#pair=X')
+    // Away access: the app pairs through the relay, trusting the certificate — whatever the address (LAN off: loopback).
+    expect(pairingUrl('X', ['http://127.0.0.1:7420'], undefined, true, FP, PK, 'install-1')).toBe(`http://127.0.0.1:7420/#pair=X&fp=${HEX.toLowerCase()}&pk=${PK_HEX.toLowerCase()}&ci=install-1`)
+    // Never without a certificate to trust.
+    expect(pairingUrl('X', lan, undefined, true, undefined, undefined, 'install-1')).toBe('http://192.168.1.9:7420/#pair=X')
   })
 
   it('knows when a phone could reach the core at all', () => {
@@ -98,6 +102,36 @@ describe('settings store', () => {
     expect(pairingReachable(['http://127.0.0.1:7420'], 'http://nas.local:7420')).toBe(true)
     expect(pairingReachable(['http://127.0.0.1:7420'], 'http://nas.local:7420', true)).toBe(false)
     expect(pairingReachable(['http://127.0.0.1:7420', 'http://192.168.1.9:7420'], undefined, true)).toBe(true)
+    // Through the relay a phone gets here from anywhere.
+    expect(pairingReachable(['http://127.0.0.1:7420'], undefined, true, true)).toBe(true)
+  })
+
+  it('re-reads the server status, but never over a change on its way', async () => {
+    let calls = 0
+    installBridge(settingsCore({ 'server:status': () => server({ relay: { state: calls++ ? 'online' : 'connecting' } }) }))
+    await useSettings.getState().refreshServer()
+    expect(useSettings.getState().server?.relay).toEqual({ state: 'connecting' })
+    useSettings.setState({ busy: true })
+    await useSettings.getState().refreshServer()
+    expect(useSettings.getState().server?.relay).toEqual({ state: 'connecting' })
+    useSettings.setState({ busy: false })
+    await useSettings.getState().refreshServer()
+    expect(useSettings.getState().server?.relay).toEqual({ state: 'online' })
+    // The answer arrives while a switch moves: the switch wins.
+    installBridge(
+      settingsCore({
+        'server:status': () => {
+          useSettings.setState({ busy: true })
+          return server({ relay: { state: 'off' } })
+        }
+      })
+    )
+    await useSettings.getState().refreshServer()
+    expect(useSettings.getState().server?.relay).toEqual({ state: 'online' })
+    useSettings.setState({ busy: false })
+    installBridge(settingsCore({ 'server:status': () => fail('down') }))
+    await useSettings.getState().refreshServer()
+    expect(useSettings.getState().server?.relay).toEqual({ state: 'online' })
   })
 
   it('server switches move at once; the core settles them, a failure puts them back', async () => {
@@ -337,6 +371,106 @@ describe('SettingsView', () => {
     fireEvent.click(screen.getByRole('switch', { name: 'Encrypted (HTTPS)' }))
     await act(settle)
     expect(screen.getByText(`https://192.168.1.9:7420/#pair=WXYZ-2345&fp=${HEX.toLowerCase()}&pk=${PK_HEX.toLowerCase()}`)).toBeInTheDocument()
+  })
+
+  it('away access: the switch, where the link stands (re-read while shown), keeping the Mac awake, pairing through the cloud', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      const tls = { fingerprint: FP, spkiFingerprint: PK, expiresAt: '2028-10-14T12:00:00.000Z', selfSigned: true }
+      let relay: ServerStatus['relay'] = { state: 'connecting' }
+      let config = { ...server().config, relay: true }
+      const status = () => server({ config, tls, relay })
+      installBridge(
+        settingsCore({
+          'server:status': () => status(),
+          'server:configure': (patch: Record<string, unknown>) => {
+            config = { ...config, ...patch }
+            return status()
+          },
+          'server:createPairingCode': () => ({ code: 'WXYZ-2345', expiresAt: '', urls: ['http://127.0.0.1:7420'], fingerprint: FP, spkiFingerprint: PK, installId: 'install-1' })
+        })
+      )
+      render(<SettingsView />)
+      await act(settle)
+      expect(screen.getByRole('switch', { name: 'Reachable while away' })).toBeChecked()
+      expect(screen.getByText('Connecting to Mindeck Cloud …')).toBeInTheDocument()
+      // HTTPS is the relay's too: its switch stays usable with the LAN off.
+      expect(screen.getByRole('switch', { name: 'Encrypted (HTTPS)' })).toBeEnabled()
+      relay = { state: 'online', pipes: 2 }
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(4100)
+      })
+      expect(screen.getByText('Reachable through Mindeck Cloud · 2 connections open')).toBeInTheDocument()
+
+      fireEvent.click(screen.getByRole('switch', { name: 'Keep the Mac awake on power' }))
+      await act(settle)
+      expect(window.mindeck!.invoke).toHaveBeenLastCalledWith('server:configure', { keepAwake: true })
+
+      // With the LAN off the phone pairs through the cloud: the QR code is there, with a word on what the cloud sees.
+      fireEvent.click(screen.getByText('Pair a device'))
+      await act(settle)
+      expect(screen.getByLabelText('Pairing QR code')).toBeInTheDocument()
+      // Only through the relay: no address to open, no certificate warning — the app scans it.
+      expect(screen.getByText(/Scan it with the Mindeck app: it pairs through Mindeck Cloud/)).toBeInTheDocument()
+      expect(screen.queryByText(/127\.0\.0\.1:7420\/#pair=/)).toBeNull()
+      expect(screen.queryByText(/Continue only if/)).toBeNull()
+      expect(useSettings.getState().pairing?.url).toBe(`http://127.0.0.1:7420/#pair=WXYZ-2345&fp=${HEX.toLowerCase()}&pk=${PK_HEX.toLowerCase()}&ci=install-1`)
+
+      relay = { state: 'off' }
+      fireEvent.click(screen.getByRole('switch', { name: 'Reachable while away' }))
+      await act(settle)
+      expect(window.mindeck!.invoke).toHaveBeenLastCalledWith('server:configure', { relay: false })
+      expect(screen.queryByRole('switch', { name: 'Keep the Mac awake on power' })).toBeNull()
+      expect(screen.queryByText(/Mindeck Cloud …|Reachable through/)).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('with the LAN on as well, the pairing names its address and adds a word on pairing from away', async () => {
+    const tls = { fingerprint: FP, spkiFingerprint: PK, expiresAt: '2028-10-14T12:00:00.000Z', selfSigned: true }
+    installBridge(
+      settingsCore({
+        'server:status': () => server({ config: { ...server().config, lan: true, relay: true }, tls, relay: { state: 'online' } }),
+        'server:createPairingCode': () => ({ code: 'WXYZ-2345', expiresAt: '', urls: ['http://127.0.0.1:7420', 'https://192.168.1.9:7420'], fingerprint: FP, spkiFingerprint: PK, installId: 'install-1' })
+      })
+    )
+    render(<SettingsView />)
+    await act(settle)
+    fireEvent.click(screen.getByText('Pair a device'))
+    await act(settle)
+    expect(screen.getByText(`https://192.168.1.9:7420/#pair=WXYZ-2345&fp=${HEX.toLowerCase()}&pk=${PK_HEX.toLowerCase()}&ci=install-1`)).toBeInTheDocument()
+    expect(screen.getByText(/Away from this Wi-Fi, the app pairs through Mindeck Cloud/)).toBeInTheDocument()
+  })
+
+  it('says why away access cannot run — in both languages', async () => {
+    const { en } = await import('@/lib/i18n/en')
+    const { de } = await import('@/lib/i18n/de')
+    for (const dict of [en, de]) {
+      const say = dict.settings.relayState
+      const lines = [
+        say('online', undefined, 0),
+        say('online', undefined, 1),
+        say('online', undefined, 3),
+        say('connecting', undefined, 0),
+        ...['signed-out', 'server-off', 'tls-off', 'session-invalid', 'replaced', 'http-502', 'license-required'].map((r) => say('error', r, 0)),
+        say('error', undefined, 0)
+      ]
+      expect(new Set(lines).size).toBe(lines.length)
+      expect(lines[6]).toMatch(/HTTPS/)
+      expect(lines[9]).toContain('http-502')
+    }
+    // A status without a relay shows no line; one that failed says why.
+    let relay: ServerStatus['relay'] = undefined
+    installBridge(settingsCore({ 'server:status': () => server({ config: { ...server().config, relay: true }, relay }) }))
+    const { unmount } = render(<SettingsView />)
+    await act(settle)
+    expect(screen.queryByText(/Connecting to Mindeck Cloud|Reachable through Mindeck Cloud|cannot be reached/)).toBeNull()
+    unmount()
+    relay = { state: 'error', reason: 'replaced' }
+    render(<SettingsView />)
+    await act(settle)
+    expect(screen.getByText(/Another Mindeck with this account and data folder took over/)).toBeInTheDocument()
   })
 
   it('an own certificate from the environment is named as such', async () => {
@@ -592,7 +726,7 @@ describe('SettingsView', () => {
   it('in a browser: server settings are read-only, vault via folder browser, errors show', async () => {
     installRemote(
       settingsCore({
-        'server:status': () => server({ configurable: false, running: false, error: 'EADDRINUSE', config: { enabled: true, lan: true, tls: true, port: 7420, remoteTerminal: true, remoteRoots: [] } }),
+        'server:status': () => server({ configurable: false, running: false, error: 'EADDRINUSE', config: { enabled: true, lan: true, tls: true, port: 7420, remoteTerminal: true, remoteRoots: [], relay: false, keepAwake: false } }),
         'server:devices': () => [],
         'memory:setVault': () => fail('That folder does not exist')
       })

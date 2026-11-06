@@ -109,6 +109,7 @@ import type {
   BrowserTab,
   BrowserTabGroup,
   BrowserTool,
+  DevServer,
   HistoryEntry,
   TabGroupColor,
   ViewBounds,
@@ -380,6 +381,11 @@ export interface IpcChannels {
   'remote:disconnect': { request: { id: string }; response: void }
 
   'app:info': { request: void; response: AppInfo }
+  /**
+   * Dev servers the core saw starting in its terminals (`npm run dev` → Vite on :5173): what a
+   * phone's browser offers to open. It reaches them through `WS /api/forward?port=` (HttpServer).
+   */
+  'devServers:list': { request: void; response: DevServer[] }
   /** Folders on the core's machine; paired devices see the shared folders only (no `path` = the first). */
   'fs:dirs': { request: { path?: string }; response: DirListing }
   'memory:setVault': { request: { path: string }; response: VaultStatus }
@@ -817,6 +823,8 @@ export const CHANNEL_ACCESS: Record<IpcChannel, ChannelAccess> = {
   'remote:hasContainer': 'desktop',
   'remote:disconnect': 'desktop',
   'app:info': 'any',
+  // Dev servers run in terminals and serve the project's code: as far as remote shells reach.
+  'devServers:list': 'terminal',
   'fs:dirs': 'any',
   'server:status': 'any',
   'server:configure': 'desktop',
@@ -1020,6 +1028,8 @@ export interface IpcEvents {
   'search:progress': SearchProgress
   'notebook:event': NotebookEvent
   'browser:state': BrowserState
+  /** The dev servers seen in terminals changed (the whole list). */
+  'devServers:changed': DevServer[]
   'browser:find': BrowserFind
   /** A shortcut or menu (maybe pressed while a page had the focus) for the Mindeck UI. */
   'browser:command': { command: BrowserCommand; key?: WorkspaceKey; id?: string }
@@ -1066,6 +1076,7 @@ export const IPC_EVENTS: readonly IpcEvent[] = [
   'search:progress',
   'notebook:event',
   'browser:state',
+  'devServers:changed',
   'browser:find',
   'browser:command',
   'browser:reveal',
@@ -1075,7 +1086,7 @@ export const IPC_EVENTS: readonly IpcEvent[] = [
 ]
 
 /** Push events remote clients only receive when remote shells are enabled. */
-export const TERMINAL_EVENTS: readonly IpcEvent[] = ['terminal:data', 'terminal:exit', 'terminal:info', 'terminal:reveal', 'debug:session', 'debug:output', 'notebook:event', 'finder:progress']
+export const TERMINAL_EVENTS: readonly IpcEvent[] = ['terminal:data', 'terminal:exit', 'terminal:info', 'terminal:reveal', 'debug:session', 'debug:output', 'notebook:event', 'finder:progress', 'devServers:changed']
 
 /** Push events that never leave the desktop window (the browser's tabs are private pages; Remote-SSH windows are the desktop's own). */
 export const DESKTOP_EVENTS: readonly IpcEvent[] = ['browser:state', 'browser:find', 'browser:command', 'browser:reveal', 'browser:bookmarks', 'browser:import', 'remote:changed']

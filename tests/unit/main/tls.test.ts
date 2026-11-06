@@ -524,11 +524,15 @@ describe('ServerController — TLS', () => {
   })
 
   it('HTTPS when wanted: with LAN access, or with an own certificate; a headless core lists HTTPS on loopback too', async () => {
-    const config = { ...DEFAULT_SERVER_CONFIG }
+    const config = { ...DEFAULT_SERVER_CONFIG, relay: false }
     expect(tlsWanted({ ...config, lan: true }, false)).toBe(true)
     expect(tlsWanted({ ...config, lan: false }, false)).toBe(false)
     expect(tlsWanted({ ...config, lan: false }, true)).toBe(true)
     expect(tlsWanted({ ...config, lan: true, tls: false }, true)).toBe(false)
+    // Away access: pipes from the relay carry the phone's TLS — HTTPS without the LAN, never with TLS off.
+    expect(DEFAULT_SERVER_CONFIG.relay).toBe(true)
+    expect(tlsWanted({ ...config, lan: false, relay: true }, false)).toBe(true)
+    expect(tlsWanted({ ...config, lan: false, relay: true, tls: false }, false)).toBe(false)
 
     const dir = await tempDir()
     const controller = new ServerController({

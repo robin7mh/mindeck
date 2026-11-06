@@ -77,6 +77,11 @@ const h = vi.hoisted(() => ({
   notifySupported: true,
   focused: null as unknown,
   idleSeconds: 0,
+  /** powerMonitor's listeners, and whether the Mac runs on its battery. */
+  power: new Map<string, (() => void)[]>(),
+  onBattery: false,
+  blockers: { start: vi.fn((_type: string) => 7), stop: vi.fn() },
+  relay: { state: 'online' as string, keepAwake: false },
   updater: {
     autoDownload: false,
     autoInstallOnAppQuit: false,
@@ -117,7 +122,12 @@ const h = vi.hoisted(() => ({
     agents: { list: () => Array.from({ length: h.running.agents + 1 }, (_, i) => ({ id: `a${i}`, live: i < h.running.agents })) },
     settings: { get: () => h.settings, update: vi.fn(async (patch: Record<string, unknown>) => (h.settings = { ...h.settings, ...patch })) },
     cloud: { status: () => ({ state: 'active' }) },
-    server: { start: vi.fn(async () => {}) },
+    server: {
+      start: vi.fn(async () => {}),
+      relaySleep: vi.fn(),
+      relayWake: vi.fn(),
+      status: () => ({ config: { keepAwake: h.relay.keepAwake }, relay: { state: h.relay.state } })
+    },
     dispose: vi.fn(async () => {}),
     router: { id: 'router', register: vi.fn() },
     browser: { hostEvents: vi.fn(() => ({ events: true, locale: () => 'en' as const })), attach: vi.fn(), detach: vi.fn(), openFromApp: vi.fn((): boolean => true) }
@@ -190,7 +200,12 @@ vi.mock('electron', () => ({
       toPNG: () => `png:${path}:${size.width}`
     })
   },
-  powerMonitor: { getSystemIdleTime: () => h.idleSeconds },
+  powerMonitor: {
+    getSystemIdleTime: () => h.idleSeconds,
+    isOnBatteryPower: () => h.onBattery,
+    on: (event: string, fn: () => void) => h.power.set(event, [...(h.power.get(event) ?? []), fn])
+  },
+  powerSaveBlocker: { start: (type: string) => h.blockers.start(type), stop: (id: number) => h.blockers.stop(id) },
   dialog: {
     showErrorBox: (...a: unknown[]) => h.errorBox(...a),
     showMessageBoxSync: (...a: unknown[]) => h.messageBox(...(a as [])),
@@ -320,6 +335,13 @@ beforeEach(() => {
   h.packaged = false
   h.switches.clear()
   h.dock = undefined
+  h.power.clear()
+  h.onBattery = false
+  h.blockers.start.mockClear()
+  h.blockers.stop.mockClear()
+  h.relay = { state: 'online', keepAwake: false }
+  h.core.server.relaySleep.mockClear()
+  h.core.server.relayWake.mockClear()
 })
 afterEach(() => {
   Object.defineProperty(process, 'platform', { value: realPlatform })
@@ -327,6 +349,32 @@ afterEach(() => {
 })
 
 describe('main process boot', () => {
+  it('away access and sleep: the relay hears of it; "keep awake" holds the Mac up only on power while the relay runs', async () => {
+    await boot()
+    const fire = (event: string) => h.power.get(event)?.forEach((fn) => fn())
+    fire('suspend')
+    expect(h.core.server.relaySleep).toHaveBeenCalledTimes(1)
+    fire('resume')
+    expect(h.core.server.relayWake).toHaveBeenCalledTimes(1)
+    // Off by default: no blocker.
+    expect(h.blockers.start).not.toHaveBeenCalled()
+    h.relay.keepAwake = true
+    fire('on-ac')
+    expect(h.blockers.start).toHaveBeenCalledWith('prevent-app-suspension')
+    fire('on-ac') // already held
+    expect(h.blockers.start).toHaveBeenCalledTimes(1)
+    h.onBattery = true
+    fire('on-battery')
+    expect(h.blockers.stop).toHaveBeenCalledWith(7)
+    h.onBattery = false
+    h.relay.state = 'off'
+    fire('on-ac')
+    expect(h.blockers.start).toHaveBeenCalledTimes(1)
+    h.relay.state = 'connecting'
+    fire('on-ac')
+    expect(h.blockers.start).toHaveBeenCalledTimes(2)
+  })
+
   it('builds the desktop core, binds its router to IPC, starts the embedded server, then opens the window (dev, macOS, dark)', async () => {
     const win = await boot({ devUrl: 'http://localhost:5173' })
     expect(h.coreOpts).toMatchObject({ mode: 'desktop', version: '0.1.0', platform: { kind: 'desktop' }, cipher: { kind: 'cipher' } })
