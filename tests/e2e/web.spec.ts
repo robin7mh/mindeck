@@ -83,9 +83,12 @@ async function rpc<T>(page: Page, core: Core, channel: string, payload: unknown 
   return body.data
 }
 
+/** "Link OK" in the top bar: the events WebSocket is open (the system monitor's LIVE badge went with it, 0f7ccdb). */
+const linkUp = (page: Page) => expect(page.getByText('Link', { exact: true }).locator('xpath=..')).toContainText('OK')
+
 test('pairs a browser and shows live data from the core', async ({ paired, core }) => {
   await expect(paired.getByText(/REMOTE ·/)).toBeVisible()
-  await expect(paired.getByText('LIVE')).toBeVisible() // telemetry over the WebSocket
+  await linkUp(paired) // live data over the WebSocket
   await expect(paired.getByRole('heading', { level: 1 })).toContainText(/Good (morning|afternoon|evening|night)/)
 
   // The token lives in the core's HttpOnly cookie, never in web storage (FE-SEC-03).
@@ -199,7 +202,7 @@ test.describe('with remote shells', () => {
       await context.setOffline(!on)
       await paired.evaluate((on) => (window as unknown as { e2eNetwork: { up(): void; down(): void } }).e2eNetwork[on ? 'up' : 'down'](), on)
     }
-    await expect(paired.getByText('LIVE')).toBeVisible()
+    await linkUp(paired)
 
     await paired.getByTitle('Memory', { exact: true }).click()
     await paired.getByText('Create Mindeck vault').click()
