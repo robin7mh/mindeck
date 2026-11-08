@@ -228,6 +228,7 @@ describe('data & shared constants', () => {
       'search:progress',
       'notebook:event',
       'browser:state',
+      'devServers:changed',
       'browser:find',
       'browser:command',
       'browser:reveal',

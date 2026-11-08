@@ -12,6 +12,9 @@
 //                            MINDECK_HOME/data/tls, trusted by its fingerprint; 127.0.0.1 keeps HTTP
 //   MINDECK_TLS_CERT, MINDECK_TLS_KEY  own certificate + key (PEM files, e.g. Let's Encrypt) instead
 //   MINDECK_REMOTE_TERMINAL=1  allow paired devices to open shells (off by default)
+//   MINDECK_RELAY=0          no away access: while the core is signed in to Mindeck Cloud it keeps a
+//                            connection out to the relay, and paired phones reach it from anywhere
+//                            through there — end-to-end TLS, no open port (default on; never for a follower)
 //   MINDECK_REMOTE_ROOTS     folders devices may add as projects or vault, separated by
 //                            `:` (`;` on Windows); default /projects (the Docker mount)
 //   MINDECK_WEB_ROOT         built web UI to serve (default: next to this file)
@@ -47,7 +50,10 @@ export function serverConfigFromEnv(env: NodeJS.ProcessEnv = process.env): Serve
     tls: env.MINDECK_TLS === undefined || flag(env.MINDECK_TLS),
     port: env.MINDECK_PORT && Number.isInteger(port) && port >= 0 && port < 65536 ? port : DEFAULT_SERVER_CONFIG.port,
     remoteTerminal: flag(env.MINDECK_REMOTE_TERMINAL),
-    remoteRoots: env.MINDECK_REMOTE_ROOTS ? env.MINDECK_REMOTE_ROOTS.split(delimiter).filter(Boolean) : ['/projects']
+    remoteRoots: env.MINDECK_REMOTE_ROOTS ? env.MINDECK_REMOTE_ROOTS.split(delimiter).filter(Boolean) : ['/projects'],
+    // A follower is the desktop's (Remote-SSH, a container): phones reach the desktop, not it.
+    relay: env.MINDECK_LICENSE !== 'follower' && (env.MINDECK_RELAY === undefined || flag(env.MINDECK_RELAY)),
+    keepAwake: false
   }
 }
 

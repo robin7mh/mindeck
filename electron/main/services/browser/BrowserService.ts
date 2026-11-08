@@ -55,7 +55,7 @@ import { SearchSuggestions, type Fetch } from './suggestions'
 import type { AutomationTarget, BrowserHost, BrowserHostEvents, ConsoleEntry, LoginAsk, MenuEntry, PermissionAsk, ShortcutAction, TabNavigation } from './types'
 import { fileRequestAllowed, hostOf, isLoopback, isPageUrl, isWebUrl, originOf, resolveInput, searchUrl } from './url'
 
-type BrowserEvent = 'browser:state' | 'browser:find' | 'browser:command' | 'browser:reveal' | 'browser:bookmarks' | 'browser:import'
+type BrowserEvent = 'browser:state' | 'browser:find' | 'browser:command' | 'browser:reveal' | 'browser:bookmarks' | 'browser:import' | 'devServers:changed'
 
 export interface BrowserDeps {
   /** ~/Mindeck/data/browser — the session, the history, per-site choices. */
@@ -255,7 +255,11 @@ export class BrowserService {
 
   constructor(private readonly deps: BrowserDeps) {
     this.history = new BrowserHistory(join(deps.dir, 'history.jsonl'), deps.now)
-    this.devServers = new DevServerDetector(() => this.changed())
+    // The desktop's tabs see them in the state; a phone's browser gets the list itself (remote shells only).
+    this.devServers = new DevServerDetector((list) => {
+      this.changed()
+      this.deps.publish('devServers:changed', list)
+    })
     this.bookmarks = new BrowserBookmarks(join(deps.dir, 'bookmarks.json'), () => this.deps.publish('browser:bookmarks', this.bookmarks.tree()), deps.now)
     this.suggestions = new SearchSuggestions(deps.fetch)
     if (deps.importEnv) this.importer = new BrowserImporter(deps.importEnv)

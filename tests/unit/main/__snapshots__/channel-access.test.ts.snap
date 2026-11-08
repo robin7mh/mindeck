@@ -135,6 +135,7 @@ exports[`what paired devices reach > matches the reviewed surface 1`] = `
     "debug:start",
     "debug:stop",
     "debug:variables",
+    "devServers:list",
     "editor:update",
     "files:create",
     "files:delete",

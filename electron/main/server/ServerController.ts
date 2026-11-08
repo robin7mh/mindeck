@@ -5,6 +5,7 @@ import {
   type Device,
   type DeviceRole,
   type PairingCode,
+  type RelayStatus,
   type ServerConfig,
   type ServerStatus
 } from '@shared/types/server'
@@ -14,18 +15,20 @@ import type { EventHub } from '../core/EventHub'
 import type { AuthService } from '../services/auth/AuthService'
 import type { SettingsService } from '../services/settings/SettingsService'
 import type { Certificates, TlsCredentials } from './Certificates'
-import { HttpServer, allowedHostsFromEnv } from './HttpServer'
+import { HttpServer, allowedHostsFromEnv, type HttpServerOptions } from './HttpServer'
 import { rateLimitsFromEnv } from './RateLimit'
+import { RelayLink, type RelayLinkOptions } from './RelayLink'
 
 /** How often a running HTTPS server checks that its certificate still fits (end, addresses). */
 const RENEW_CHECK_MS = 12 * 60 * 60_000
 
 /**
  * Whether the server speaks HTTPS: when it is switched on and the network can
- * reach the core — or the core was given a certificate of its own.
+ * reach the core — over the LAN or the relay (whose pipes carry the phone's
+ * TLS) — or the core was given a certificate of its own.
  */
 export function tlsWanted(config: ServerConfig, ownCertificate: boolean): boolean {
-  return config.tls && (config.lan || ownCertificate)
+  return config.tls && (config.lan || config.relay || ownCertificate)
 }
 
 /** Non-internal IPv4 addresses — what a phone on the same network can reach. */
@@ -52,9 +55,14 @@ export interface ServerControllerOptions {
   onClients?: (count: number) => void
   /** Push events as paired devices may see them (RemoteScope). */
   scope?: (channel: IpcEvent, payload: unknown) => Promise<unknown>
+  /** Which dev-server tunnels a device may open (`WS /api/forward`). */
+  forward?: HttpServerOptions['forward']
+  /** Mindeck Cloud for the relay: its address, the core's session and its id there. Without it there is no away access. */
+  relay?: { cloudUrl: () => string; token: () => Promise<string | null>; installId: () => string }
   /** Injected for tests. */
   addresses?: () => string[]
   createServer?: (opts: ConstructorParameters<typeof HttpServer>[0]) => HttpServer
+  createRelay?: (opts: RelayLinkOptions) => RelayLink
 }
 
 /**
@@ -68,6 +76,8 @@ export class ServerController {
   private http?: HttpServer
   /** The certificate the running server presents. */
   private tls?: TlsCredentials
+  /** The link to the relay while away access runs. */
+  private relay?: RelayLink
   private renewTimer?: NodeJS.Timeout
   private error?: string
   private config: ServerConfig
@@ -94,8 +104,45 @@ export class ServerController {
       configurable: !this.opts.fixedConfig,
       ...(this.tls
         ? { tls: { fingerprint: this.tls.fingerprint, spkiFingerprint: this.tls.spkiFingerprint, expiresAt: this.tls.expiresAt, selfSigned: this.tls.selfSigned } }
-        : {})
+        : {}),
+      relay: this.relayStatus()
     }
+  }
+
+  /** Where away access stands: off, why it can't run, or the link's own state. */
+  relayStatus(): RelayStatus {
+    // The link runs whenever it can (startRelay): its own state then, else why not.
+    if (this.relay) return this.relay.status()
+    if (!this.config.relay || !this.opts.relay) return { state: 'off' }
+    if (!this.http) return { state: 'unavailable', reason: 'server-off' }
+    return { state: 'unavailable', reason: 'tls-off' }
+  }
+
+  /** What paired phones learn to find the core through the relay (`app:info`, the pairing code), while it is online there. */
+  relayInfo(): { installId: string } | undefined {
+    if (this.relay?.status().state !== 'online') return undefined
+    // A link runs only with the cloud to reach (startRelay).
+    const installId = this.opts.relay!.installId()
+    return installId ? { installId } : undefined
+  }
+
+  /** The bound port (or the configured one while the server is off). */
+  port(): number {
+    return this.http?.port || this.config.port
+  }
+
+  /** The Mac is about to sleep / awake again (powerMonitor). */
+  relaySleep(): void {
+    this.relay?.sleep()
+  }
+
+  relayWake(): void {
+    this.relay?.wake()
+  }
+
+  /** The Mindeck account changed: the relay link follows the core's session. */
+  relayRefresh(): void {
+    this.relay?.refresh()
   }
 
   /** Start if enabled (desktop) or always (standalone). Errors are kept in status. */
@@ -111,6 +158,7 @@ export class ServerController {
       remoteTerminal: () => this.config.remoteTerminal,
       onClients: this.opts.onClients,
       scope: this.opts.scope,
+      forward: this.opts.forward,
       allowedHosts: allowedHostsFromEnv(),
       rateLimits: rateLimitsFromEnv()
     })
@@ -129,13 +177,34 @@ export class ServerController {
       this.error = (err as Error).message
       await http.close()
     }
+    this.startRelay()
   }
 
   async stop(): Promise<void> {
     clearInterval(this.renewTimer)
+    this.stopRelay()
     const http = this.http
     this.http = this.tls = this.renewTimer = undefined
     await http?.close()
+  }
+
+  /** Away access: only with HTTPS (the pipes carry TLS the cloud can't read) and the relay configured. */
+  private startRelay(): void {
+    const cloud = this.opts.relay
+    if (this.relay || !cloud || !this.config.relay || !this.http || !this.tls) return
+    const http = this.http
+    this.relay = (this.opts.createRelay ?? ((o) => new RelayLink(o)))({
+      cloudUrl: cloud.cloudUrl,
+      token: cloud.token,
+      // Stopping the server stops the link first; a closed server takes no pipe anyway.
+      attach: (pipe) => http.attachRelay(pipe)
+    })
+    this.relay.start()
+  }
+
+  private stopRelay(): void {
+    this.relay?.stop()
+    this.relay = undefined
   }
 
   /**
@@ -162,23 +231,37 @@ export class ServerController {
       throw Object.assign(new Error('This server is configured through its environment'), { code: 'not-configurable' })
     }
     const next = { ...this.config, ...patch }
-    const restart = (['enabled', 'lan', 'tls', 'port'] as const).some((k) => next[k] !== this.config[k])
+    // Away access needs HTTPS: switching it on (without the LAN) may start the HTTPS server.
+    const restart =
+      (['enabled', 'lan', 'tls', 'port'] as const).some((k) => next[k] !== this.config[k]) ||
+      tlsWanted(this.effective(next), this.opts.certificates.custom) !== tlsWanted(this.effective(this.config), this.opts.certificates.custom)
     // What devices may see changes: events kept for their reconnect were sorted by the old rules.
     const rescope = next.remoteTerminal !== this.config.remoteTerminal || next.remoteRoots.join('\n') !== this.config.remoteRoots.join('\n')
+    const shellsOff = this.config.remoteTerminal && !next.remoteTerminal
     this.config = next
     if (rescope) this.http?.resetReplay()
+    // The dev-server tunnels reach as far as remote shells: they end with them.
+    if (shellsOff) this.http?.closeForwards()
     await this.opts.settings.update({ server: next })
     if (restart) {
       await this.stop()
       await this.start()
-    }
+    } else if (next.relay) this.startRelay()
+    else this.stopRelay()
     return this.status()
   }
 
   async createPairingCode(role?: DeviceRole): Promise<PairingCode> {
     await this.renewTls()
     const code = await this.opts.auth.createPairingCode(role)
-    return { ...code, urls: this.urls(), ...(this.tls ? { fingerprint: this.tls.fingerprint, spkiFingerprint: this.tls.spkiFingerprint } : {}) }
+    const relay = this.relayInfo()
+    return {
+      ...code,
+      urls: this.urls(),
+      ...(this.tls ? { fingerprint: this.tls.fingerprint, spkiFingerprint: this.tls.spkiFingerprint } : {}),
+      // A phone outside the Wi-Fi pairs through the relay — trusting the certificate above, not the cloud.
+      ...(this.tls && relay ? { installId: relay.installId } : {})
+    }
   }
 
   devices(): Promise<Device[]> {
@@ -199,7 +282,12 @@ export class ServerController {
   }
 
   private secure(): boolean {
-    return tlsWanted(this.config, this.opts.certificates.custom)
+    return tlsWanted(this.effective(this.config), this.opts.certificates.custom)
+  }
+
+  /** Away access counts only where this core has a cloud to reach (a core without one keeps the LAN's rules). */
+  private effective(config: ServerConfig): ServerConfig {
+    return { ...config, relay: config.relay && !!this.opts.relay }
   }
 
   private lanAddresses(): string[] {
@@ -207,7 +295,7 @@ export class ServerController {
   }
 
   private urls(): string[] {
-    const port = this.http?.port || this.config.port // the bound port (port 0 = any free one)
+    const port = this.port() // the bound port (port 0 = any free one)
     const scheme = this.secure() ? 'https' : 'http'
     // This computer may keep plain HTTP — but a headless core mostly runs in Docker, where
     // "127.0.0.1" on the host is a forwarded port, not loopback for the core: HTTPS there too.

@@ -24,14 +24,16 @@ function phoneOrigin(origin: string | undefined, desktop: boolean): string | und
  * address — over HTTPS with the certificate's fingerprint (`&fp=`), so the
  * person can check the certificate the browser warns about.
  */
-export function pairingUrl(code: string, urls: string[], origin?: string, desktop = false, fingerprint?: string, spkiFingerprint?: string): string {
+export function pairingUrl(code: string, urls: string[], origin?: string, desktop = false, fingerprint?: string, spkiFingerprint?: string, installId?: string): string {
   const base = phoneOrigin(origin, desktop) ?? urls.find((u) => !isLoopback(u)) ?? urls[0]
-  return base.startsWith('https:') ? pairingLink(base, code, fingerprint, spkiFingerprint) : pairingLink(base, code)
+  // Away access: the app pairs through the relay (`&ci=`), trusting the certificate by its fingerprint — whatever the address.
+  if (base.startsWith('https:') || (installId && fingerprint)) return pairingLink(base, code, fingerprint, spkiFingerprint, installId)
+  return pairingLink(base, code)
 }
 
-/** Whether any address a phone could open exists (else the core listens on this computer only). */
-export function pairingReachable(urls: string[], origin?: string, desktop = false): boolean {
-  return !!phoneOrigin(origin, desktop) || urls.some((u) => !isLoopback(u))
+/** Whether a phone can get here: an address it could open, or the relay (else the core listens on this computer only). */
+export function pairingReachable(urls: string[], origin?: string, desktop = false, relay = false): boolean {
+  return relay || !!phoneOrigin(origin, desktop) || urls.some((u) => !isLoopback(u))
 }
 
 type Pairing = PairingCode & { url: string; qr: string; reachable: boolean }
@@ -40,9 +42,11 @@ type Pairing = PairingCode & { url: string; qr: string; reachable: boolean }
 async function pairingView(code: PairingCode, urls: string[], tls: { fingerprint?: string; spkiFingerprint?: string } | undefined): Promise<Pairing> {
   const desktop = isDesktop()
   const { fingerprint, spkiFingerprint } = tls ?? {}
-  const url = pairingUrl(code.code, urls, location.origin, desktop, fingerprint, spkiFingerprint)
+  // Through the relay only with the certificate to trust (the core names its install id only then).
+  const installId = fingerprint ? code.installId : undefined
+  const url = pairingUrl(code.code, urls, location.origin, desktop, fingerprint, spkiFingerprint, installId)
   const qr = await QRCode.toString(url, { type: 'svg', margin: 1, errorCorrectionLevel: 'M' })
-  return { ...code, fingerprint, spkiFingerprint, urls, url, qr, reachable: pairingReachable(urls, location.origin, desktop) }
+  return { ...code, fingerprint, spkiFingerprint, installId, urls, url, qr, reachable: pairingReachable(urls, location.origin, desktop, !!installId) }
 }
 
 /** This browser's device id (saved when it paired), or null in the desktop window. */
@@ -69,6 +73,8 @@ interface SettingsState {
   busy: boolean
   error?: string
   load: () => Promise<void>
+  /** Re-reads the server's status (the relay link connecting, going online). */
+  refreshServer: () => Promise<void>
   configureServer: (patch: Partial<ServerConfig>) => Promise<void>
   createPairing: (role?: DeviceRole) => Promise<void>
   closePairing: () => void
@@ -98,6 +104,12 @@ export const useSettings = create<SettingsState>((set, get) => {
       } catch (err) {
         fail(err)
       }
+    },
+
+    refreshServer: async () => {
+      if (get().busy) return
+      const server = await ipc('server:status').catch(() => null)
+      if (server && !get().busy) set({ server })
     },
 
     configureServer: async (patch) => {

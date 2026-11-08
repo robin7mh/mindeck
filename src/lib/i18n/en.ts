@@ -1965,9 +1965,31 @@ agents: {
     certificateOwn: (until: string) => `Own certificate · valid until ${until}`,
     shells: 'Allow remote shells',
     shellsHint: 'Paired devices may open terminals, let agents run commands and change files, and approve changes. Off by default.',
+    relay: 'Reachable while away',
+    relayHint: 'Paired phones reach this computer from anywhere (mobile data, another Wi-Fi) through Mindeck Cloud — no open port. End-to-end encrypted: the cloud only passes on bytes it cannot read. Needs this computer signed in to your Mindeck account.',
+    relayState: (state: string, reason: string | undefined, pipes: number) =>
+      state === 'online'
+        ? `Reachable through Mindeck Cloud${pipes ? ` · ${pipes} connection${pipes === 1 ? '' : 's'} open` : ''}`
+        : state === 'connecting'
+          ? 'Connecting to Mindeck Cloud …'
+          : reason === 'signed-out'
+            ? 'Sign this computer in to your Mindeck account (Profile) to be reachable while away.'
+            : reason === 'server-off'
+              ? 'Needs the API server.'
+              : reason === 'tls-off'
+                ? 'Needs “Encrypted (HTTPS)” — the cloud must never see the connection in the clear.'
+                : reason === 'session-invalid'
+                  ? 'The Mindeck account session ended — sign in again under Profile.'
+                  : reason === 'license-required'
+                    ? 'Away access comes with the Mindeck license — the trial has ended, or the email address is not confirmed yet (Profile).'
+                  : reason === 'replaced'
+                    ? 'Another Mindeck with this account and data folder took over the connection.'
+                    : `Mindeck Cloud cannot be reached right now${reason ? ` (${reason})` : ''} — trying again.`,
+    keepAwake: 'Keep the Mac awake on power',
+    keepAwakeHint: 'While it is plugged in and reachable while away, the Mac does not go to sleep on its own. Closing the lid (without an external display) still puts it to sleep.',
     port: 'Port',
     desktopOnly: 'Server settings can only be changed in the desktop app.',
-    envOnly: 'This core is configured through its environment (MINDECK_PORT, MINDECK_LAN, MINDECK_TLS, MINDECK_REMOTE_TERMINAL, MINDECK_REMOTE_ROOTS).',
+    envOnly: 'This core is configured through its environment (MINDECK_PORT, MINDECK_LAN, MINDECK_TLS, MINDECK_REMOTE_TERMINAL, MINDECK_REMOTE_ROOTS, MINDECK_RELAY).',
     sharedFolders: 'Shared folders',
     sharedFoldersHint: 'Without remote shells, paired devices reach only these folders and the projects added here — never your home folder itself, hidden or system folders, keys or credentials.',
     addSharedFolder: 'Add folder…',
@@ -1985,7 +2007,9 @@ agents: {
     pairDevice: 'Pair a device',
     pairingQr: 'Pairing QR code',
     pairingHint: 'Scan with the phone camera, or open the address and enter the code. Valid 10 minutes, once.',
-    pairingLocalOnly: 'Only this computer can connect right now. Turn on “Reachable on the local network” to pair a phone.',
+    pairingLocalOnly: 'Only this computer can connect right now. Turn on “Reachable on the local network” or “Reachable while away” to pair a phone.',
+    pairingRelayOnly: 'Scan it with the Mindeck app: it pairs through Mindeck Cloud, end-to-end encrypted — the phone checks this computer’s certificate itself. Valid for 10 minutes, once.',
+    pairingRelay: 'Away from this Wi-Fi, the app pairs through Mindeck Cloud. The cloud only passes on encrypted bytes — the phone checks this computer’s certificate itself.',
     pairingTls: 'The browser there will warn that the certificate is not trusted — this core made it itself. Continue only if the certificate’s SHA-256 fingerprint is this one:',
     closePairing: 'Close pairing',
     noDevices: 'No devices paired',

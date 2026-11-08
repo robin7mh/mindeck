@@ -23,6 +23,23 @@ export function probeTarget(url: string): { host: string; port: number } {
   return { host, port: Number(u.port || (u.protocol === 'https:' ? 443 : 80)) }
 }
 
+/** This machine itself (IPv4 or IPv6 loopback). */
+const LOOPBACK = /^(127\.\d{1,3}\.\d{1,3}\.\d{1,3}|::1)$/
+
+/**
+ * Where a tunnel to `port` goes (a phone's browser opening a dev server): the
+ * listed server's addresses on this machine, `localhost` as both loopbacks
+ * (Vite on macOS listens on ::1 only). Null for a port none listed — and for
+ * anything that is not this machine: the core is never a way into the LAN.
+ */
+export function tunnelTarget(servers: DevServer[], port: number): { hosts: string[]; port: number } | null {
+  const server = servers.find((s) => probeTarget(s.url).port === port)
+  if (!server) return null
+  const { host } = probeTarget(server.url)
+  const hosts = host === 'localhost' ? ['127.0.0.1', '::1'] : [host]
+  return hosts.every((h) => LOOPBACK.test(h)) ? { hosts, port } : null
+}
+
 /** Something listens at the address: a TCP connection opens within `timeoutMs`. */
 export function listening(url: string, timeoutMs = 1000): Promise<boolean> {
   return new Promise((resolve) => {

@@ -1163,18 +1163,18 @@ describe('ServerController', () => {
 
   it('desktop: off by default, configurable, restarts on network changes only', async () => {
     const { settings, deps } = await base()
-    const created: { listen: ReturnType<typeof vi.fn>; close: ReturnType<typeof vi.fn>; disconnectDevice: ReturnType<typeof vi.fn>; resetReplay: ReturnType<typeof vi.fn> }[] = []
+    const created: { listen: ReturnType<typeof vi.fn>; close: ReturnType<typeof vi.fn>; disconnectDevice: ReturnType<typeof vi.fn>; resetReplay: ReturnType<typeof vi.fn>; closeForwards: ReturnType<typeof vi.fn> }[] = []
     const controller = new ServerController({
       ...deps,
       settings,
       addresses: () => ['192.168.1.5'],
       createServer: () => {
-        const fake = { listen: vi.fn(async () => {}), close: vi.fn(async () => {}), disconnectDevice: vi.fn(), setTls: vi.fn(), resetReplay: vi.fn() }
+        const fake = { listen: vi.fn(async () => {}), close: vi.fn(async () => {}), disconnectDevice: vi.fn(), setTls: vi.fn(), resetReplay: vi.fn(), closeForwards: vi.fn() }
         created.push(fake)
         return fake as never
       }
     })
-    expect(controller.status()).toEqual({ config: DEFAULT_SERVER_CONFIG, running: false, urls: ['http://127.0.0.1:7420'], error: undefined, configurable: true })
+    expect(controller.status()).toEqual({ config: DEFAULT_SERVER_CONFIG, running: false, urls: ['http://127.0.0.1:7420'], error: undefined, configurable: true, relay: { state: 'off' } })
     expect(DEFAULT_SERVER_CONFIG.tls).toBe(true) // the network gets HTTPS unless switched off
     await controller.start()
     expect(created).toHaveLength(0)
@@ -1202,6 +1202,8 @@ describe('ServerController', () => {
     await controller.configure({ remoteRoots: ['/srv/other'] })
     await controller.configure({ remoteTerminal: false })
     expect(created[0].resetReplay).toHaveBeenCalledTimes(3)
+    // The dev-server tunnels reach as far as remote shells: they end with them.
+    expect(created[0].closeForwards).toHaveBeenCalledTimes(1)
     await controller.configure({ remoteTerminal: true, remoteRoots: ['/srv/code'] })
 
     const code = await controller.createPairingCode()
@@ -1228,7 +1230,7 @@ describe('ServerController', () => {
 
   it('keeps a start error in the status; reads saved settings', async () => {
     const { settings, deps } = await base()
-    await settings.update({ server: { enabled: true, lan: false, tls: true, port: 7999, remoteTerminal: false, remoteRoots: [] } })
+    await settings.update({ server: { enabled: true, lan: false, tls: true, port: 7999, remoteTerminal: false, remoteRoots: [], relay: false, keepAwake: false } })
     const fake = { listen: vi.fn(async () => Promise.reject(new Error('EADDRINUSE'))), close: vi.fn(async () => {}) }
     const controller = new ServerController({ ...deps, settings, createServer: () => fake as never })
     await controller.start()
@@ -1238,7 +1240,7 @@ describe('ServerController', () => {
 
   it('standalone: fixed config, real server, not configurable', async () => {
     const { deps } = await base()
-    const controller = new ServerController({ ...deps, mode: 'server', fixedConfig: { enabled: true, lan: false, tls: true, port: 0, remoteTerminal: false, remoteRoots: [] } })
+    const controller = new ServerController({ ...deps, mode: 'server', fixedConfig: { enabled: true, lan: false, tls: true, port: 0, remoteTerminal: false, remoteRoots: [], relay: false, keepAwake: false } })
     await controller.start()
     expect(controller.status()).toMatchObject({ running: true, configurable: false })
     expect(controller.status().urls[0]).toMatch(/^http:\/\/127\.0\.0\.1:[1-9]\d*$/)
@@ -1252,7 +1254,7 @@ describe('ServerController', () => {
 
   it('LAN mode without injected addresses asks the OS', async () => {
     const { deps } = await base()
-    const c = new ServerController({ ...deps, mode: 'server', fixedConfig: { enabled: false, lan: true, tls: false, port: 7420, remoteTerminal: false, remoteRoots: [] } })
+    const c = new ServerController({ ...deps, mode: 'server', fixedConfig: { enabled: false, lan: true, tls: false, port: 7420, remoteTerminal: false, remoteRoots: [], relay: false, keepAwake: false } })
     expect(c.status().urls[0]).toBe('http://127.0.0.1:7420')
   })
 

@@ -20,8 +20,10 @@ All of these are plain TypeScript with no DOM, Node or Electron imports — copy
 | Standalone (no Docker) | `npm run web` | `http://127.0.0.1:7420` (`MINDECK_LAN=1` for all interfaces: then `https://`) |
 | Docker | `npm run docker:up` | `https://127.0.0.1:7420` (`MINDECK_BIND=0.0.0.0` in `.env` for the LAN) |
 
-For access from outside your home network use a VPN such as Tailscale or WireGuard rather than
-opening the port to the internet.
+From outside your home network the phone uses **away access** (§7): the core keeps a connection
+out to the Mindeck Cloud relay, the phone dials it there, and the TLS it pinned at pairing runs end
+to end through it. No port is opened. A VPN such as Tailscale or WireGuard works as well; never
+open the port to the internet.
 
 ### Encryption (HTTPS / WSS)
 
@@ -322,6 +324,7 @@ an admin device, *terminal* ones remote shells, *browser* ones an admin device t
 - **Terminal** (only with remote shells): `terminal:create` · `terminal:list` · `terminal:attach` · `terminal:write` · `terminal:resize` · `terminal:kill`
 - **Files** (the machine's files like Finder — only with remote shells): `finder:places` · `finder:list { path?, offset? }` (never `hidden: true`) · `finder:search` · `finder:preview` · `finder:info` · `finder:folderSize` · `finder:mkdir` · `finder:rename` · `finder:trash` / `finder:untrash` (only from the trash) · `finder:move` · `finder:copy` · `finder:conflicts` · `finder:transfer` · `finder:cancel` · `finder:restore` · `finder:compress` · `finder:extract` · `finder:read { path, offset?, length? }` → `FinderChunk` (base64, ≤ 4 MB a piece) · `finder:write { path, data, offset?, replace? }` (offset 0 makes the file; later pieces append at the file's end). Every path must lie in the home folder or on a drive — never hidden folders, keys and credentials by name, system folders or Mindeck's data, also not through a link; listings leave hidden files and denied names out. *(desktop only:)* `finder:open` · `finder:reveal` · `finder:clipboardRead` / `finder:clipboardWrite` · `finder:privacySettings`
 - **Browser:** *desktop only* — the desktop's tabs carry the user's logins and never reach paired devices. The mobile app has a browser of its own on the phone.
+- **Dev servers** (only with remote shells): `devServers:list` → `DevServer[]` (`{ url, label, terminalId, projectId?, detectedAt }`: what the core's terminals printed, `npm run dev` → `http://localhost:5173/`). Push: `devServers:changed` (the whole list). The phone's browser opens them through `WS /api/forward` (§7.3).
 
 ## 5. React Native sketch
 
@@ -485,4 +488,86 @@ Content-Type: application/json
 **What mindeck-cloud has to do:** offer the endpoint above with these claims and limits. Nothing
 else changes: as soon as it answers `200`, desktops hand over leases and remote cores switch to
 leases only.
+
+## 7. Away access: the relay and dev-server tunnels
+
+### 7.1 How it works
+
+```
+phone  ──TLS (pinned)──▶ 127.0.0.1:<port> ──WS──▶ Mindeck Cloud ◀──WS── core (dialled out)
+                          native forwarder          /v1/relay/*          RelayLink → HttpServer.attachRelay
+```
+
+- **The core** (`electron/main/server/RelayLink.ts`) keeps a control WebSocket to `wss://<cloud>/v1/relay/core`.
+  It authenticates with its own Mindeck Cloud session (Bearer). The cloud knows it by the install id
+  it signed in with.
+- **A phone** (`/v1/relay/connect?core=<installId>`, its mobile session, the same account) gets a pipe:
+  - the cloud sends the core `{"t":"open","pipe":"<32 hex>"}`,
+  - the core dials `/v1/relay/accept?pipe=` with its session,
+  - then the cloud splices both sockets and passes the bytes on as they are.
+- **The core** hands each pipe to its HTTPS server (`HttpServer.attachRelay`). From there it is a
+  network connection like any other:
+  - token, router, rights and rate limits are the same;
+  - its address is `relay`, never loopback, so no "this computer" rights;
+  - it is refused without HTTPS.
+- **On the phone** the native forwarder (`modules/mindeck-net`, `startForward`) listens on a loopback
+  port. Each TCP connection becomes one pipe, so the phone's pinned client reaches the core at
+  `https://127.0.0.1:<port>` unchanged.
+- **The phone chooses the way** (`mindeck-mobile/src/lib/link.ts`):
+  - the Wi-Fi address and the relay are tried at once; the Wi-Fi wins if it answers within 1.5 s;
+  - losing the link looks again;
+  - through the relay it checks every 30 s whether the Wi-Fi is back.
+  - A switch moves the events socket (`RemoteTransport.reconnect()`); the core replays what was missed.
+
+**Limits.** What the core sends into a pipe goes in messages of at most 64 KiB (`pipeStream`); the cloud takes at most 256 KiB.
+The relay needs an account that may run Mindeck: a running trial or the license. Otherwise `/core`
+and `/connect` answer `403 license_required`, and connected pipes close with `4402`, which the
+core shows as `license-required`. There is a monthly fair-use cap (`429 relay_quota`). The cloud
+README lists every code.
+
+**Security.** The cloud sees TLS bytes only: the phone pins the core's certificate from the QR code
+(`fp`/`pk`), so a cloud that tried to stand in between fails the pin.
+
+A compromised cloud stands where anyone on the same Wi-Fi stands: in front of the core's TLS, without
+a token. It can try pairing codes (rate limited, while a code is open), and can count bytes and
+times. The phone never uses the relay without pins.
+
+### 7.2 The core's side
+
+- Settings → Remote access → *Reachable while away* (`ServerConfig.relay`, on by default).
+  - It needs the API server, HTTPS, and the core signed in to the Mindeck account. The relay alone
+    switches HTTPS on, without the LAN.
+  - Headless: `MINDECK_RELAY=0` switches it off. A follower core never uses it.
+- `server:status` → `relay: { state, reason?, since?, pipes? }`:
+  - `state`: `off` · `unavailable` (`server-off`, `tls-off`, `signed-out`) · `connecting` · `online` · `error`;
+  - `reason` for errors: `session-invalid`, `core-only`, `replaced` (another process of this
+    install took over), `http-<status>`.
+- `app:info` → `relay: { installId }` while the link runs; a paired phone learns it from there. The
+  pairing code carries `installId` too, and the QR link gets `&ci=<installId>` (only next to `fp`), so
+  a phone away from the Wi-Fi pairs through the relay.
+- Sleep: `powerMonitor` `suspend` sends `{"t":"sleep"}` (phones see "Mac asleep since …").
+  `resume` dials anew.
+- *Keep the Mac awake on power* (`keepAwake`) holds a `prevent-app-suspension` blocker while away
+  access runs on mains power. Closing the lid without an external display still sleeps.
+
+### 7.3 Dev-server tunnels: `WS /api/forward?port=<n>`
+
+Subprotocols: `mindeck.forward` and `mindeck.bearer.<token>`. The core answers with `mindeck.forward`.
+The socket carries raw TCP to the dev server, in both directions (`forwardUrl`,
+`forwardProtocols` in `transport.ts`).
+
+- **Allowed** only with remote shells, and only to a port that `devServers:list` names: the
+  terminals' own announcements, loopback only (`tunnelTarget`; `localhost` = 127.0.0.1, then ::1).
+  Never the core's own ports.
+- **Refused before the upgrade:**
+  - `401` (no or a wrong token)
+  - `403 remote-terminal-disabled` / `forbidden`
+  - `404 not-a-dev-server`
+  - `429` (64 tunnels per device)
+  - `502 not-listening`
+  - `503` (the device store failed)
+- **Ended** when the device is removed, or when remote shells are switched off.
+- **The phone** (`mindeck-mobile/src/stores/preview.ts`) listens on the same port (`localhost:5173`).
+  Pages, module scripts and the dev server's live-reload socket therefore work unchanged, over the
+  Wi-Fi or the relay alike. If another app holds that port, it uses any free one.
 
