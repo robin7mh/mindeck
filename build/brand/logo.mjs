@@ -1,5 +1,5 @@
 // The Mindeck logo: the reactor — a deck of three layers (Mindeck's stack of projects, agents and
-// notes) inside a ring of four arcs, a dotted inner ring and four lights where the arcs part. One
+// notes) inside a ring of four arcs and four lights where the arcs part. One
 // design everywhere, from the Dock to the favicon, in the system's appearances:
 //   light   the white tile (light mode, and wherever a system shows one icon only)
 //   dark    the navy tile with its cyan halo (dark mode)
@@ -15,27 +15,26 @@ export const THEMES = {
     ground: { from: [0, 0], to: [1024, 1024], stops: [['0', '#15212f'], ['.55', '#080c14'], ['1', '#04060b']] },
     halo: '.35',
     glow: { opacity: '.7', ring: '#38d6e8', deck: '#7ff0fb' },
-    dots: '#4a84ff', ring: '#38d6e8', lights: '#c2faff', lower: '#4a84ff', middle: '#38d6e8', top: '#c2faff',
+    ring: '#38d6e8', lights: '#c2faff', lower: '#4a84ff', middle: '#38d6e8', top: '#c2faff',
     edge: ['#fff', '.08']
   },
   light: {
     ground: { from: [0, 0], to: [0, 1024], stops: [['0', '#ffffff'], ['1', '#dfe8ef']] },
-    dots: '#3f6fe0', ring: '#17a9c4', lights: '#0a7e95', lower: '#3f6fe0', middle: '#17a9c4', top: '#0a7e95',
+    ring: '#17a9c4', lights: '#0a7e95', lower: '#3f6fe0', middle: '#17a9c4', top: '#0a7e95',
     edge: ['#0b1220', '.08']
   },
   tinted: {
     ground: { solid: '#000000' },
-    dots: '#7a7a7a', ring: '#bdbdbd', lights: '#ffffff', lower: '#7a7a7a', middle: '#bdbdbd', top: '#ffffff',
+    ring: '#bdbdbd', lights: '#ffffff', lower: '#7a7a7a', middle: '#bdbdbd', top: '#ffffff',
     edge: ['#fff', '.06']
   },
   clear: {
-    dots: 'rgba(255,255,255,.45)', ring: 'rgba(255,255,255,.75)', lights: '#ffffff', lower: 'rgba(255,255,255,.45)', middle: 'rgba(255,255,255,.75)', top: '#ffffff'
+    ring: 'rgba(255,255,255,.75)', lights: '#ffffff', lower: 'rgba(255,255,255,.45)', middle: 'rgba(255,255,255,.75)', top: '#ffffff'
   }
 }
 
 /** The reactor's parts on its 1024 canvas, centred on (512, 512). */
 const RING = 'r="398" fill="none" stroke-width="58" stroke-dasharray="493.8 131.3" stroke-dashoffset="246.9"'
-const DOTS = 'r="318" fill="none" stroke-width="30" stroke-dasharray="7 20.75"'
 const LIGHTS = [[793.4, 793.4], [230.6, 793.4], [230.6, 230.6], [793.4, 230.6]]
 const DECK = 'translate(512 512) scale(0.9) translate(-512 -494)'
 const TOP = 'M512 262L800 406L512 550L224 406Z'
@@ -52,9 +51,8 @@ const num = (v) => String(Math.round(v * 1000) / 1000)
  * gradient and filter ids apart when two appearances share one SVG (the favicon).
  */
 function reactor(theme, { k = 1, cx = 512, cy = 512, color, id = '' } = {}) {
-  const t = color ? { dots: color, ring: color, lights: color, lower: color, middle: color, top: color } : THEMES[theme]
+  const t = color ? { ring: color, lights: color, lower: color, middle: color, top: color } : THEMES[theme]
   const parts =
-    `<circle cx="512" cy="512" ${DOTS} stroke="${t.dots}"/>` +
     `<circle cx="512" cy="512" ${RING} stroke="${t.ring}" stroke-linecap="round"/>` +
     `<g fill="${t.lights}">${LIGHTS.map(([x, y]) => `<circle cx="${x}" cy="${y}" r="32"/>`).join('')}</g>` +
     `<g transform="${DECK}"><path d="${LOWER}" fill="none" stroke="${t.lower}" stroke-width="52" stroke-linecap="round" stroke-linejoin="round"/>` +
