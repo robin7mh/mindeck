@@ -163,7 +163,7 @@ describe('terminal store', () => {
     ...extra
   })
 
-  it('init re-attaches surviving sessions, else opens one; only once', async () => {
+  it('init re-attaches surviving sessions, else starts none; only once', async () => {
     const existing = [info(), info()]
     installBridge({ 'terminal:list': () => existing })
     await useTerminals.getState().init()
@@ -171,11 +171,14 @@ describe('terminal store', () => {
     await useTerminals.getState().init() // no second run
     expect(useTerminals.getState().tabs).toHaveLength(2)
 
+    // Nothing running: no shell until the user opens one.
     useTerminals.setState(initial.terminals, true)
-    const created = info()
-    installBridge({ 'terminal:list': () => [], 'terminal:create': () => created })
+    const create = vi.fn(() => info())
+    installBridge({ 'terminal:list': () => [], 'terminal:create': create })
     await useTerminals.getState().init()
-    expect(useTerminals.getState().activeId).toBe(created.id)
+    expect(useTerminals.getState()).toMatchObject({ initialized: true, tabs: [] })
+    expect(useTerminals.getState().activeId).toBeUndefined()
+    expect(create).not.toHaveBeenCalled()
 
     useTerminals.setState(initial.terminals, true)
     installBridge({ 'terminal:list': () => fail('no main') })

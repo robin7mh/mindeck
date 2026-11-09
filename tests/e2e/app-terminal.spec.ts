@@ -3,10 +3,13 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { expect, test } from './fixtures'
 
-test('terminal: find in the output (Ctrl+Shift+F), and after a restart one clean shell in Home', async ({ page, home, restart }) => {
+test('terminal: none until opened, find in the output (Ctrl+Shift+F), and after a restart none again, then a clean shell in Home', async ({ page, home, restart }) => {
   const work = join(home, 'work')
   mkdirSync(work)
   await page.getByTitle('Terminal', { exact: true }).click()
+  // no shell runs until the user opens one
+  await expect(page.locator('.xterm-rows')).toHaveCount(0)
+  await page.getByRole('button', { name: 'Open terminal', exact: true }).click()
   const screen = page.locator('.xterm-rows').first()
   await expect(screen).toBeVisible()
   await page.locator('.xterm-helper-textarea').first().focus()
@@ -27,9 +30,11 @@ test('terminal: find in the output (Ctrl+Shift+F), and after a restart one clean
   // the tab follows the shell into the folder before Mindeck quits
   await expect(page.getByRole('button', { name: /^Close .*work/ })).toBeVisible()
 
-  // nothing of the last run: one new shell, in Home (the last run's tabs only when asked for in Settings)
+  // nothing of the last run (its tabs only when asked for in Settings), and no shell until one is opened: then one, in Home
   const again = (await restart()).page
   await again.getByTitle('Terminal', { exact: true }).click()
+  await expect(again.locator('.xterm-rows')).toHaveCount(0)
+  await again.getByRole('button', { name: 'Open terminal', exact: true }).click()
   const fresh = again.locator('.xterm-rows').first()
   await expect(again.locator('.xterm-rows')).toHaveCount(1)
   await again.locator('.xterm-helper-textarea').first().focus()

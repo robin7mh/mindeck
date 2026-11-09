@@ -28,6 +28,7 @@ test('dragging dividers and modules back and forth — in zen mode too — keeps
   try {
     // A terminal first (kept mounted from then on), then agents | browser side by side.
     await page.getByTitle('Terminal', { exact: true }).click()
+    await page.getByRole('button', { name: 'Open terminal', exact: true }).click()
     await expect(page.locator('.xterm').first()).toBeVisible()
     await page.getByRole('button', { name: 'Layout and workspaces' }).click()
     await page.getByRole('button', { name: 'Side by side', exact: true }).click()

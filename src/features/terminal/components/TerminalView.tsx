@@ -26,6 +26,7 @@ const LAYOUTS: { id: TerminalLayout; icon: typeof Square }[] = [
  * grid. The layout sets how many fill a screen — one, side by side, stacked or
  * 2×2 — and further shells continue below, so the area scrolls. Tabs jump to a
  * shell. "+" opens one in Home or a registered project, or with a profile.
+ * None runs until the user opens one: the empty view offers "Open terminal".
  * Sessions keep running while you're in other modules — the shell mounts this
  * view once and hides it. `onNavigate` lets a clicked file reference open in
  * the Editor.

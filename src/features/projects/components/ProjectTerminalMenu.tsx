@@ -54,7 +54,7 @@ export function ProjectTerminalMenu({ projectId, onShow }: { projectId: string; 
   const toggle = async () => {
     if (shells) return setShells(null)
     // The Terminal module may not have been opened yet: pick up running shells first.
-    await useTerminals.getState().init(false)
+    await useTerminals.getState().init()
     const live = await ipc('terminal:list').catch(() => [] as TerminalInfo[])
     const { tabs } = useTerminals.getState()
     const labels = tabLabels(tabs)

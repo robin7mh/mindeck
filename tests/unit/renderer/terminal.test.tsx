@@ -84,11 +84,15 @@ describe('TerminalView', () => {
     useBrowser.setState(initialBrowser, true)
   })
 
-  it('opens one shell on first mount, shows its header and the layout picker', async () => {
+  it('opens no shell on its own: "Open terminal" starts one, with its header and the layout picker', async () => {
     const created = info({ title: 'demo', cwdLabel: '~/demo' })
-    installBridge({ 'terminal:list': () => [], 'terminal:create': () => created, 'terminal:attach': pending })
+    const bridge = installBridge({ 'terminal:list': () => [], 'terminal:create': () => created, 'terminal:attach': pending })
     render(<TerminalView />)
     await act(settle)
+    expect(bridge.invoke).not.toHaveBeenCalledWith('terminal:create', expect.anything())
+    fireEvent.click(screen.getByText('Open terminal'))
+    await act(settle)
+    expect(bridge.invoke).toHaveBeenCalledWith('terminal:create', { projectId: undefined })
     expect(screen.getByText('zsh · ~/demo')).toBeInTheDocument()
     expect(screen.getByLabelText('Layout: Single')).toHaveAttribute('aria-pressed', 'true')
     fireEvent.click(screen.getByLabelText('Layout: 2 × 2'))

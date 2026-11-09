@@ -64,6 +64,7 @@ test('settings: the embedded API server starts on demand and answers', async ({ 
 
 test('the terminal runs a real shell, keeps it across modules and splits panes', async ({ page }) => {
   await page.getByTitle('Terminal', { exact: true }).click()
+  await page.getByRole('button', { name: 'Open terminal', exact: true }).click()
   const screen = page.locator('.xterm-rows').first()
   await expect(screen).toBeVisible()
   await page.locator('.xterm-helper-textarea').first().focus()
@@ -417,6 +418,7 @@ server.listen(0, () => console.log('  Local:   http://localhost:' + server.addre
 `
   )
   await page.getByTitle('Terminal', { exact: true }).click()
+  await page.getByRole('button', { name: 'Open terminal', exact: true }).click()
   await expect(page.locator('.xterm-rows').first()).toBeVisible()
   await page.locator('.xterm-helper-textarea').first().focus()
   await page.keyboard.type(`"${process.execPath}" "${script}"\n`)

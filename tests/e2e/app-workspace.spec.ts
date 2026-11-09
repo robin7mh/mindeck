@@ -29,7 +29,9 @@ test('workspace: two panes side by side with agents, terminal and browser — di
     // the new pane gets the first module not on screen yet: the terminal
     await expect(page.getByTestId('pane-head-core')).toBeVisible()
     await expect(page.getByTestId('pane-head-terminal')).toBeVisible()
-    await expect(page.locator('.xterm-rows')).toBeVisible()
+    // no shell runs in it until the user opens one
+    await expect(page.getByRole('button', { name: 'Open terminal', exact: true })).toBeVisible()
+    await expect(page.locator('.xterm-rows')).toHaveCount(0)
 
     // the left pane shows the agents instead
     await page.getByRole('button', { name: 'Core – show another module here' }).click()

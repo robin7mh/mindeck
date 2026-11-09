@@ -253,10 +253,10 @@ const notesSource: CommandSource = {
   subscribe: follow(useMemory)
 }
 
-/** A new shell, once the terminals are up (without the extra Home shell of a first visit). */
+/** A new shell, once the terminals are up. */
 async function openTerminal(open: () => Promise<void>): Promise<void> {
   showModule('terminal')
-  await useTerminals.getState().init(false)
+  await useTerminals.getState().init()
   await open()
 }
 

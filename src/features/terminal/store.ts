@@ -34,15 +34,16 @@ interface TerminalState {
 
   /**
    * Re-attach to sessions that survived a renderer reload; else bring back the
-   * tabs of the last run (Settings → Terminal → restore); else open one (in
-   * Home, unless `openHome` is false).
+   * tabs of the last run (Settings → Terminal → restore). It never starts a
+   * shell of its own: there is none until the user opens one (or an agent,
+   * Files or a project does).
    */
-  init: (openHome?: boolean) => Promise<void>
+  init: () => Promise<void>
   /** A new shell: in Home or a project, with a profile (default: the one set in Settings). */
   open: (projectId?: string, profileId?: string) => Promise<void>
-  /** From elsewhere in the app (e.g. a project): a shell in that folder, without the extra Home shell of a first visit. */
+  /** From elsewhere in the app (e.g. a project): a shell in that folder. */
   openProject: (projectId: string) => Promise<void>
-  /** From Files: a shell in any folder (absolute path), likewise without the extra Home shell. */
+  /** From Files: a shell in any folder (absolute path). */
   openFolder: (cwd: string) => Promise<void>
   /** A new shell in Home that runs `command` (the onboarding's installs and sign-ins); its tab, unless it failed. */
   run: (command: string) => Promise<TerminalTab | undefined>
@@ -226,7 +227,7 @@ export const useTerminals = create<TerminalState>((set, get) => ({
   layout: 'single',
   initialized: false,
 
-  init: async (openHome = true) => {
+  init: async () => {
     if (get().initialized) return initializing
     // Read before anything changes the store (and so the remembered view).
     const view = lastView()
@@ -241,7 +242,6 @@ export const useTerminals = create<TerminalState>((set, get) => ({
         if (existing.length && view) set(reattach(existing, view))
         else if (await restore()) set((s) => ({ tabs: [...s.tabs, ...existing] }))
         else if (existing.length) set(reattach(existing, view))
-        else if (openHome) await get().open()
       } catch (err) {
         set({ error: errorMessage(err) })
       }
@@ -260,12 +260,12 @@ export const useTerminals = create<TerminalState>((set, get) => ({
   },
 
   openProject: async (projectId) => {
-    await get().init(false)
+    await get().init()
     await get().open(projectId)
   },
 
   openFolder: async (cwd) => {
-    await get().init(false)
+    await get().init()
     try {
       add(await ipc('terminal:create', { cwd }))
     } catch (err) {
@@ -285,7 +285,7 @@ export const useTerminals = create<TerminalState>((set, get) => ({
   },
 
   run: async (command) => {
-    await get().init(false)
+    await get().init()
     try {
       const info = await ipc('terminal:create', {})
       set((s) => ({ tabs: [...s.tabs, info], activeId: info.id, error: undefined }))
@@ -331,7 +331,7 @@ export const useTerminals = create<TerminalState>((set, get) => ({
   },
 
   reveal: async (info) => {
-    await get().init(false)
+    await get().init()
     set((s) => {
       const tabs = s.tabs.some((t) => t.id === info.id) ? s.tabs : [...s.tabs, info]
       return { tabs, activeId: info.id, layout: layoutFor(s.layout, tabs.findIndex((t) => t.id === info.id) + 1), error: undefined }

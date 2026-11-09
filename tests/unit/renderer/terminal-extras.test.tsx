@@ -326,13 +326,14 @@ describe('terminal store: restore, split, follow, save', () => {
 
   // First: the module saves from the first desktop init on.
   it('the web UI neither restores nor saves', async () => {
-    const created = info()
+    const create = vi.fn(() => info())
     const restore = vi.fn(() => saved([{ title: 'a', cwd: '/a', scrollback: '' }]))
     const persist = vi.fn()
-    installRemote({ 'terminal:list': () => [], 'terminal:restore': restore, 'terminal:create': () => created, 'terminal:persist': persist })
+    installRemote({ 'terminal:list': () => [], 'terminal:restore': restore, 'terminal:create': create, 'terminal:persist': persist })
     await useTerminals.getState().init()
     expect(restore).not.toHaveBeenCalled()
-    expect(useTerminals.getState().tabs).toEqual([created])
+    expect(create).not.toHaveBeenCalled() // no shell until the user opens one
+    expect(useTerminals.getState().tabs).toEqual([])
     scheduleSave()
     await saveNow()
     expect(persist).not.toHaveBeenCalled()
@@ -373,15 +374,17 @@ describe('terminal store: restore, split, follow, save', () => {
     expect(s.activeId).toBe(s.tabs[1].id)
   })
 
-  it('nothing to restore (or nothing could start): Home as before', async () => {
+  it('nothing to restore (or nothing could start): no shell until the user opens one', async () => {
     const created = info()
-    installBridge({ 'terminal:list': () => [], 'terminal:restore': () => saved([], { active: 0 }), 'terminal:create': () => created })
+    const create = vi.fn(() => created)
+    installBridge({ 'terminal:list': () => [], 'terminal:restore': () => saved([], { active: 0 }), 'terminal:create': create })
     await useTerminals.getState().init()
-    expect(useTerminals.getState().tabs).toEqual([created])
+    expect(useTerminals.getState().tabs).toEqual([])
+    expect(create).not.toHaveBeenCalled()
 
     useTerminals.setState(initial, true)
     installBridge({ 'terminal:list': () => [], 'terminal:restore': () => saved([{ title: 'a', cwd: '/a', scrollback: '' }]), 'terminal:create': () => fail('limit') })
-    await useTerminals.getState().init(false)
+    await useTerminals.getState().init()
     expect(useTerminals.getState().tabs).toEqual([])
 
     // `active` out of range: the first tab
@@ -390,11 +393,11 @@ describe('terminal store: restore, split, follow, save', () => {
     await useTerminals.getState().init()
     expect(useTerminals.getState().activeId).toBe(created.id)
 
-    // the saved tabs can't be read: Home as before
+    // the saved tabs can't be read: none either
     useTerminals.setState(initial, true)
     installBridge({ 'terminal:list': () => [], 'terminal:restore': () => fail('corrupt'), 'terminal:create': () => created })
     await useTerminals.getState().init()
-    expect(useTerminals.getState().tabs).toEqual([created])
+    expect(useTerminals.getState().tabs).toEqual([])
   })
 
   it('splits next to a shell (single → side by side), follows reported folders, restarts in the last folder', async () => {
