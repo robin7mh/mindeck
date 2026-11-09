@@ -1,12 +1,14 @@
 // Renders the logo (logo.mjs) everywhere it is used, plus the DMG background (dmg.html).
 //   node build/brand/render.mjs
-// Writes this repo's icons, and those of the phone app, the website and the cloud's admin pages
-// when ../mindeck-mobile, ../mindeck-web and ../mindeck-cloud exist. Needs Playwright's Chromium
-// (npx playwright install chromium); macOS 26's icon (build/Assets.car) needs Xcode 26 or later.
+// Writes this repo's icons, and those of the phone app and the cloud's admin pages when
+// ../mindeck-mobile and ../mindeck-cloud exist (the website is being redone — it keeps its own for
+// now). Needs Playwright's Chromium (npx playwright install chromium); macOS 26's icon
+// (build/Assets.car) needs Xcode 26 or later.
 //
 // Every icon comes in the system's appearances — the white tile in light mode, the dark tile in dark
-// mode — and the white tile wherever a system shows one icon only (no appearance to follow):
-//   macOS 26+, iOS 18+  the system switches (Assets.car, the asset catalog), tinted and clear too
+// mode, tinted and clear where the system has them — and the white tile wherever a system shows one
+// icon only (no appearance to follow):
+//   macOS 26+, iOS 18+  the system switches (Assets.car, the asset catalog)
 //   older macOS, Windows, Linux  the white tile; while Mindeck runs it follows the theme (main.ts)
 //   Android  the white tile, and the themed (monochrome) icon of Android 13+
 //   browsers  favicons that follow prefers-color-scheme (one SVG with both tiles)
@@ -17,7 +19,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { crc32, deflateSync, inflateSync } from 'node:zlib'
 import { chromium } from 'playwright-core'
-import { adaptiveIcon, icon, mark } from './logo.mjs'
+import { adaptiveIcon, icon, layers, mark } from './logo.mjs'
 
 /** The splash screen's ground, light and dark (the phone app's app.json says the same). */
 const SPLASH = { light: '#ffffff', dark: '#04060b' }
@@ -25,7 +27,6 @@ const SPLASH = { light: '#ffffff', dark: '#04060b' }
 const brand = dirname(fileURLToPath(import.meta.url))
 const desktop = join(brand, '../..')
 const mobile = join(desktop, '../mindeck-mobile')
-const web = join(desktop, '../mindeck-web')
 const cloud = join(desktop, '../mindeck-cloud')
 
 const write = (file, data) => {
@@ -121,19 +122,31 @@ const at = (kind, size, theme = 'light') => png(icon(kind, theme), size)
 const winIco = async (sizes) => ico(await Promise.all(sizes.map(async (size) => ({ size, data: await at('rounded', size) }))))
 
 /**
- * The Icon Composer document for macOS 26+ (and iOS 26+): one layer, one picture per appearance —
- * the white tile by default, the dark one in dark mode, the grey one to tint. The system cuts them
- * to its shape and derives the clear look from the grey one.
+ * The Icon Composer document for macOS 26+ (and iOS 26+): the reactor above its ground, each a
+ * picture per appearance. Light and dark come out exactly as the full icons; in the tinted and clear
+ * looks the ground goes and the clear reactor stands on the system's glass.
  */
 async function iconDocument(dir) {
-  for (const theme of ['light', 'dark', 'tinted']) write(join(dir, `Assets/${theme}.png`), opaque(await at('full', 1024, theme)))
-  const layer = {
-    name: 'Mindeck',
+  const light = layers('light')
+  const dark = layers('dark')
+  write(join(dir, 'Assets/ground-light.png'), opaque(await png(light.ground, 1024)))
+  write(join(dir, 'Assets/ground-dark.png'), opaque(await png(dark.ground, 1024)))
+  write(join(dir, 'Assets/reactor-light.png'), await png(light.reactor, 1024))
+  write(join(dir, 'Assets/reactor-dark.png'), await png(dark.reactor, 1024))
+  write(join(dir, 'Assets/reactor-clear.png'), await png(layers('clear').reactor, 1024))
+  // The first layer is on top. The default comes first in every list: without it the system ignores the others.
+  const reactor = {
+    name: 'Reactor',
     glass: false,
-    // The default comes first: without it the system ignores the others.
-    'image-name-specializations': [{ value: 'light.png' }, { appearance: 'dark', value: 'dark.png' }, { appearance: 'tinted', value: 'tinted.png' }]
+    'image-name-specializations': [{ value: 'reactor-light.png' }, { appearance: 'dark', value: 'reactor-dark.png' }, { appearance: 'tinted', value: 'reactor-clear.png' }]
   }
-  const doc = { groups: [{ layers: [layer], shadow: { kind: 'neutral', opacity: 0.5 }, translucency: { enabled: false, value: 0.5 } }], 'supported-platforms': { squares: ['macOS', 'iOS'] } }
+  const ground = {
+    name: 'Ground',
+    glass: false,
+    'image-name-specializations': [{ value: 'ground-light.png' }, { appearance: 'dark', value: 'ground-dark.png' }],
+    'hidden-specializations': [{ value: false }, { appearance: 'tinted', value: true }]
+  }
+  const doc = { groups: [{ layers: [reactor, ground], shadow: { kind: 'neutral', opacity: 0.5 }, translucency: { enabled: false, value: 0.5 } }], 'supported-platforms': { squares: ['macOS', 'iOS'] } }
   write(join(dir, 'icon.json'), JSON.stringify(doc, null, 2) + '\n')
 }
 
@@ -160,6 +173,7 @@ console.log('desktop')
 write(join(brand, 'mark.svg'), mark())
 write(join(brand, 'mark-white.svg'), mark('#ffffff'))
 write(join(brand, 'mark-black.svg'), mark('#000000'))
+write(join(brand, 'mark-clear.svg'), mark(undefined, 'clear'))
 write(join(brand, 'icon.svg'), icon('full'))
 write(join(brand, 'icon-macos.svg'), icon('macos'))
 // The logo in the app (MindeckMark), in the app's appearance, and the web app's tab (index.html) in the system's.
@@ -229,15 +243,6 @@ if (existsSync(mobile)) {
     ]
     write(join(catalog, 'SplashScreenBackground.colorset/Contents.json'), JSON.stringify({ colors, info: { version: 1, author: 'expo' } }, null, 2) + '\n')
   }
-}
-
-if (existsSync(web)) {
-  console.log('website')
-  // The page is dark: its logo is the dark tile. The tab and the home screen follow the system (white without one).
-  write(join(web, 'public/logo.svg'), icon('tile'))
-  write(join(web, 'public/favicon.svg'), adaptiveIcon('tile'))
-  write(join(web, 'public/favicon.ico'), await winIco([16, 32, 48]))
-  write(join(web, 'public/apple-touch-icon.png'), opaque(await at('full', 180)))
 }
 
 if (existsSync(cloud)) {

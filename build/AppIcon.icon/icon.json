@@ -3,19 +3,41 @@
     {
       "layers": [
         {
-          "name": "Mindeck",
+          "name": "Reactor",
           "glass": false,
           "image-name-specializations": [
             {
-              "value": "light.png"
+              "value": "reactor-light.png"
             },
             {
               "appearance": "dark",
-              "value": "dark.png"
+              "value": "reactor-dark.png"
             },
             {
               "appearance": "tinted",
-              "value": "tinted.png"
+              "value": "reactor-clear.png"
+            }
+          ]
+        },
+        {
+          "name": "Ground",
+          "glass": false,
+          "image-name-specializations": [
+            {
+              "value": "ground-light.png"
+            },
+            {
+              "appearance": "dark",
+              "value": "ground-dark.png"
+            }
+          ],
+          "hidden-specializations": [
+            {
+              "value": false
+            },
+            {
+              "appearance": "tinted",
+              "value": true
             }
           ]
         }
