@@ -53,11 +53,13 @@ electronFuses:
 # for Electron. Each platform keeps only its own prebuilds (build/afterPack.cjs).
 npmRebuild: false
 afterPack: build/afterPack.cjs
-# The tray icon while Mindeck runs in the background (Windows/Linux): resources/tray.png.
-# Every icon is rendered from build/brand/ (node build/brand/render.mjs).
+# Every icon is rendered from build/brand/ (node build/brand/render.mjs), in the system's two
+# appearances: the white tile (light mode, and wherever a system shows one icon only) and the dark one.
+# The icons the running app switches between when the theme changes (electron/main/lib/appIcon.ts):
+# the tray and the window (Windows/Linux), the Dock (macOS before 26) — resources/icons/.
 extraResources:
-  - from: build/tray.png
-    to: tray.png
+  - from: build/runtime
+    to: icons
 asarUnpack:
   - node_modules/node-pty/**
   # tsserver runs as its own Node process and reads its lib files from disk.
@@ -74,7 +76,12 @@ mac:
       arch: [arm64, x64]
     - target: zip
       arch: [arm64, x64]
+  # The .icns older macOS shows (the white tile). macOS 26+ reads the Icon Composer document instead —
+  # compiled into build/Assets.car (white, dark, tinted, clear), found through CFBundleIconName.
   icon: build/icon.png
+  extraResources:
+    - from: build/Assets.car
+      to: Assets.car
   hardenedRuntime: true
   gatekeeperAssess: false
   entitlements: build/entitlements.mac.plist
@@ -86,6 +93,7 @@ mac:
   # The ZIPs the auto-updater downloads (latest-mac.yml lists both architectures).
   artifactName: ${productName}-mac-${arch}.${ext}
   extendInfo:
+    CFBundleIconName: AppIcon
     NSHumanReadableCopyright: © 2026 Robin Hinkelmann
     # Asked once, when a website in Mindeck's browser wants them (and the user allowed that site).
     NSCameraUsageDescription: A website open in Mindeck's browser wants to use the camera.
@@ -112,7 +120,7 @@ win:
   target:
     - target: nsis
       arch: [x64, arm64]
-  # Its own sizes: the bolder small mark up to 48 px (taskbar, Explorer lists).
+  # The white tile (an .exe has one icon); while Mindeck runs, its window and tray follow the theme.
   icon: build/icon.ico
   executableName: Mindeck
 
@@ -131,7 +139,7 @@ linux:
   target:
     - target: AppImage
     - target: deb
-  # One PNG per size (16x16.png … 512x512.png), the small ones with the bolder mark.
+  # One PNG per size (16x16.png … 512x512.png), the white tile; the running window follows the theme.
   icon: build/icons
   category: Development
   executableName: mindeck

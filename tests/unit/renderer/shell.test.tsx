@@ -14,6 +14,7 @@ import { RadialGauge } from '@/components/monitor/RadialGauge'
 import { Sparkline } from '@/components/monitor/Sparkline'
 import { BootSequence, BOOT_TOTAL_MS } from '@/components/boot/BootSequence'
 import { MindeckMark } from '@/components/brand/MindeckMark'
+import { useAppearance } from '@/lib/theme'
 import { useAssistant as staticAssistant } from '@/features/agents/store'
 import { useAgents as staticAgents } from '@/features/agents/sessions'
 import { HudClock } from '@/features/dashboard/components/HudClock'
@@ -258,12 +259,19 @@ describe('BootSequence', () => {
 })
 
 describe('MindeckMark', () => {
-  it('shows the app icon\'s tile, square at the size asked for', () => {
+  it('shows the app icon\'s tile, square at the size asked for — the dark tile in the dark theme, the white one in the light', () => {
+    const before = useAppearance.getState().theme
+    act(() => useAppearance.setState({ theme: 'dark' }))
     const { container } = render(<MindeckMark size={26} className="x" />)
     const img = container.querySelector('img')!
     // Small enough for Vite to inline (index.html's policy allows data: images).
     expect(img.getAttribute('src')).toMatch(/^data:image\/svg\+xml|tile\.svg$/)
     expect([img.getAttribute('width'), img.getAttribute('height'), img.getAttribute('alt'), img.className]).toEqual(['26', '26', '', 'x'])
+    const dark = img.getAttribute('src')
+    act(() => useAppearance.setState({ theme: 'light' }))
+    expect(img.getAttribute('src')).toMatch(/^data:image\/svg\+xml|tile-light\.svg$/)
+    expect(img.getAttribute('src')).not.toBe(dark)
+    act(() => useAppearance.setState({ theme: before }))
   })
 })
 
