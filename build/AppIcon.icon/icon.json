@@ -1,0 +1,39 @@
+{
+  "groups": [
+    {
+      "layers": [
+        {
+          "name": "Mindeck",
+          "glass": false,
+          "image-name-specializations": [
+            {
+              "value": "light.png"
+            },
+            {
+              "appearance": "dark",
+              "value": "dark.png"
+            },
+            {
+              "appearance": "tinted",
+              "value": "tinted.png"
+            }
+          ]
+        }
+      ],
+      "shadow": {
+        "kind": "neutral",
+        "opacity": 0.5
+      },
+      "translucency": {
+        "enabled": false,
+        "value": 0.5
+      }
+    }
+  ],
+  "supported-platforms": {
+    "squares": [
+      "macOS",
+      "iOS"
+    ]
+  }
+}

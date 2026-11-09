@@ -37,6 +37,7 @@ class FakeWindow {
   isMaximized = () => this.maximized
   isFullScreen = () => this.fullScreen
   setFullScreen = vi.fn((v: boolean) => (this.fullScreen = v))
+  setIcon = vi.fn()
   isVisible = () => this.visible
   isMinimized = () => this.minimized
   isFocused = () => this.focused
@@ -71,7 +72,7 @@ const h = vi.hoisted(() => ({
   singleInstance: true,
   setPath: vi.fn(),
   crashStart: vi.fn(),
-  trays: [] as { image: unknown; tooltip?: string; menu?: { label?: string; type?: string; click?: () => void }[]; click?: () => void; destroy: ReturnType<typeof vi.fn> }[],
+  trays: [] as { image: unknown; tooltip?: string; menu?: { label?: string; type?: string; click?: () => void }[]; click?: () => void; destroy: () => void; setImage: ReturnType<typeof vi.fn<(image: unknown) => unknown>> }[],
   log: { captured: vi.fn(), crashes: vi.fn(), recent: vi.fn(() => [] as unknown[]), error: vi.fn(), warn: vi.fn() },
   notifications: [] as { opts: { title: string; body: string }; click?: () => void; show: ReturnType<typeof vi.fn> }[],
   notifySupported: true,
@@ -96,6 +97,13 @@ const h = vi.hoisted(() => ({
   switches: new Set<string>(),
   /** app.dock — macOS only. */
   dock: undefined as undefined | { setIcon: ReturnType<typeof vi.fn> },
+  /** The system's appearance (macOS's AppleInterfaceStyle, Windows' taskbar), apart from Mindeck's theme (`dark`). */
+  systemDark: false,
+  /** macOS 26's icon style (AppleIconAppearanceTheme); '' = none chosen. */
+  iconStyle: '',
+  themeListeners: [] as (() => void)[],
+  appearanceNotes: [] as [string, () => void][],
+  macos: '26.1.0',
   appMenu: undefined as unknown,
   dark: true,
   fileIconFails: false,
@@ -162,7 +170,10 @@ vi.mock('electron', () => ({
     tooltip?: string
     menu?: { label?: string; click?: () => void }[]
     click?: () => void
-    destroy = vi.fn()
+    gone = false
+    destroy = vi.fn(() => (this.gone = true))
+    setImage = vi.fn((image: unknown) => (this.image = image))
+    isDestroyed = () => this.gone
     constructor(public image: unknown) {
       h.trays.push(this)
     }
@@ -184,7 +195,15 @@ vi.mock('electron', () => ({
   nativeTheme: {
     get shouldUseDarkColors() {
       return h.dark
-    }
+    },
+    get shouldUseDarkColorsForSystemIntegratedUI() {
+      return h.systemDark
+    },
+    on: (_event: string, fn: () => void) => h.themeListeners.push(fn)
+  },
+  systemPreferences: {
+    getUserDefault: (key: string) => (key === 'AppleIconAppearanceTheme' ? h.iconStyle : key === 'AppleInterfaceStyle' && h.systemDark ? 'Dark' : ''),
+    subscribeNotification: (name: string, fn: () => void) => h.appearanceNotes.push([name, fn])
   },
   shell: { openExternal: h.openExternal, openPath: h.openPath },
   session: { defaultSession: h.defaultSession },
@@ -335,6 +354,12 @@ beforeEach(() => {
   h.packaged = false
   h.switches.clear()
   h.dock = undefined
+  h.systemDark = false
+  h.iconStyle = ''
+  h.themeListeners = []
+  h.appearanceNotes = []
+  h.macos = '26.1.0'
+  ;(process as { getSystemVersion?: () => string }).getSystemVersion = () => h.macos
   h.power.clear()
   h.onBattery = false
   h.blockers.start.mockClear()
@@ -446,14 +471,41 @@ describe('main process boot', () => {
     expect(h.updater.quitAndInstall).toHaveBeenCalledWith(false, true)
   })
 
-  it("npm run dev on macOS: the Dock shows Mindeck's icon, not Electron's — a packaged app brings its own", async () => {
+  it("macOS: the Dock shows Mindeck's icon in the system's appearance — in npm run dev and before macOS 26; a packaged app on 26+ is the system's", async () => {
     const dock = (h.dock = { setIcon: vi.fn() })
     await boot()
-    expect(dock.setIcon).toHaveBeenCalledWith(expect.stringMatching(/build[\\/]icon\.png$/))
+    expect(dock.setIcon).toHaveBeenLastCalledWith(expect.stringMatching(/build[\\/]runtime[\\/]dock-light\.png$/))
+    // The system turns dark (not Mindeck's own theme, which `dark` stands for): macOS says so in a notification.
+    h.systemDark = true
+    const [name, notify] = h.appearanceNotes.at(-1)!
+    expect(name).toBe('AppleInterfaceThemeChangedNotification')
+    notify()
+    expect(dock.setIcon).toHaveBeenLastCalledWith(expect.stringMatching(/build[\\/]runtime[\\/]dock-dark\.png$/))
+    // macOS 26's icon style, when fixed, wins: every other icon in the Dock looks that way.
+    h.iconStyle = 'ClearLight'
+    notify()
+    expect(dock.setIcon).toHaveBeenLastCalledWith(expect.stringMatching(/dock-light\.png$/))
+    h.systemDark = false
+    h.iconStyle = 'RegularDark'
+    notify()
+    expect(dock.setIcon).toHaveBeenLastCalledWith(expect.stringMatching(/dock-dark\.png$/))
+    h.iconStyle = 'RegularAutomatic' // automatic: the appearance decides
+    notify()
+    expect(dock.setIcon).toHaveBeenLastCalledWith(expect.stringMatching(/dock-light\.png$/))
+    h.systemDark = true
+    h.iconStyle = ''
+    // Packaged on macOS 26: its Assets.car switches by itself — a picture would replace the system's.
     dock.setIcon.mockClear()
     h.packaged = true
+    Object.defineProperty(process, 'resourcesPath', { value: '/Applications/Mindeck.app/Contents/Resources', configurable: true })
     await boot()
+    h.themeListeners.at(-1)!()
     expect(dock.setIcon).not.toHaveBeenCalled()
+    // Packaged on macOS 15: Mindeck switches it, from its resources.
+    h.macos = '15.6.1'
+    await boot()
+    expect(dock.setIcon).toHaveBeenLastCalledWith('/Applications/Mindeck.app/Contents/Resources/icons/dock-dark.png')
+    delete (process as { resourcesPath?: string }).resourcesPath
   })
 
   it('needs a license only when packaged, and counts the trial only while someone is at the computer, looking at Mindeck', async () => {
@@ -777,7 +829,8 @@ describe('stability', () => {
     expect(win.hide).toHaveBeenCalled()
     expect(h.settings).toEqual({ closeBehavior: 'background' })
     const tray = h.trays[0]
-    expect(tray.image).toEqual({ path: expect.stringMatching(/build[\\/]tray\.png$/), size: 22 })
+    // Linux reads its theme from nativeTheme (dark here): the dark tile.
+    expect(tray.image).toEqual({ path: expect.stringMatching(/build[\\/]runtime[\\/]tray-dark\.png$/), size: 22 })
     expect(tray.tooltip).toContain('background')
     expect(tray.menu!.map((m) => m.label ?? m.type)).toEqual(['Show Mindeck', 'separator', 'Quit Mindeck'])
     tray.click!()
@@ -798,8 +851,22 @@ describe('stability', () => {
     Object.defineProperty(process, 'resourcesPath', { value: '/opt/Mindeck/resources', configurable: true })
     await boot({ platform: 'win32' })
     h.settings = { closeBehavior: 'background' }
-    FakeWindow.all.at(-1)!.emit('close', { preventDefault: vi.fn() })
-    expect(h.trays.at(-1)!.image).toEqual({ path: expect.stringMatching(/resources[\\/]tray\.png$/), size: 16 })
+    const winWindow = FakeWindow.all.at(-1)!
+    // Windows: the taskbar's mode (light here, whatever Mindeck's own theme) — the white tile, window and tray alike.
+    expect(winWindow.opts.icon).toMatch(/resources[\\/]icons[\\/]window-light\.png$/)
+    winWindow.emit('close', { preventDefault: vi.fn() })
+    const winTray = h.trays.at(-1)!
+    expect(winTray.image).toEqual({ path: expect.stringMatching(/resources[\\/]icons[\\/]tray-light\.png$/), size: 16 })
+    // The taskbar turns dark: the tray and the window follow.
+    h.systemDark = true
+    h.themeListeners.at(-1)!()
+    expect(winTray.setImage).toHaveBeenLastCalledWith({ path: expect.stringMatching(/resources[\\/]icons[\\/]tray-dark\.png$/), size: 16 })
+    expect(winWindow.setIcon).toHaveBeenLastCalledWith(expect.stringMatching(/resources[\\/]icons[\\/]window-dark\.png$/))
+    // A tray that is gone (the window came back) is left alone.
+    winTray.destroy()
+    winTray.setImage.mockClear()
+    h.themeListeners.at(-1)!()
+    expect(winTray.setImage).not.toHaveBeenCalled()
     delete (process as { resourcesPath?: string }).resourcesPath
   })
 

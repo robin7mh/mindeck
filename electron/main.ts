@@ -1,9 +1,10 @@
-import { app, BrowserWindow, crashReporter, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, powerMonitor, powerSaveBlocker, protocol, session, shell, Tray } from 'electron'
+import { app, BrowserWindow, crashReporter, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, powerMonitor, powerSaveBlocker, protocol, session, shell, systemPreferences, Tray } from 'electron'
 import { existsSync } from 'node:fs'
 import { isAbsolute, join } from 'node:path'
 import { release, type } from 'node:os'
 import { pathToFileURL } from 'node:url'
 import { migrateLegacyData, mindeckPaths } from './main/lib/paths'
+import { onSystemAppearance, runtimeIcon, switchesDock, systemDark, type IconKind } from './main/lib/appIcon'
 import { captureConsole, catchCrashes, Logger } from './main/lib/log'
 import { electronCipher, electronPlatform, secretsProtected } from './main/platform/electron'
 import { DesktopLifecycle, usingMindeck, type LifecycleLabels } from './main/platform/lifecycle'
@@ -72,15 +73,44 @@ function loadApp(win: BrowserWindow): void {
   else void win.loadFile(join(__dirname, '../renderer/index.html'))
 }
 
+/** The running app's icon of `kind` in the system's appearance (the white tile in light mode, the dark one in dark mode). */
+function appIcon(kind: IconKind): string {
+  const dark = systemDark({ platform: process.platform, nativeTheme, systemPreferences })
+  return runtimeIcon(kind, dark, { packaged: app.isPackaged, resourcesPath: process.resourcesPath, root: join(__dirname, '../..') })
+}
+
+/** The tray icon, at the size the platform's tray draws. */
+function trayImage() {
+  const size = process.platform === 'win32' ? 16 : 22
+  return nativeImage.createFromPath(appIcon('tray')).resize({ width: size, height: size })
+}
+
+/** The tray while Mindeck runs in the background — its icon follows the system's appearance (followAppearance). */
+let tray: Tray | null = null
+
 /** The tray icon while Mindeck runs in the background (Windows/Linux). */
 function createTray(l: LifecycleLabels, actions: { show(): void; quit(): void }): Tray {
-  const icon = app.isPackaged ? join(process.resourcesPath, 'tray.png') : join(__dirname, '../../build/tray.png')
-  const size = process.platform === 'win32' ? 16 : 22
-  const tray = new Tray(nativeImage.createFromPath(icon).resize({ width: size, height: size }))
+  tray = new Tray(trayImage())
   tray.setToolTip(l.tooltip)
   tray.setContextMenu(Menu.buildFromTemplate([{ label: l.show, click: actions.show }, { type: 'separator' }, { label: l.quit, click: actions.quit }]))
   tray.on('click', actions.show)
   return tray
+}
+
+/**
+ * The icons follow the system's appearance where the system does not do it itself: the Dock in
+ * `npm run dev` (Electron's own app) and on macOS before 26, the taskbar's window icon and the tray
+ * on Windows and Linux. A packaged app on macOS 26+ has its Assets.car — the system switches it.
+ */
+function followAppearance(): void {
+  const dock = process.platform === 'darwin' && switchesDock(app.isPackaged, process.getSystemVersion())
+  const apply = () => {
+    if (dock) app.dock?.setIcon(appIcon('dock'))
+    if (process.platform !== 'darwin') mainWindow?.setIcon(appIcon('window'))
+    if (tray && !tray.isDestroyed()) tray.setImage(trayImage())
+  }
+  apply()
+  onSystemAppearance({ platform: process.platform, nativeTheme, systemPreferences }, apply)
 }
 
 /** The work closing the window would end: live agent sessions, and terminals running a program (a shell at its prompt loses nothing). */
@@ -148,6 +178,8 @@ function createWindow(): void {
       : { frame: false }),
     // Matches --bg-void of the theme the renderer will pick by default (OS appearance).
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#04060b' : '#eef2f7',
+    // Windows and Linux: the taskbar's icon, in the system's appearance (macOS takes the Dock's).
+    ...(process.platform === 'darwin' ? {} : { icon: appIcon('window') }),
     autoHideMenuBar: true,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
@@ -385,8 +417,7 @@ app.whenReady().then(async () => {
   )
   // Mindeck's own menu: Electron's default one would reload the UI on ⌘R and close the window on ⌘W.
   Menu.setApplicationMenu(Menu.buildFromTemplate(appMenuTemplate(process.platform, !app.isPackaged)))
-  // npm run dev runs inside Electron's own app: the Dock (macOS) shows Mindeck's icon, not Electron's.
-  if (!app.isPackaged) app.dock?.setIcon(join(__dirname, '../../build/icon.png'))
+  followAppearance()
   try {
     await startCore()
   } catch (err) {
