@@ -1,20 +1,13 @@
 import { useId } from 'react'
 
+/** The accent color (Settings → Appearance): the System module draws every metric in it. */
+const ACCENT = 'var(--accent-cyan)'
+
 /**
- * Lightweight rolling SVG sparkline with an area fill + glow. No chart library —
- * matches the HUD aesthetic and stays cheap. `accent` maps to a CSS color var.
+ * Lightweight rolling SVG sparkline with an area fill + glow, in the accent
+ * color. No chart library — matches the HUD aesthetic and stays cheap.
  */
-export function Sparkline({
-  data,
-  accent = 'var(--accent-cyan)',
-  height = 40,
-  max = 100
-}: {
-  data: number[]
-  accent?: string
-  height?: number
-  max?: number
-}) {
+export function Sparkline({ data, height = 40, max = 100 }: { data: number[]; height?: number; max?: number }) {
   const id = useId()
   const w = 100
   const h = height
@@ -36,22 +29,22 @@ export function Sparkline({
     <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" className="h-full w-full">
       <defs>
         <linearGradient id={`fill-${id}`} x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor={`rgb(${accent} / 0.35)`} />
-          <stop offset="100%" stopColor={`rgb(${accent} / 0)`} />
+          <stop offset="0%" stopColor={`rgb(${ACCENT} / 0.35)`} />
+          <stop offset="100%" stopColor={`rgb(${ACCENT} / 0)`} />
         </linearGradient>
       </defs>
       <path d={area} fill={`url(#fill-${id})`} />
       <path
         d={line}
         fill="none"
-        stroke={`rgb(${accent})`}
+        stroke={`rgb(${ACCENT})`}
         strokeWidth={1.5}
         strokeLinejoin="round"
         strokeLinecap="round"
         vectorEffect="non-scaling-stroke"
-        style={{ filter: `drop-shadow(0 0 3px rgb(${accent} / calc(0.7 * var(--glow))))` }}
+        style={{ filter: `drop-shadow(0 0 3px rgb(${ACCENT} / calc(0.7 * var(--glow))))` }}
       />
-      <circle cx={lastX} cy={lastY} r={1.8} fill={`rgb(${accent})`} vectorEffect="non-scaling-stroke" />
+      <circle cx={lastX} cy={lastY} r={1.8} fill={`rgb(${ACCENT})`} vectorEffect="non-scaling-stroke" />
     </svg>
   )
 }

@@ -5,7 +5,6 @@ import type { Project } from '@shared/types/project'
 import type { NoteMeta } from '@shared/types/memory'
 import type { ModuleId } from '@/types'
 import { Panel } from '@/components/ui/Panel'
-import { cn } from '@/lib/cn'
 import { StatusDot } from '@/components/ui/StatusDot'
 import { useClock } from '@/hooks/useClock'
 import { useProjects } from '@/features/projects/store'
@@ -300,17 +299,15 @@ function SystemTile() {
       ) : (
         <>
           <div className="flex items-center gap-2">
-            <StatusDot tone={warnings.length ? 'warn' : 'ok'} pulse={warnings.length > 0} />
+            <StatusDot tone="cyan" pulse={warnings.length > 0} />
             <span className="font-sans text-[14px] font-medium text-text-primary">{warnings[0] ?? t.dashboard.allGood}</span>
           </div>
           {warnings.length > 1 && (
-            <p className="mt-1 font-sans text-[12px] text-amber">{warnings.slice(1).join(' · ')}</p>
+            <p className="mt-1 font-sans text-[12px] text-cyan">{warnings.slice(1).join(' · ')}</p>
           )}
           <div className="mt-auto grid grid-cols-2 gap-x-6 gap-y-4 pt-5">
             {stats.map(([label, value]) => {
               const isBattery = label === t.dashboard.battery
-              // High is bad for load and space, low is bad for the battery.
-              const warn = isBattery ? value < 20 : value > 85
               return (
                 <div key={label} className="min-w-0">
                   <div className="flex items-baseline justify-between gap-2">
@@ -325,7 +322,7 @@ function SystemTile() {
                   </div>
                   <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-elevated">
                     <div
-                      className={cn('h-full rounded-full transition-[width] duration-500', warn ? 'bg-amber' : 'bg-cyan')}
+                      className="h-full rounded-full bg-cyan transition-[width] duration-500"
                       style={{ width: `${Math.max(0, Math.min(100, value))}%` }}
                     />
                   </div>

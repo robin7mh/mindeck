@@ -1,15 +1,8 @@
-/** Circular gauge (0..100) with a glowing arc. Used for the headline metric. */
-export function RadialGauge({
-  value,
-  size = 68,
-  accent = 'var(--accent-cyan)',
-  label
-}: {
-  value: number
-  size?: number
-  accent?: string
-  label?: string
-}) {
+/** The accent color (Settings → Appearance): the System module draws every metric in it. */
+const ACCENT = 'var(--accent-cyan)'
+
+/** Circular gauge (0..100) with a glowing arc, in the accent color. Used for the headline metric. */
+export function RadialGauge({ value, size = 68, label }: { value: number; size?: number; label?: string }) {
   const stroke = 5
   const r = (size - stroke) / 2
   const c = 2 * Math.PI * r
@@ -32,11 +25,11 @@ export function RadialGauge({
           cy={size / 2}
           r={r}
           fill="none"
-          stroke={`rgb(${accent})`}
+          stroke={`rgb(${ACCENT})`}
           strokeWidth={stroke}
           strokeLinecap="round"
           strokeDasharray={`${dash} ${c}`}
-          style={{ filter: `drop-shadow(0 0 4px rgb(${accent} / calc(0.6 * var(--glow))))`, transition: 'stroke-dasharray 0.6s ease' }}
+          style={{ filter: `drop-shadow(0 0 4px rgb(${ACCENT} / calc(0.6 * var(--glow))))`, transition: 'stroke-dasharray 0.6s ease' }}
         />
       </svg>
       <div className="absolute flex flex-col items-center">

@@ -821,7 +821,7 @@ describe('SystemView', () => {
     expect(screen.getByText('8.0 / 16.0 GB')).toBeInTheDocument()
     expect(screen.getByText('↓ 1.50 · ↑ 0.25 MB/s')).toBeInTheDocument()
     expect(screen.getByText('charging')).toBeInTheDocument()
-    expect(screen.getByText('60.4').className).toContain('text-amber')
+    expect(screen.getByText('60.4').className).toContain('text-cyan')
     expect(screen.getByLabelText('Per-core load').children).toHaveLength(4)
     act(() => bridge.emit('system:tick', snap({ battery: { pct: 50, charging: false, hasBattery: true }, cpu: { total: 1, cores: [] } })))
     expect(screen.getByText('on battery')).toBeInTheDocument()

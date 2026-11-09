@@ -127,8 +127,12 @@ describe('Dashboard', () => {
     expect(onNavigate).toHaveBeenLastCalledWith('memory')
 
     expect(screen.getByText(t.cpuHigh)).toBeInTheDocument()
-    expect(screen.getByText([t.ramHigh, t.diskHigh, t.batteryLow].join(' · '))).toBeInTheDocument()
+    expect(screen.getByText([t.ramHigh, t.diskHigh, t.batteryLow].join(' · '))).toHaveClass('text-cyan')
     expect(screen.getByText(t.battery)).toBeInTheDocument()
+    // Warnings too stay in the accent color: the dot (and its pulse) and every bar.
+    const system = screen.getByText(t.cpuHigh).parentElement!.parentElement!
+    expect(system.querySelector('.bg-amber')).toBeNull()
+    expect(system.querySelectorAll('.bg-cyan')).toHaveLength(6)
   })
 
   it('all clean, all good, charging; empty-state buttons navigate', async () => {
