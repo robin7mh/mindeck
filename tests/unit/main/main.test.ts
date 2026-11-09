@@ -99,8 +99,8 @@ const h = vi.hoisted(() => ({
   dock: undefined as undefined | { setIcon: ReturnType<typeof vi.fn> },
   /** The system's appearance (macOS's AppleInterfaceStyle, Windows' taskbar), apart from Mindeck's theme (`dark`). */
   systemDark: false,
-  /** macOS 26's icon style (AppleIconAppearanceTheme); '' = none chosen. */
-  iconStyle: '',
+  /** Mindeck's own theme for Electron (nativeTheme.themeSource): 'system' follows the OS. */
+  themeSource: 'system' as 'system' | 'light' | 'dark',
   themeListeners: [] as (() => void)[],
   appearanceNotes: [] as [string, () => void][],
   macos: '26.1.0',
@@ -199,10 +199,13 @@ vi.mock('electron', () => ({
     get shouldUseDarkColorsForSystemIntegratedUI() {
       return h.systemDark
     },
+    get themeSource() {
+      return h.themeSource
+    },
     on: (_event: string, fn: () => void) => h.themeListeners.push(fn)
   },
   systemPreferences: {
-    getUserDefault: (key: string) => (key === 'AppleIconAppearanceTheme' ? h.iconStyle : key === 'AppleInterfaceStyle' && h.systemDark ? 'Dark' : ''),
+    getUserDefault: (key: string) => (key === 'AppleInterfaceStyle' && h.systemDark ? 'Dark' : ''),
     subscribeNotification: (name: string, fn: () => void) => h.appearanceNotes.push([name, fn])
   },
   shell: { openExternal: h.openExternal, openPath: h.openPath },
@@ -355,7 +358,7 @@ beforeEach(() => {
   h.switches.clear()
   h.dock = undefined
   h.systemDark = false
-  h.iconStyle = ''
+  h.themeSource = 'system'
   h.themeListeners = []
   h.appearanceNotes = []
   h.macos = '26.1.0'
@@ -473,27 +476,25 @@ describe('main process boot', () => {
 
   it("macOS: the Dock shows Mindeck's icon in the system's appearance — in npm run dev and before macOS 26; a packaged app on 26+ is the system's", async () => {
     const dock = (h.dock = { setIcon: vi.fn() })
+    // Mindeck follows the system (its default): nativeTheme says what the system is — light here.
+    h.dark = false
     await boot()
     expect(dock.setIcon).toHaveBeenLastCalledWith(expect.stringMatching(/build[\\/]runtime[\\/]dock-light\.png$/))
-    // The system turns dark (not Mindeck's own theme, which `dark` stands for): macOS says so in a notification.
+    h.dark = true
+    h.themeListeners.at(-1)!()
+    expect(dock.setIcon).toHaveBeenLastCalledWith(expect.stringMatching(/build[\\/]runtime[\\/]dock-dark\.png$/))
+    // Mindeck in a theme of its own (light) while the system is dark: the Dock follows the system — macOS says so in a notification.
+    h.themeSource = 'light'
+    h.dark = false
     h.systemDark = true
     const [name, notify] = h.appearanceNotes.at(-1)!
     expect(name).toBe('AppleInterfaceThemeChangedNotification')
     notify()
     expect(dock.setIcon).toHaveBeenLastCalledWith(expect.stringMatching(/build[\\/]runtime[\\/]dock-dark\.png$/))
-    // macOS 26's icon style, when fixed, wins: every other icon in the Dock looks that way.
-    h.iconStyle = 'ClearLight'
-    notify()
-    expect(dock.setIcon).toHaveBeenLastCalledWith(expect.stringMatching(/dock-light\.png$/))
     h.systemDark = false
-    h.iconStyle = 'RegularDark'
-    notify()
-    expect(dock.setIcon).toHaveBeenLastCalledWith(expect.stringMatching(/dock-dark\.png$/))
-    h.iconStyle = 'RegularAutomatic' // automatic: the appearance decides
     notify()
     expect(dock.setIcon).toHaveBeenLastCalledWith(expect.stringMatching(/dock-light\.png$/))
     h.systemDark = true
-    h.iconStyle = ''
     // Packaged on macOS 26: its Assets.car switches by itself — a picture would replace the system's.
     dock.setIcon.mockClear()
     h.packaged = true

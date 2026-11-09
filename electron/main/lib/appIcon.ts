@@ -34,22 +34,24 @@ export function switchesDock(packaged: boolean, macosVersion: string): boolean {
 /** What the system's appearance is read from (Electron's modules; tests pass their own). */
 export interface AppearanceSource {
   platform: NodeJS.Platform
-  nativeTheme: { shouldUseDarkColors: boolean; shouldUseDarkColorsForSystemIntegratedUI: boolean; on(event: 'updated', cb: () => void): unknown }
+  nativeTheme: {
+    shouldUseDarkColors: boolean
+    shouldUseDarkColorsForSystemIntegratedUI: boolean
+    themeSource: 'system' | 'light' | 'dark'
+    on(event: 'updated', cb: () => void): unknown
+  }
   systemPreferences: { getUserDefault(key: string, type: 'string'): unknown; subscribeNotification(event: string, cb: () => void): unknown }
 }
 
 /**
- * Whether the system shows its icons dark — not Mindeck's own theme, which sets
- * `nativeTheme.themeSource` for the pages in its browser. macOS 26+: its icon style when that is fixed
- * (`RegularDark`, `ClearLight` … — every other app's icon looks that way), else the appearance;
- * Windows: the taskbar's mode ("Windows mode", where the icons are); Linux: its theme.
+ * Whether the system is in dark mode — not Mindeck's own theme, which sets `nativeTheme.themeSource`
+ * for the pages in its browser. macOS: while Mindeck follows the system, nativeTheme says it (an
+ * automatic switch too); with a theme of its own, the user's setting (AppleInterfaceStyle).
+ * Windows: the taskbar's mode ("Windows mode", where the icons are). Linux: its theme.
  */
 export function systemDark(source: AppearanceSource): boolean {
   if (source.platform === 'win32') return source.nativeTheme.shouldUseDarkColorsForSystemIntegratedUI
-  if (source.platform === 'darwin') {
-    const style = String(source.systemPreferences.getUserDefault('AppleIconAppearanceTheme', 'string'))
-    if (/Dark$/.test(style)) return true
-    if (/Light$/.test(style)) return false
+  if (source.platform === 'darwin' && source.nativeTheme.themeSource !== 'system') {
     return source.systemPreferences.getUserDefault('AppleInterfaceStyle', 'string') === 'Dark'
   }
   return source.nativeTheme.shouldUseDarkColors
