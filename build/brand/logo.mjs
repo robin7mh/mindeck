@@ -34,15 +34,15 @@ export const THEMES = {
 }
 
 /** The reactor's parts on its 1024 canvas, centred on (512, 512). */
-const RING = 'r="330" fill="none" stroke-width="40" stroke-dasharray="408.4 110" stroke-dashoffset="204.2"'
-const DOTS = 'r="262" fill="none" stroke-width="22" stroke-dasharray="5 17.86"'
-const LIGHTS = [[745.3, 745.3], [278.7, 745.3], [278.7, 278.7], [745.3, 278.7]]
-const DECK = 'translate(512 512) scale(0.62) translate(-512 -494)'
+const RING = 'r="398" fill="none" stroke-width="58" stroke-dasharray="493.8 131.3" stroke-dashoffset="246.9"'
+const DOTS = 'r="318" fill="none" stroke-width="30" stroke-dasharray="7 20.75"'
+const LIGHTS = [[793.4, 793.4], [230.6, 793.4], [230.6, 230.6], [793.4, 230.6]]
+const DECK = 'translate(512 512) scale(0.9) translate(-512 -494)'
 const TOP = 'M512 262L800 406L512 550L224 406Z'
 const MIDDLE = 'M224 494L512 638L800 494'
 const LOWER = 'M224 582L512 726L800 582'
 /** How far the reactor reaches from its centre (the ring's outer edge), on the 1024 canvas. */
-export const REACH = 350
+export const REACH = 430
 
 const num = (v) => String(Math.round(v * 1000) / 1000)
 
@@ -56,10 +56,10 @@ function reactor(theme, { k = 1, cx = 512, cy = 512, color, id = '' } = {}) {
   const parts =
     `<circle cx="512" cy="512" ${DOTS} stroke="${t.dots}"/>` +
     `<circle cx="512" cy="512" ${RING} stroke="${t.ring}" stroke-linecap="round"/>` +
-    `<g fill="${t.lights}">${LIGHTS.map(([x, y]) => `<circle cx="${x}" cy="${y}" r="22"/>`).join('')}</g>` +
-    `<g transform="${DECK}"><path d="${LOWER}" fill="none" stroke="${t.lower}" stroke-width="44" stroke-linecap="round" stroke-linejoin="round"/>` +
-    `<path d="${MIDDLE}" fill="none" stroke="${t.middle}" stroke-width="44" stroke-linecap="round" stroke-linejoin="round"/>` +
-    `<path d="${TOP}" fill="${t.top}" stroke="${t.top}" stroke-width="44" stroke-linejoin="round"/></g>`
+    `<g fill="${t.lights}">${LIGHTS.map(([x, y]) => `<circle cx="${x}" cy="${y}" r="32"/>`).join('')}</g>` +
+    `<g transform="${DECK}"><path d="${LOWER}" fill="none" stroke="${t.lower}" stroke-width="52" stroke-linecap="round" stroke-linejoin="round"/>` +
+    `<path d="${MIDDLE}" fill="none" stroke="${t.middle}" stroke-width="52" stroke-linecap="round" stroke-linejoin="round"/>` +
+    `<path d="${TOP}" fill="${t.top}" stroke="${t.top}" stroke-width="52" stroke-linejoin="round"/></g>`
   // The dark tile's glow: the ring and the top layer, blurred, under the sharp ones.
   const glow = !color && t.glow
   const defs = glow ? `<filter id="${id}r-glow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="16"/></filter>` : ''
@@ -96,7 +96,7 @@ const svg = (w, h, defs, body) => `<svg xmlns="http://www.w3.org/2000/svg" viewB
 
 /**
  * An app icon, 1024 units square, in an appearance (`light`, `dark`, `tinted`, `clear`). The
- * reactor fills the tile as in the reference artwork (its ring 68 % of the tile's width).
+ * reactor fills the tile as in the reference artwork (its ring 84 % of the tile's width — big enough to hold its own in the Dock).
  * - full:     edge to edge (iOS, Icon Composer, apple-touch-icon — the system shapes it)
  * - macos:    Apple's macOS grid — an 824 tile at (100,100), rounded, with its shadow
  * - rounded:  a rounded tile with a little margin (Windows, Linux)
@@ -111,7 +111,7 @@ export function icon(kind, theme = 'dark') {
 function iconParts(kind, theme, id = '') {
   if (kind === 'android-fg' || kind === 'android-mono') {
     // Android's safe zone is a circle 61 % of the layer wide: the ring's outer edge stays inside it.
-    const r = reactor(theme, { k: 0.84, ...(kind === 'android-mono' ? { color: '#fff' } : {}), id })
+    const r = reactor(theme, { k: 0.72, ...(kind === 'android-mono' ? { color: '#fff' } : {}), id })
     return [r.defs, r.body]
   }
   const [o, size, radius] = { full: [0, 1024, 0], 'android-bg': [0, 1024, 0], macos: [100, 824, 185.4], rounded: [40, 944, 212], tile: [0, 1024, 229] }[kind]

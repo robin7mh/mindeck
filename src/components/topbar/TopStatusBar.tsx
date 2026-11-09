@@ -52,7 +52,7 @@ export function TopStatusBar({ since, showClock = true }: { since?: number; show
     >
       {/* Brand */}
       <div className="flex shrink-0 items-center gap-2.5 lg:w-[200px]">
-        <MindeckMark size={24} className="rounded-[7px]" />
+        <MindeckMark size={32} className="rounded-[9px]" />
         <span className="font-sans text-[14px] font-semibold tracking-[-0.01em] text-text-primary">Mindeck</span>
         <span className="hidden rounded-full border border-hud/45 px-2 py-0.5 font-mono text-[11px] text-text-muted md:inline">v{info?.version ?? '0.1.0'}</span>
       </div>
