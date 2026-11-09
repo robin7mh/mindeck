@@ -19,7 +19,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { crc32, deflateSync, inflateSync } from 'node:zlib'
 import { chromium } from 'playwright-core'
-import { adaptiveIcon, icon, layers, mark } from './logo.mjs'
+import { adaptiveIcon, icon, layers } from './logo.mjs'
 
 /** The splash screen's ground, light and dark (the phone app's app.json says the same). */
 const SPLASH = { light: '#ffffff', dark: '#04060b' }
@@ -170,12 +170,6 @@ function compileAssets(document, out) {
 const appearances = (theme) => (theme === 'light' ? {} : { appearances: [{ appearance: 'luminosity', value: theme }] })
 
 console.log('desktop')
-write(join(brand, 'mark.svg'), mark())
-write(join(brand, 'mark-white.svg'), mark('#ffffff'))
-write(join(brand, 'mark-black.svg'), mark('#000000'))
-write(join(brand, 'mark-clear.svg'), mark(undefined, 'clear'))
-write(join(brand, 'icon.svg'), icon('full'))
-write(join(brand, 'icon-macos.svg'), icon('macos'))
 // The logo in the app (MindeckMark), in the app's appearance, and the web app's tab (index.html) in the system's.
 write(join(brand, 'tile.svg'), icon('tile'))
 write(join(brand, 'tile-light.svg'), icon('tile', 'light'))

@@ -4,13 +4,13 @@
 //   light   the white tile (light mode, and wherever a system shows one icon only)
 //   dark    the navy tile with its cyan halo (dark mode)
 //   tinted  grey levels on black (iOS 18+ and macOS 26+ tint them with the user's color)
-//   clear   white on nothing (macOS 26+ and iOS 26+ clear icons; one-color uses)
+//   clear   white on nothing (the reactor on the system's glass in macOS 26+ and iOS 26+ tinted and clear icons)
 // Drawn after Robin's reference artwork (build/brand/reactor/, 2026-11-09). The builders below turn
-// it into the app icons (macOS, Windows, Linux, iOS, Android), the tile the apps show as their logo,
-// and the bare mark; render.mjs writes them out.
+// it into the app icons (macOS, Windows, Linux, iOS, Android) and the tile the apps show as their
+// logo; render.mjs writes them out.
 
 /** The four appearances: the tile's ground, the reactor's colors, the dark one's halo and glow. */
-export const THEMES = {
+const THEMES = {
   dark: {
     ground: { from: [0, 0], to: [1024, 1024], stops: [['0', '#15212f'], ['.55', '#080c14'], ['1', '#04060b']] },
     halo: '.35',
@@ -40,14 +40,12 @@ const DECK = 'translate(512 512) scale(0.9) translate(-512 -494)'
 const TOP = 'M512 262L800 406L512 550L224 406Z'
 const MIDDLE = 'M224 494L512 638L800 494'
 const LOWER = 'M224 582L512 726L800 582'
-/** How far the reactor reaches from its centre (the ring's outer edge), on the 1024 canvas. */
-export const REACH = 430
 
 const num = (v) => String(Math.round(v * 1000) / 1000)
 
 /**
  * The reactor in an appearance, scaled by `k` about its centre and put at (cx, cy); `color`
- * draws it in one flat color instead (Android's monochrome layer, one-color marks). `id` keeps
+ * draws it in one flat color instead (Android's monochrome layer). `id` keeps
  * gradient and filter ids apart when two appearances share one SVG (the favicon).
  */
 function reactor(theme, { k = 1, cx = 512, cy = 512, color, id = '' } = {}) {
@@ -139,16 +137,6 @@ export function adaptiveIcon(kind) {
   const [dd, db] = iconParts(kind, 'dark', 'd-')
   const style = '<style>.d{display:none}@media (prefers-color-scheme: dark){.l{display:none}.d{display:inline}}</style>'
   return svg(1024, 1024, ld + dd, `${style}<g class="l">${lb}</g><g class="d">${db}</g>`)
-}
-
-/**
- * The bare reactor in a tight box (the ring's outer edge): in an appearance's colors without a
- * ground (default: dark — for dark backgrounds; `clear` is white), or in one flat color.
- */
-export function mark(color, theme = 'dark') {
-  const size = REACH * 2
-  const r = reactor(theme, { cx: size / 2, cy: size / 2, ...(color ? { color } : {}) })
-  return svg(size, size, r.defs, r.body)
 }
 
 /**
