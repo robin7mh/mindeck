@@ -53,8 +53,9 @@ export function AppearanceCard() {
   const isDefault = JSON.stringify(appearance) === JSON.stringify(DEFAULT_APPEARANCE)
 
   return (
-    <Card icon={Palette} title={s.appearanceCard} className="pane-lg:col-span-2">
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+    // Columns by the card's own width, not the window's: in the setup dialog it is narrower than the screen.
+    <Card icon={Palette} title={s.appearanceCard} className="@container pane-lg:col-span-2">
+      <div className="grid gap-4 @2xl:grid-cols-2 @4xl:grid-cols-3">
         <Field label={s.themeMode}>
           <Segmented label={s.themeMode} value={appearance.mode} onChange={(mode) => update({ mode })} options={MODES.map((id) => ({ id, label: s.themeModes[id], icon: MODE_ICONS[id] }))} />
         </Field>
