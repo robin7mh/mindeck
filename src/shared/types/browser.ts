@@ -26,6 +26,8 @@ export interface BrowserSettings {
   searchSuggestions: boolean
   /** The bookmarks bar under the toolbar (⌘⇧B). */
   bookmarksBar: boolean
+  /** A new tab suggests the sites visited most and the projects' repositories — else just its search field, centred. */
+  newTabSuggestions: boolean
   /** The tabs in a sidebar on the left instead of a strip on top (⌘⇧,). */
   verticalTabs: boolean
   /** The sidebar's width (CSS px) while it is open. */
@@ -43,6 +45,7 @@ export const DEFAULT_BROWSER_SETTINGS: BrowserSettings = {
   // What is typed in the address bar stays here until the user chooses to send it to their search engine.
   searchSuggestions: false,
   bookmarksBar: true,
+  newTabSuggestions: true,
   verticalTabs: false,
   verticalTabsWidth: VERTICAL_TABS_WIDTH.default,
   verticalTabsCollapsed: false,

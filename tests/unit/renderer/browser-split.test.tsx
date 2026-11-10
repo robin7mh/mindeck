@@ -253,4 +253,19 @@ describe('BrowserView · vertical tabs and the split tools', () => {
     expect(sent('browser:configure')).toEqual([{ verticalTabs: true }])
     expect(useBrowser.getState().settings.verticalTabs).toBe(true)
   })
+
+  it('Settings turns a new tab’s suggestions off, and says what agents see and which keys there are', async () => {
+    const settings: BrowserSettings = { ...DEFAULT_BROWSER_SETTINGS }
+    const { sent } = bridge({ 'browser:settings': () => settings, 'browser:configure': (p: Partial<BrowserSettings>) => ({ ...settings, ...p }) })
+    render(<BrowserCard />)
+    await settle()
+    const suggestions = screen.getByRole('switch', { name: /Suggestions on new tabs/ })
+    expect(suggestions).toBeChecked() // on unless the user turns it off
+    fireEvent.click(suggestions)
+    await settle()
+    expect(sent('browser:configure')).toEqual([{ newTabSuggestions: false }])
+    expect(useBrowser.getState().settings.newTabSuggestions).toBe(false)
+    expect(screen.getByText(/Agents see your local pages and the tabs you share/)).toBeInTheDocument()
+    expect(screen.getByText('Reopen closed tab')).toBeInTheDocument()
+  })
 })

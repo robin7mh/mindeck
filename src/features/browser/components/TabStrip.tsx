@@ -1,4 +1,4 @@
-import { useEffect, useRef, type MouseEvent } from 'react'
+import { useEffect, useRef, type MouseEvent, type WheelEvent } from 'react'
 import { Plus, X } from 'lucide-react'
 import type { BrowserTab, BrowserTabGroup } from '@shared/types/browser'
 import { cn } from '@/lib/cn'
@@ -66,6 +66,10 @@ export function TabStrip() {
   useEffect(() => {
     list.current!.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
   }, [state.activeId])
+  // Many tabs: the strip scrolls without a bar — a mouse wheel's up/down moves it sideways too.
+  const wheel = (e: WheelEvent<HTMLDivElement>) => {
+    if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) e.currentTarget.scrollLeft += e.deltaY
+  }
 
   const renderTab = (tab: BrowserTab, group?: BrowserTabGroup) => {
     const active = tab.id === state.activeId
@@ -125,7 +129,7 @@ export function TabStrip() {
       onDoubleClick={(e) => e.target === e.currentTarget && void useBrowser.getState().newTab()}
       {...drag.target('end', (id) => dropAtEnd(useBrowser.getState().state, id))}
     >
-      <div ref={list} role="tablist" aria-label={t.browser.title} className="flex min-w-0 items-end gap-1 overflow-x-auto">
+      <div ref={list} role="tablist" aria-label={t.browser.title} onWheel={wheel} className="no-scrollbar flex min-w-0 items-end gap-1 overflow-x-auto">
         {state.tabs.filter((tab) => tab.pinned).map((tab) => renderTab(tab))}
         {tabItems(state).map((item) =>
           item.kind === 'tab' ? (

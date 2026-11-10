@@ -212,6 +212,20 @@ describe('TabStrip · groups and split view', () => {
     expect(sent('browser:move').at(-1)).toEqual({ id: 'p', index: 5, groupId: null })
   })
 
+  it('many tabs: the strip scrolls without a bar — a mouse wheel’s up and down moves it sideways', () => {
+    bridge()
+    useBrowser.setState({ state: sample() })
+    render(<TabStrip />)
+    const list = screen.getByRole('tablist')
+    expect(list).toHaveClass('no-scrollbar', 'overflow-x-auto')
+    let left = 0
+    Object.defineProperty(list, 'scrollLeft', { configurable: true, get: () => left, set: (v: number) => (left = v) })
+    fireEvent.wheel(list, { deltaY: 120 })
+    expect(left).toBe(120)
+    fireEvent.wheel(list, { deltaX: 40, deltaY: 10 }) // a trackpad's sideways swipe scrolls on its own
+    expect(left).toBe(120)
+  })
+
   it('a folded group shows its chip with the number of its tabs, and none of them', () => {
     bridge()
     useBrowser.setState({ state: sample({ groups: [group('g', { title: 'Work', collapsed: true }), group('h', { private: true })], activeId: 'c' }) })

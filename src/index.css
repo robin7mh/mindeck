@@ -440,6 +440,13 @@
 @utility no-drag {
   -webkit-app-region: no-drag;
 }
+/* Scrolls (wheel, trackpad), but shows no scrollbar — for strips like the browser's tabs. */
+@utility no-scrollbar {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
 @utility text-glow-cyan {
   text-shadow: 0 0 10px rgb(var(--accent-cyan) / calc(0.45 * var(--glow)));
 }

@@ -2019,6 +2019,8 @@ agents: {
     searchSuggestions: 'Suchvorschläge',
     searchSuggestionsHint: 'Die Adressleiste fragt deine Suchmaschine nach Vorschlägen – was du tippst, geht schon beim Tippen an sie.',
     bookmarksBar: 'Lesezeichenleiste anzeigen',
+    newTabSuggestions: 'Vorschläge auf neuen Tabs',
+    newTabSuggestionsHint: 'Häufig besuchte Seiten und deine Repositories. Aus: nur das Suchfeld, mittig im Fenster.',
     importBrowser: 'Aus einem anderen Browser importieren …',
     aboutCard: 'Über',
     version: 'Version',

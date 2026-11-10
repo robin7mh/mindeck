@@ -2045,6 +2045,8 @@ agents: {
     searchSuggestions: 'Search suggestions',
     searchSuggestionsHint: 'The address bar asks your search engine for suggestions — what you type goes to it as you type.',
     bookmarksBar: 'Show bookmarks bar',
+    newTabSuggestions: 'Suggestions on new tabs',
+    newTabSuggestionsHint: 'Sites you visit most and your repositories. Off: just the search field, in the middle of the window.',
     importBrowser: 'Import from another browser…',
     aboutCard: 'About',
     version: 'Version',

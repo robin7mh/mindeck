@@ -548,6 +548,7 @@ export const REQUEST_SCHEMAS: Schemas = {
     downloadDir: text(4096).optional(),
     searchSuggestions: z.boolean().optional(),
     bookmarksBar: z.boolean().optional(),
+    newTabSuggestions: z.boolean().optional(),
     verticalTabs: z.boolean().optional(),
     verticalTabsWidth: z.number().int().min(VERTICAL_TABS_WIDTH.min).max(VERTICAL_TABS_WIDTH.max).optional(),
     verticalTabsCollapsed: z.boolean().optional()

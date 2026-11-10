@@ -195,7 +195,7 @@ export function VerticalTabs() {
           <Search size={14} />
         </button>
       </div>
-      <div role="tablist" aria-orientation="vertical" aria-label={t.browser.title} className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto overflow-x-hidden p-1.5">
+      <div role="tablist" aria-orientation="vertical" aria-label={t.browser.title} className="no-scrollbar flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto overflow-x-hidden p-1.5">
         {pinned.length > 0 && (
           <div role="group" aria-label={t.browserTabs.pinned} className={cn('mb-1 grid gap-1 border-b border-hud/40 pb-1.5', folded ? 'grid-cols-1' : 'grid-cols-[repeat(auto-fill,minmax(36px,1fr))]')}>
             {pinned.map((tab) => (

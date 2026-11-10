@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
-import { Check, Globe, Import, Trash2 } from 'lucide-react'
+import { Check, Eye, Globe, Import, Trash2 } from 'lucide-react'
 import { ipc, isDesktop } from '@shared/ipc/client'
 import { SEARCH_ENGINES, type BrowserSettings, type SearchEngine } from '@shared/types/browser'
 import { Card } from '@/components/ui/Card'
 import { Select } from '@/components/ui/Select'
+import { TechLabel } from '@/components/ui/TechLabel'
 import { useT } from '@/lib/i18n'
 import { ImportDialog } from '@/features/browser/components/ImportDialog'
 import { useBrowser } from '@/features/browser/store'
@@ -14,7 +15,11 @@ import { Toggle } from './Toggle'
 const action =
   'mt-2 flex items-center gap-1.5 rounded-md border border-hud/60 px-2.5 py-1.5 font-sans text-[12px] text-text-secondary transition-colors'
 
-/** The browser: which search engine (and its suggestions), the bookmarks bar, vertical tabs, where links from Mindeck open, importing, the history. */
+/**
+ * The browser: which search engine (and its suggestions), the bookmarks bar,
+ * what a new tab suggests, vertical tabs, where links from Mindeck open,
+ * importing, the history — and what agents see of it, and its shortcuts.
+ */
 export function BrowserCard() {
   const t = useT()
   const [settings, setSettings] = useState<BrowserSettings>()
@@ -47,6 +52,7 @@ export function BrowserCard() {
       <div className="mt-2">
         <Toggle label={t.settings.searchSuggestions} hint={t.settings.searchSuggestionsHint} checked={settings.searchSuggestions} onChange={(v) => configure({ searchSuggestions: v })} />
         <Toggle label={t.settings.bookmarksBar} checked={settings.bookmarksBar} onChange={(v) => configure({ bookmarksBar: v })} />
+        <Toggle label={t.settings.newTabSuggestions} hint={t.settings.newTabSuggestionsHint} checked={settings.newTabSuggestions} onChange={(v) => configure({ newTabSuggestions: v })} />
         <Toggle label={t.browserTabs.verticalTabs} hint={t.browserTabs.verticalTabsHint} checked={settings.verticalTabs} onChange={(v) => configure({ verticalTabs: v })} />
         <Toggle label={t.settings.openLinks} hint={t.settings.openLinksHint} checked={settings.openLinksInMindeck} onChange={(v) => configure({ openLinksInMindeck: v })} />
       </div>
@@ -67,6 +73,24 @@ export function BrowserCard() {
         {cleared ? <Check size={12} className="text-green" /> : <Trash2 size={12} />}
         {cleared ? t.settings.historyCleared : t.settings.clearHistory}
       </button>
+      <div className="mt-4 flex flex-col gap-3 border-t border-hud/40 pt-4">
+        <p className="flex items-start gap-2 font-sans text-[12px] text-text-secondary">
+          <Eye size={14} className="mt-0.5 shrink-0 text-cyan" /> {t.browser.agentsSee}
+        </p>
+        <div>
+          <TechLabel as="h3" className="mb-1.5 text-text-muted">
+            {t.browser.tips}
+          </TechLabel>
+          <div className="flex flex-wrap gap-x-5 gap-y-1.5">
+            {t.browser.tipKeys.map(([keys, what]) => (
+              <span key={keys} className="flex items-center gap-1.5 font-sans text-[11.5px] text-text-muted">
+                <kbd className="rounded-sm border border-hud/60 bg-elevated/50 px-1.5 py-px font-mono text-[10.5px] text-text-secondary">{keys}</kbd>
+                {what}
+              </span>
+            ))}
+          </div>
+        </div>
+      </div>
     </Card>
   )
 }

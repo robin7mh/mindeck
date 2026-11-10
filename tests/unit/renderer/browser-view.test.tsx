@@ -535,7 +535,25 @@ describe('NewTabPage', () => {
     expect(go.mock.calls.map(([u]) => u)).toEqual(['http://localhost:5173/', 'https://github.com/acme', 'https://news.dev/', 'https://github.com/acme/shop'])
     fireEvent.click(screen.getByText('Search the web or type an address'))
     expect(useBrowser.getState().focusTick).toBe(1)
-    expect(screen.getByText('Reopen closed tab')).toBeInTheDocument()
+    // What agents see and the shortcuts live in Settings → Browser now
+    expect(screen.queryByText('Reopen closed tab')).toBeNull()
+    expect(screen.queryByText(/Agents see your local pages/)).toBeNull()
+  })
+
+  it('suggestions off: the search field alone, in the middle — running dev servers still under it', async () => {
+    const { sent } = bridge({ 'browser:history': () => [{ url: 'https://github.com/acme', title: 'Acme', visits: 3, lastVisit: 'x' }] })
+    useBrowser.setState((s) => ({
+      settings: { ...s.settings, newTabSuggestions: false },
+      state: state([tab('n', '')], { devServers: [{ url: 'http://localhost:5173/', label: 'localhost:5173', terminalId: 't', detectedAt: 'x' }] })
+    }))
+    const { container } = render(<NewTabPage />)
+    await settle()
+    expect(sent('browser:history')).toEqual([]) // nothing to suggest, nothing to load
+    expect(screen.queryByText('Most visited')).toBeNull()
+    expect(screen.queryByText('Acme')).toBeNull()
+    expect(screen.getByText('Search the web or type an address')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Open localhost:5173' })).toBeInTheDocument()
+    expect(container.firstElementChild!.firstElementChild).toHaveClass('min-h-full', 'justify-center')
   })
 
   it('starts empty without history, and keeps loaded projects', async () => {
