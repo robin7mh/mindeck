@@ -445,9 +445,11 @@ describe('AgentSessionService: hooks, approvals, memory', () => {
     expect([t.svc.projectOf(s.id), t.svc.folderOf(s.id)]).toEqual([undefined, s.cwd])
     // "Always allow" there holds outside projects — not for a project called ''
     await t.hook(s.id, { hook_event_name: 'UserPromptSubmit', prompt: 'Write it down' })
+    const asked = t.asks.length
     const allow = t.hook(s.id, { hook_event_name: 'PermissionRequest', tool_name: 'Write', tool_use_id: 'w', tool_input: { file_path: 'notes.md' } })
-    await tick()
-    expect(t.permissions.isGranted).toHaveBeenLastCalledWith('claude-code', 'Write', undefined)
+    // waited for, not a tick: a slower machine (CI) takes longer to get there
+    await vi.waitFor(() => expect(t.permissions.isGranted).toHaveBeenLastCalledWith('claude-code', 'Write', undefined))
+    await vi.waitFor(() => expect(t.asks).toHaveLength(asked + 1))
     t.asks.at(-1)!.settle('once')
     await allow
     // the journal goes straight into Agents
