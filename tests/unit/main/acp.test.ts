@@ -289,6 +289,7 @@ async function acpSetup(agentOpts: FakeOpts = {}) {
   const deps: AgentSessionDeps = {
     dir: join(dir, 'agents'),
     worktreesDir: join(dir, 'wt'),
+    chatsDir: join(dir, 'chats'),
     terminal: { spawnProgram: vi.fn(), write: vi.fn(), kill: vi.fn() } as never,
     git: new GitService(),
     server: { register: () => 'tok', unregister: vi.fn(), url: (route, id) => `http://127.0.0.1:1/${route}/${id}` },

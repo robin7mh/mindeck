@@ -624,7 +624,7 @@ agents: {
     needsKey: 'Braucht einen API-Key',
     keysInSettings: 'API-Keys und Agent-Anmeldung findest du in den Einstellungen →',
     project: 'Projekt',
-    addProjectFirst: 'Füge zuerst unter Projekte ein Projekt hinzu.',
+    noProjectHint: 'Ohne Projekt arbeitet der Agent in einem eigenen, leeren Ordner (~/Mindeck/chats).',
     ownFolder: 'Eigener Arbeitsordner',
     ownFolderHint: (busy) => `${busy ? 'In diesem Projekt arbeitet schon ein Agent — ' : ''}ein Git-Worktree, damit sich Agents nicht in die Quere kommen. Am Ende prüfst du die Änderungen und übernimmst sie.`,
     firstMessage: 'Erste Nachricht',

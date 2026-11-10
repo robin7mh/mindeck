@@ -436,6 +436,14 @@ describe('NewChatDialog', () => {
     fireEvent.click(screen.getByText('Start'))
     await act(settle)
     expect(create).toHaveBeenLastCalledWith({ kind: 'claude-code', projectId: 'p2', isolated: true, prompt: undefined, model: 'opus', mode: 'plan' })
+
+    // No project, for a coding agent too: an empty folder of its own — no worktree to choose.
+    choose('Project', 'No project')
+    expect(screen.queryByLabelText('Own working folder')).toBeNull()
+    expect(screen.getByText(/Without a project, the agent works in an empty folder of its own/)).toBeInTheDocument()
+    fireEvent.click(screen.getByText('Start'))
+    await act(settle)
+    expect(create).toHaveBeenLastCalledWith({ kind: 'claude-code', prompt: undefined, model: 'opus', mode: 'plan' })
   })
 
   it('Mindeck Assistant: chosen when no agent is ready; sends the first message into a new assistant chat', async () => {
@@ -470,24 +478,27 @@ describe('NewChatDialog', () => {
     expect(screen.getByLabelText('Own working folder')).toBeInTheDocument()
   })
 
-  it('waits for detection, links to Settings, closes; no projects / no choice: nothing to start', async () => {
+  it('waits for detection, links to Settings, closes; no choice: nothing to start; no projects: an agent starts without one', async () => {
     const onOpenSettings = vi.fn()
     useAgents.setState({ detecting: true, availability: [] })
     useProjects.setState({ projects: [] })
     dialog({ onOpenSettings })
     expect(screen.getByText('Looking for your agents…')).toBeInTheDocument()
-    expect(screen.getByText('Add a project in Projects first.')).toBeInTheDocument()
+    expect(screen.getByRole('combobox', { name: 'Project' })).toHaveTextContent('No project')
     expect(screen.getByText('Start')).toBeDisabled()
     fireEvent.submit(screen.getByText('Start').closest('form')!) // no choice: ignored
     fireEvent.click(screen.getByText(/API keys and agent sign-in live in Settings/))
     expect(onOpenSettings).toHaveBeenCalled()
 
-    useAgents.setState({ dialog: {}, detecting: false, availability: [claude()], error: 'no claude', busy: true })
+    const create = vi.fn(async () => true)
+    useAgents.setState({ dialog: {}, detecting: false, availability: [claude()], error: 'no claude', busy: true, create })
     await act(settle)
     expect(screen.getByText('no claude')).toBeInTheDocument()
     expect(screen.getByText('Start').querySelector('.animate-spin')).not.toBeNull()
     act(() => useAgents.setState({ busy: false }))
-    fireEvent.submit(screen.getByText('Start').closest('form')!) // no project: ignored
+    fireEvent.submit(screen.getByText('Start').closest('form')!) // no project: Claude Code in a folder of its own
+    await act(settle)
+    expect(create).toHaveBeenCalledWith({ kind: 'claude-code', prompt: undefined, model: 'default', mode: 'default' })
     fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Enter' })
     expect(ag().dialog).toEqual({})
     fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' })
@@ -502,6 +513,13 @@ describe('NewChatDialog', () => {
 
 describe('SessionPane', () => {
   const pane = (s: AgentSession, messages: ChatMessage[] = []) => render(<SessionPane session={s} messages={messages} />)
+
+  it('a session without a project says so — in its header and before the first message', () => {
+    installBridge({})
+    pane(session({ projectId: '', projectName: '', status: 'idle', cwd: '/h/Mindeck/chats/2026-11-10-abcd1234' }))
+    expect(screen.getAllByText(/No project/)).toHaveLength(2)
+    expect(screen.getByText('Claude Code · No project')).toBeInTheDocument()
+  })
 
   it('starting: explains; the terminal opens by itself only when the start takes long (a question there); ends', async () => {
     installBridge({ 'terminal:attach': () => ({ buffer: 'trust?', end: 6 }) })
@@ -938,7 +956,7 @@ describe('AgentsView', () => {
     const remove = vi.fn(async () => {})
     const aOpen = vi.fn(async () => {})
     const aRemove = vi.fn(async () => {})
-    useAgents.setState({ open, remove, sessions: [session({ status: 'working', worktree: '/wt' }), session({ id: 's2', title: 'Old', status: 'ended', updatedAt: '2026-10-01T00:00:00.000Z' }), session({ id: 's3', kind: 'codex', title: 'Codex', status: 'ended', updatedAt: '2026-08-01T00:00:00.000Z' })] })
+    useAgents.setState({ open, remove, sessions: [session({ status: 'working', worktree: '/wt' }), session({ id: 's2', title: 'Old', status: 'ended', updatedAt: '2026-10-01T00:00:00.000Z' }), session({ id: 's3', kind: 'codex', title: 'Codex', status: 'ended', updatedAt: '2026-08-01T00:00:00.000Z' }), session({ id: 's4', title: 'Claude Code', projectId: '', projectName: '', status: 'ended', updatedAt: '2026-07-01T00:00:00.000Z' })] })
     useAssistant.setState({
       open: aOpen,
       remove: aRemove,
@@ -954,6 +972,7 @@ describe('AgentsView', () => {
     expect(screen.getAllByText(/Mindeck Assistant ·/)).toHaveLength(2)
     expect(screen.getAllByText(/^Claude Code · Demo ·/)).toHaveLength(2) // renamed: the agent moves to the second line
     expect(screen.getAllByText(/^Demo ·/)).toHaveLength(1) // still named after its agent
+    expect(screen.getAllByText(/^No project ·/)).toHaveLength(1) // a session without one says so
     expect(screen.getByLabelText('Delete Fix login')).toHaveAttribute('title', 'Deletes its working folder too')
 
     fireEvent.click(screen.getByText('Fix login'))

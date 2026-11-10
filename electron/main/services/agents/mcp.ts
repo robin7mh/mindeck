@@ -27,7 +27,8 @@ export interface McpSessionContext {
   sessionId: string
   /** The agent kind (`claude-code`, `codex` …) — whose grants apply. */
   agentId: string
-  projectId: string
+  /** The session's project — none for a session without one: its tools then reach no project at all. */
+  projectId?: string
   /** The agent calling (e.g. "Claude Code"), shown where a tool acts. */
   agent?: string
   /** The session's folder (a worktree when isolated): where its terminal commands start. */

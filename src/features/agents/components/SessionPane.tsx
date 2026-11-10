@@ -173,7 +173,7 @@ export function SessionPane({ session, messages }: { session: AgentSession; mess
         <TerminalSquare size={14} className="shrink-0 text-cyan" />
         <TitleInput key={`${session.id}:${session.title}`} title={session.title} onRename={(title) => void rename(session.id, title)} />
         <span className="hidden items-center gap-1 font-mono text-[10.5px] text-text-muted lg:flex">
-          <FolderGit2 size={11} /> {session.projectName}
+          <FolderGit2 size={11} /> {session.projectName || t.agents.noProject}
           {session.branch && (
             <>
               <GitBranch size={11} className="ml-1" /> {session.branch}
@@ -235,7 +235,7 @@ export function SessionPane({ session, messages }: { session: AgentSession; mess
           <div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center">
             <TerminalSquare size={26} className="text-cyan/70" />
             <p className="font-sans text-[14px] font-semibold text-text-primary">
-              {name} · {session.projectName}
+              {name} · {session.projectName || t.agents.noProject}
             </p>
             <p className="max-w-md font-sans text-[12.5px] text-text-secondary">
               {t.agents.ownSignIn(name)}

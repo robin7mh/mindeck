@@ -643,6 +643,7 @@ describe('paths', () => {
         runsFile: join(home, 'Mindeck', 'data', 'runs.json'),
         agentsDir: join(home, 'Mindeck', 'data', 'agents'),
         worktreesDir: join(home, 'Mindeck', 'worktrees'),
+        chatsDir: join(home, 'Mindeck', 'chats'),
         logsDir: join(home, 'Mindeck', 'logs')
       })
       // Data from before the rename: used where it is.

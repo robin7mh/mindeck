@@ -402,6 +402,7 @@ export async function createCore(opts: CoreOptions): Promise<Core> {
     // Pasted images in the data folder (0700), not in a /tmp other users share.
     tempDir: join(paths.agentsDir, 'images'),
     worktreesDir: paths.worktreesDir,
+    chatsDir: paths.chatsDir,
     terminal,
     git: new GitService({ trusted: (dir) => trust.folder(dir) }),
     server: local,

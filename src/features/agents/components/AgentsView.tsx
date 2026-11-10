@@ -88,7 +88,8 @@ export function AgentsView({ onOpenNote, onOpenSettings }: { onOpenNote: (path: 
       [
         ...ag.sessions.map((s): Entry => {
           // Renamed: the agent goes into the second line, so it stays recognisable.
-          const sub = s.title === AGENT_NAMES[s.kind] ? s.projectName : `${AGENT_NAMES[s.kind]} · ${s.projectName}`
+          const project = s.projectName || t.agents.noProject
+          const sub = s.title === AGENT_NAMES[s.kind] ? project : `${AGENT_NAMES[s.kind]} · ${project}`
           return { kind: 'session', id: s.id, title: s.title, sub, updatedAt: s.updatedAt, session: s }
         }),
         ...a.conversations.map(

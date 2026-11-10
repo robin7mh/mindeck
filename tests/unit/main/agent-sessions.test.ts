@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync, lstatSync } from 'node:fs'
 import { mkdir, readdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { onCleanup, tempDir, tick } from './helpers'
 import { AgentSessionService, type AgentSessionDeps } from '../../../electron/main/services/agents/AgentSessionService'
@@ -59,6 +59,7 @@ async function setup(opts: { projectPath?: string; projectName?: string; probe?:
   const deps: AgentSessionDeps = {
     dir: join(dir, 'agents'),
     worktreesDir: join(dir, 'worktrees'),
+    chatsDir: join(dir, 'chats'),
     terminal,
     git: new GitService(),
     server: { register: vi.fn(() => 'tok'), unregister: vi.fn(), url: (route: string, id: string) => `http://127.0.0.1:1/${route}/${id}` },
@@ -430,6 +431,30 @@ describe('AgentSessionService: hooks, approvals, memory', () => {
     await t.hook(s.id, { hook_event_name: 'UserPromptSubmit', prompt: 'more' })
     t.svc.stop(s.id) // the exit writes it right away
     await vi.waitFor(() => expect(t.journal).toHaveBeenLastCalledWith('Agents/Demo App', expect.any(String), t.svc.get(s.id).journal, expect.any(String)))
+  })
+
+  it('without a project: an empty folder of its own under chats — no project to scope it, no repo, no worktree; journal in Agents', async () => {
+    const s = await t.svc.create({ kind: 'claude-code', prompt: 'Just a question' })
+    expect(s).toMatchObject({ projectId: '', projectName: '', isolated: false })
+    expect(s.repoUrl).toBeUndefined()
+    expect(dirname(s.cwd)).toBe(t.deps.chatsDir)
+    expect(basename(s.cwd)).toMatch(/^\d{4}-\d{2}-\d{2}-[0-9a-f]{8}$/)
+    expect(await readdir(s.cwd)).toEqual([])
+    expect(t.terminal.spawned.at(-1)).toMatchObject({ cwd: s.cwd, projectId: undefined })
+    expect(t.deps.events.emit).toHaveBeenCalledWith('session.started', expect.objectContaining({ conversationId: s.id, projectId: undefined }))
+    expect([t.svc.projectOf(s.id), t.svc.folderOf(s.id)]).toEqual([undefined, s.cwd])
+    // "Always allow" there holds outside projects — not for a project called ''
+    await t.hook(s.id, { hook_event_name: 'UserPromptSubmit', prompt: 'Write it down' })
+    const allow = t.hook(s.id, { hook_event_name: 'PermissionRequest', tool_name: 'Write', tool_use_id: 'w', tool_input: { file_path: 'notes.md' } })
+    await tick()
+    expect(t.permissions.isGranted).toHaveBeenLastCalledWith('claude-code', 'Write', undefined)
+    t.asks.at(-1)!.settle('once')
+    await allow
+    // the journal goes straight into Agents
+    t.svc.stop(s.id)
+    await vi.waitFor(() => expect(t.journal).toHaveBeenLastCalledWith('Agents', expect.any(String), undefined, expect.any(String)))
+    // an own worktree needs a project
+    await expect(t.svc.create({ kind: 'codex', isolated: true })).rejects.toMatchObject({ code: 'bad-input' })
   })
 
   it('journal: nothing before the first prompt; failures are logged', async () => {
@@ -865,5 +890,15 @@ describe('AgentSessionService: the composer with Claude Code', () => {
     t.terminal.fail = true
     await expect(t.svc.resume(failing.id)).rejects.toThrow('spawn failed')
     expect(push).toHaveBeenCalledWith(expect.objectContaining({ kind: 'agent_error' }))
+
+    // without a project: nothing after the state
+    t.terminal.fail = false
+    const loose = await t.svc.create({ kind: 'claude-code', title: 'Loose' })
+    await t.hook(loose.id, { hook_event_name: 'UserPromptSubmit', prompt: 'go' })
+    await t.hook(loose.id, { hook_event_name: 'Stop', last_assistant_message: 'done' })
+    expect(push).toHaveBeenLastCalledWith({ kind: 'agent_done', title: 'Claude Code · Loose', body: 'Done — your turn', sessionId: loose.id })
+    const failingLoose = await t.svc.create({ kind: 'claude-code' })
+    t.terminal.spawned.at(-1)!.onExit!(127)
+    expect(push).toHaveBeenLastCalledWith({ kind: 'agent_error', title: 'Claude Code', body: 'Stopped with an error', sessionId: failingLoose.id })
   })
 })

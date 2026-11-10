@@ -118,6 +118,8 @@ export interface AgentSessionDeps {
   dir: string
   /** ~/Mindeck/worktrees — isolated sessions' working folders. */
   worktreesDir: string
+  /** ~/Mindeck/chats — the working folders of sessions without a project, an empty one each. */
+  chatsDir: string
   terminal: {
     spawnProgram(req: {
       title: string
@@ -167,6 +169,10 @@ const ATTENTION = { approval: 'Waiting for your approval', waiting: 'Waiting for
 /** What a Claude Code session offers in the composer: models, permission modes, commands, images (as files). */
 const CLAUDE_EXTRAS = { models: CLAUDE_MODELS, modes: CLAUDE_MODES, commands: CLAUDE_COMMANDS, images: true }
 const slug = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'project'
+/** The session's project for grants, events and scopes — none (undefined) for a session without one ('' in the session). */
+const scopeOf = (session: AgentSession): string | undefined => session.projectId || undefined
+/** " · <project>" for a push — nothing without one. */
+const where = (session: AgentSession) => (session.projectName ? ` · ${session.projectName}` : '')
 
 /**
  * The agent cockpit's core: runs Claude Code (the user's own, unmodified CLI,
@@ -223,7 +229,8 @@ export class AgentSessionService {
 
   /** The project a session works in (undefined: no such session). */
   projectOf(id: string): string | undefined {
-    return this.live.get(id)?.session.projectId
+    const session = this.live.get(id)?.session
+    return session && scopeOf(session)
   }
 
   /** The folder a session works in (a worktree when isolated; undefined: no such session). */
@@ -237,8 +244,9 @@ export class AgentSessionService {
   }
 
   async create(req: CreateSessionRequest): Promise<AgentSession> {
-    const project = this.deps.projects(req.projectId)
-    if (!project) throw coded('not-found', 'Project not found')
+    const project = req.projectId ? this.deps.projects(req.projectId) : undefined
+    if (req.projectId && !project) throw coded('not-found', 'Project not found')
+    if (req.isolated && !project) throw coded('bad-input', 'An own working folder needs a project')
     if (req.kind === 'claude-code') {
       if (req.model && !CLAUDE_MODELS.some((m) => m.id === req.model)) throw coded('bad-input', `Unknown model: ${req.model}`)
       if (req.mode && !CLAUDE_MODES.some((m) => m.id === req.mode)) throw coded('bad-input', `Unknown mode: ${req.mode}`)
@@ -246,10 +254,12 @@ export class AgentSessionService {
     const id = randomUUID()
     const title = req.title?.trim().slice(0, MAX_TITLE) || AGENT_NAMES[req.kind]
 
-    let cwd = project.path
+    // Without a project: an empty folder of its own to work in (~/Mindeck/chats) — not the user's home.
+    let cwd = project ? project.path : join(this.deps.chatsDir, `${new Date().toISOString().slice(0, 10)}-${id.slice(0, 8)}`)
+    if (!project) await mkdir(cwd, { recursive: true })
     let worktree: string | undefined
     let branch: string | undefined
-    if (req.isolated) {
+    if (req.isolated && project) {
       if (!(await this.deps.git.isRepo(project.path))) throw coded('not-a-repo', 'An own working folder needs a git repository')
       worktree = join(this.deps.worktreesDir, `${slug(project.name)}-${id.slice(0, 8)}`)
       branch = `mindeck/${id.slice(0, 8)}`
@@ -265,14 +275,14 @@ export class AgentSessionService {
     const session: AgentSession = {
       id,
       kind: req.kind,
-      projectId: req.projectId,
-      projectName: project.name,
+      projectId: req.projectId ?? '',
+      projectName: project?.name ?? '',
       title,
       cwd,
       isolated: !!req.isolated,
       worktree,
       branch,
-      repoUrl: await this.deps.git.webUrl(project.path),
+      repoUrl: project ? await this.deps.git.webUrl(project.path) : undefined,
       status: 'starting',
       live: false,
       plan: [],
@@ -284,13 +294,13 @@ export class AgentSessionService {
       createdAt: now,
       updatedAt: now
     }
-    const l: Live = { session, baseline: await this.deps.git.baseline(cwd), projectPath: project.path, messages: [] }
+    const l: Live = { session, baseline: await this.deps.git.baseline(cwd), projectPath: project?.path ?? cwd, messages: [] }
     this.live.set(id, l)
     if (req.kind === 'claude-code') await this.launch(l, { prompt: req.prompt })
     else this.launchAcp(l, req.prompt)
     this.deps.events.emit('session.started', {
       actor: { kind: 'agent', id: req.kind },
-      projectId: session.projectId,
+      projectId: scopeOf(session),
       conversationId: id,
       payload: { title, agent: AGENT_NAMES[req.kind], isolated: session.isolated }
     })
@@ -383,7 +393,7 @@ export class AgentSessionService {
       title: l.session.title,
       cwd: l.session.cwd,
       command: shellCommand(),
-      projectId: l.session.projectId,
+      projectId: scopeOf(l.session),
       onExit: () => {
         if (l.shellId === info.id) l.shellId = undefined
       }
@@ -510,7 +520,7 @@ export class AgentSessionService {
       {
         sessionId: id,
         agentId: l.session.kind,
-        projectId: l.session.projectId,
+        projectId: scopeOf(l.session),
         agent: AGENT_NAMES[l.session.kind],
         cwd: l.session.cwd,
         onCall: (tool, input) => this.usedNote(l, tool, input)
@@ -559,7 +569,7 @@ export class AgentSessionService {
           })
         },
         env: claudeEnv(hookUrl, token),
-        projectId: session.projectId,
+        projectId: scopeOf(session),
         cols: 120,
         rows: 36,
         onExit: (code) => {
@@ -618,7 +628,7 @@ export class AgentSessionService {
       error: failed ? `${name} stopped right away (exit code ${code}). Is it installed and signed in?` : l.session.error
     })
     if (failed) this.pushError(l)
-    this.deps.events.emit('session.ended', { actor: { kind: 'agent', id: l.session.kind }, projectId: l.session.projectId, conversationId: id, payload: { code } })
+    this.deps.events.emit('session.ended', { actor: { kind: 'agent', id: l.session.kind }, projectId: scopeOf(l.session), conversationId: id, payload: { code } })
     this.scheduleJournal(l, 0)
   }
 
@@ -773,7 +783,7 @@ export class AgentSessionService {
     const standing = risk !== 'execute' && acpStaysInside(kind, paths, l.session.cwd, lands)
     if (hit) hit.part.status = 'awaiting-approval'
     let decision: ApprovalDecision = 'once'
-    if (!standing || !(await this.deps.permissions.isGranted(agent, key, l.session.projectId))) {
+    if (!standing || !(await this.deps.permissions.isGranted(agent, key, scopeOf(l.session)))) {
       const asked = this.deps.permissions.ask(
         {
           runId: l.session.id,
@@ -787,7 +797,7 @@ export class AgentSessionService {
           reason: '',
           input: call.rawInput ?? {},
           allowAlways: standing,
-          projectId: l.session.projectId
+          projectId: scopeOf(l.session)
         },
         link.abort.signal
       )
@@ -816,7 +826,7 @@ export class AgentSessionService {
     // A grant holds in the session's folder: anywhere else it is asked every time.
     const standing = risk !== 'execute' && staysInside(name, e.tool_input, l.session.cwd, lands)
     let decision: ApprovalDecision = 'once'
-    if (!standing || !(await this.deps.permissions.isGranted('claude-code', name, l.session.projectId))) {
+    if (!standing || !(await this.deps.permissions.isGranted('claude-code', name, scopeOf(l.session)))) {
       const input = e.tool_input ?? {}
       const asked = this.deps.permissions.ask(
         {
@@ -832,7 +842,7 @@ export class AgentSessionService {
           input,
           // Commands are asked every time; file and memory tools can be allowed for good (in this project).
           allowAlways: standing,
-          projectId: l.session.projectId
+          projectId: scopeOf(l.session)
         },
         signal
       )
@@ -866,7 +876,7 @@ export class AgentSessionService {
       this.deps.push?.({
         kind: attention === 'done' ? 'agent_done' : 'approval',
         title: this.heading(l),
-        body: `${tool ? `${tool} · ` : ''}${ATTENTION[attention]} · ${l.session.projectName}`,
+        body: `${tool ? `${tool} · ` : ''}${ATTENTION[attention]}${where(l.session)}`,
         sessionId: l.session.id
       })
     }
@@ -875,7 +885,7 @@ export class AgentSessionService {
 
   /** The agent stopped with an error: a push says so (not what the error says — it can name paths). */
   private pushError(l: Live): void {
-    this.deps.push?.({ kind: 'agent_error', title: this.heading(l), body: `Stopped with an error · ${l.session.projectName}`, sessionId: l.session.id })
+    this.deps.push?.({ kind: 'agent_error', title: this.heading(l), body: `Stopped with an error${where(l.session)}`, sessionId: l.session.id })
   }
 
   /** "Codex · Fix the login" — or just the agent's name while the session has no own title. */
@@ -905,7 +915,7 @@ export class AgentSessionService {
     try {
       const body = journalBody(l.session, l.messages, await this.changes(l.session.id).catch(() => []))
       if (!body) return
-      const path = await this.deps.journal(`Agents/${l.session.projectName}`, journalTitle(l.session, l.messages), l.session.journal, body)
+      const path = await this.deps.journal(l.session.projectName ? `Agents/${l.session.projectName}` : 'Agents', journalTitle(l.session, l.messages), l.session.journal, body)
       if (path && path !== l.session.journal) this.update(l, { journal: path })
     } catch (err) {
       console.warn('[agents] journal not written:', (err as Error).message)

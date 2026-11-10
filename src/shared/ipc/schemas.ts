@@ -425,7 +425,7 @@ export const REQUEST_SCHEMAS: Schemas = {
   'agents:get': z.object({ id }),
   'agents:create': z.object({
     kind: z.enum(['claude-code', 'codex', 'gemini']),
-    projectId: id,
+    projectId: id.optional(),
     title: text(200).optional(),
     isolated: z.boolean().optional(),
     prompt: text(100_000).optional(),

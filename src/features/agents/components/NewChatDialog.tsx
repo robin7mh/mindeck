@@ -37,8 +37,9 @@ function AgentCard({ a, chosen, onPick }: { a: AgentAvailability; chosen: boolea
 
 /**
  * "New chat": which agent (the user's own coding agents, or the Mindeck
- * Assistant when an API key is set), which project, optionally an own git
- * worktree for parallel work, and the first message. Mounted while open.
+ * Assistant when an API key is set), which project — or none, for any of
+ * them (a coding agent then works in an empty folder of its own) — optionally
+ * an own git worktree for parallel work, and the first message. Mounted while open.
  */
 export function NewChatDialog({ prompt: initialPrompt = '', onOpenSettings }: { prompt?: string; onOpenSettings: () => void }) {
   const t = useT()
@@ -61,7 +62,7 @@ export function NewChatDialog({ prompt: initialPrompt = '', onOpenSettings }: { 
   }, [availability, assistantReady, detecting, choice])
 
   // Another agent already works in this project: suggest an own working folder.
-  const busyProject = sessions.some((s) => s.projectId === projectId && s.live && !s.isolated)
+  const busyProject = !!projectId && sessions.some((s) => s.projectId === projectId && s.live && !s.isolated)
   useEffect(() => setIsolated(busyProject), [busyProject])
 
   const isAgent = choice !== undefined && choice !== 'assistant'
@@ -77,9 +78,11 @@ export function NewChatDialog({ prompt: initialPrompt = '', onOpenSettings }: { 
       if (prompt.trim()) await a.send(prompt)
       return
     }
-    if (!choice || !projectId) return
+    if (!choice) return
     const claude = choice === 'claude-code' ? { model, mode } : {}
-    await create({ kind: choice, projectId, isolated, prompt: prompt.trim() || undefined, ...claude })
+    // No project: the agent works in an empty folder of its own (no worktree to make).
+    const where = projectId ? { projectId, isolated } : {}
+    await create({ kind: choice, ...where, prompt: prompt.trim() || undefined, ...claude })
   }
 
   return (
@@ -134,12 +137,12 @@ export function NewChatDialog({ prompt: initialPrompt = '', onOpenSettings }: { 
             icon={FolderGit2}
             value={projectId}
             onChange={setProjectId}
-            options={[...(choice === 'assistant' ? [{ value: '', label: t.agents.noProject }] : []), ...projects.map((p) => ({ value: p.id, label: p.name, hint: p.path }))]}
+            options={[{ value: '', label: t.agents.noProject }, ...projects.map((p) => ({ value: p.id, label: p.name, hint: p.path }))]}
           />
-          {!projects.length && <span className="block font-sans text-[11.5px] text-text-muted">{t.agents.addProjectFirst}</span>}
+          {isAgent && !projectId && <span className="block font-sans text-[11.5px] text-text-muted">{t.agents.noProjectHint}</span>}
         </div>
 
-        {isAgent && (
+        {isAgent && projectId && (
           <label className="flex items-start gap-2">
             <input type="checkbox" aria-label={t.agents.ownFolder} checked={isolated} onChange={(e) => setIsolated(e.target.checked)} className="mt-0.5 accent-cyan" />
             <span>
@@ -195,7 +198,7 @@ export function NewChatDialog({ prompt: initialPrompt = '', onOpenSettings }: { 
           </button>
           <button
             type="submit"
-            disabled={!choice || busy || (isAgent && !projectId)}
+            disabled={!choice || busy}
             className="flex items-center gap-1.5 rounded-md border border-cyan bg-cyan px-3 py-1.5 font-sans text-[12px] font-semibold text-void hover:opacity-90 disabled:opacity-40"
           >
             {busy && <Loader2 size={13} className="animate-spin" />} {t.agents.start}

@@ -636,7 +636,7 @@ agents: {
     needsKey: 'Needs an API key',
     keysInSettings: 'API keys and agent sign-in live in Settings →',
     project: 'Project',
-    addProjectFirst: 'Add a project in Projects first.',
+    noProjectHint: 'Without a project, the agent works in an empty folder of its own (~/Mindeck/chats).',
     ownFolder: 'Own working folder',
     ownFolderHint: (busy: boolean) => `${busy ? 'Another agent works in this project — ' : ''}a git worktree, so agents don't get in each other's way. You review and take over the changes at the end.`,
     firstMessage: 'First message',

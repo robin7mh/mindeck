@@ -72,6 +72,7 @@ export interface AgentCommand {
 export interface AgentSession {
   id: string
   kind: AgentKind
+  /** '' (and `projectName` '') for a session without a project. */
   projectId: string
   projectName: string
   title: string
@@ -113,7 +114,8 @@ export interface AgentSessionDetail extends AgentSession {
 
 export interface CreateSessionRequest {
   kind: AgentKind
-  projectId: string
+  /** None: the agent works in an empty folder of its own (~/Mindeck/chats). */
+  projectId?: string
   title?: string
   /** Own git worktree (parallel work) instead of the project folder. */
   isolated?: boolean

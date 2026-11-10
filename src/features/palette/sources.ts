@@ -161,7 +161,7 @@ const agentsSource: CommandSource = {
       ...useAgents.getState().sessions.map((s, i) => ({
         id: `agent.${s.id}`,
         label: s.title,
-        detail: s.projectName,
+        detail: s.projectName || t.agents.noProject,
         group,
         icon: Bot,
         searchOnly: i >= 5,
