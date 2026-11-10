@@ -171,6 +171,6 @@ describe('the library types', () => {
     expect(internalPage('mindeck://settings')).toBeUndefined()
     expect(internalPage('https://history.dev/')).toBeUndefined()
     expect(IMPORT_BROWSERS.every((b) => BROWSER_NAMES[b])).toBe(true)
-    expect([labels('de').importedFrom('Arc'), labels('en').importedFrom('Arc')]).toEqual(['Importiert aus Arc', 'Imported from Arc'])
+    expect([labels('de').readingList, labels('en').readingList]).toEqual(['Leseliste', 'Reading List'])
   })
 })

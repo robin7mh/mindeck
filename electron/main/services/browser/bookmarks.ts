@@ -140,20 +140,17 @@ export class BrowserBookmarks {
   }
 
   /**
-   * Bookmarks from elsewhere (another browser, an HTML file). The bar's go to
-   * the bar while it is empty, else into a folder `label` on it; the rest into
-   * a folder `label` in Other bookmarks. Importing the same again adds nothing:
-   * folders merge by name, and an address saved anywhere already is skipped.
-   * Returns how many bookmarks were added.
+   * Bookmarks from elsewhere (another browser, an HTML file), where they were
+   * there: its bar onto the bar, the rest into Other bookmarks — after what is
+   * there already, each as it is (no folder around them). Importing the same
+   * again adds nothing: folders merge by name, and an address saved anywhere
+   * already is skipped. Returns how many bookmarks were added.
    */
-  merge(set: BookmarkSet, label: string): number {
+  merge(set: BookmarkSet): number {
     const budget = { left: MAX_NODES - this.count() }
     const clean = (nodes: BookmarkNode[]) => nodes.map((n) => sanitize({ ...n, id: undefined }, this.now(), budget)).filter((n): n is BookmarkNode => !!n)
     const seen = new Set(this.walk().flatMap(({ node }) => (isFolder(node) ? [] : [node.url])))
-    const bar = this.roots.bar
-    const into = (root: BookmarkFolder, nodes: BookmarkNode[], direct: boolean) =>
-      direct ? this.mergeInto(root, clean(nodes), seen) : this.mergeInto(root, [{ id: '', title: label, children: clean(nodes), added: this.now() }], seen)
-    const added = (set.bar.length ? into(bar, set.bar, !bar.children.length) : 0) + (set.other.length ? into(this.roots.other, set.other, false) : 0)
+    const added = this.mergeInto(this.roots.bar, clean(set.bar), seen) + this.mergeInto(this.roots.other, clean(set.other), seen)
     if (added) this.changed()
     return added
   }

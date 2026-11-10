@@ -26,7 +26,6 @@ import {
   type ViewBounds
 } from '@shared/types/browser'
 import {
-  BROWSER_NAMES,
   INTERNAL_PAGES,
   internalPage,
   type BookmarkFolder,
@@ -767,7 +766,7 @@ export class BrowserService {
 
   /** Bookmarks from a Netscape bookmark file (exported from any browser); how many were new. */
   importBookmarksHtml(html: string): number {
-    return this.bookmarks.merge(parseNetscape(html, this.now()), labels(this.ui.locale).imported)
+    return this.bookmarks.merge(parseNetscape(html, this.now()))
   }
 
   // --- other browsers -------------------------------------------------------------
@@ -793,8 +792,7 @@ export class BrowserService {
       this.deps.publish('browser:import', { sourceId: source.id, kind })
       try {
         if (kind === 'bookmarks') {
-          const names = labels(this.ui.locale)
-          result.bookmarks = this.bookmarks.merge(await importer.bookmarks(source.id, names.readingList), names.importedFrom(BROWSER_NAMES[source.browser]))
+          result.bookmarks = this.bookmarks.merge(await importer.bookmarks(source.id, labels(this.ui.locale).readingList))
         } else if (kind === 'history') {
           result.history = await this.history.merge(await importer.history(source.id))
         } else {

@@ -1,10 +1,8 @@
-import { useEffect } from 'react'
 import { AlertTriangle, ArrowLeft, ArrowRight, Bot, Download, Eye, EyeOff, Globe, MoreHorizontal, Puzzle, RotateCw, X } from 'lucide-react'
 import { isDesktop } from '@shared/ipc/client'
 import { internalPage } from '@shared/types/browserData'
 import { cn } from '@/lib/cn'
-import { useLocale, useT } from '@/lib/i18n'
-import { useAppearance } from '@/lib/theme'
+import { useT } from '@/lib/i18n'
 import { useActiveTab, useBrowser } from '../store'
 import { Omnibox } from './Omnibox'
 import { TabStrip } from './TabStrip'
@@ -57,14 +55,7 @@ export function BrowserView({ active }: { active: boolean }) {
   const importOpen = useBrowser((s) => s.importOpen)
   const run = useBrowser((s) => s.run)
   const vertical = useBrowser((s) => s.settings.verticalTabs)
-  const mode = useAppearance((s) => s.appearance.mode)
-  const locale = useLocale((s) => s.locale)
   useDragEnd()
-
-  // Pages follow Mindeck's light/dark mode; native menus speak its language.
-  useEffect(() => {
-    if (isDesktop()) void run('browser:ui', { theme: mode, locale })
-  }, [mode, locale, run])
 
   if (!isDesktop() || !available) {
     return (

@@ -69,7 +69,7 @@ describe('BrowserService · bookmarks', () => {
     expect(pushes.at(-1)![1].children).toEqual([])
   })
 
-  it('export and import bookmark files, named in the UI language', async () => {
+  it('export bookmark files named in the UI language; an imported file’s bookmarks land as they are', async () => {
     const { b } = await setupBrowser()
     b.setUi({ theme: 'system', locale: 'de' })
     b.addBookmark({ title: 'A', url: 'https://a.dev/' })
@@ -77,7 +77,7 @@ describe('BrowserService · bookmarks', () => {
     expect(html).toContain('PERSONAL_TOOLBAR_FOLDER="true">Lesezeichenleiste</H3>')
     expect(b.importBookmarksHtml(html)).toBe(0) // all there already
     expect(b.importBookmarksHtml('<DL><p><DT><A HREF="https://new.dev/">New</A></DL>')).toBe(1)
-    expect(b.bookmarkTree()[1].children).toEqual([expect.objectContaining({ title: 'Importiert' })])
+    expect(b.bookmarkTree()[1].children).toEqual([expect.objectContaining({ title: 'New', url: 'https://new.dev/' })])
   })
 })
 
@@ -137,7 +137,7 @@ describe('BrowserService · importing from other browsers', () => {
     expect(b.settings().searchEngine).toBe('duckduckgo')
     const [bar, other] = b.bookmarkTree()
     expect(bar.children.map((n) => n.title)).toEqual(['A'])
-    expect(other.children.map((n) => n.title)).toEqual(['Imported from Google Chrome'])
+    expect(other.children.map((n) => n.title)).toEqual(['O'])
     expect(b.historyList({}).map((e) => e.url)).toEqual(['https://h.dev/'])
 
     // a kind that fails is reported, the others still come; an engine Mindeck lacks changes nothing

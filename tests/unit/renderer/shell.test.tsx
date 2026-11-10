@@ -466,6 +466,8 @@ describe('AppShell with the Browser and Files', () => {
 
     vi.useFakeTimers()
     const view = render(<AppShell />)
+    // The browser learns Mindeck's look and language at once — not only once the Browser is opened.
+    expect(bridge.invoke).toHaveBeenCalledWith('browser:ui', { theme: expect.stringMatching(/^(system|dark|light)$/), locale: expect.stringMatching(/^(de|en)$/) })
     fireEvent.click(screen.getByText('click to skip'))
     act(() => {
       vi.advanceTimersByTime(BOOT_TOTAL_MS)

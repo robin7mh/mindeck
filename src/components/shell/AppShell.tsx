@@ -24,7 +24,8 @@ import { AccountView } from '@/features/account/components/AccountView'
 import { BrowserView } from '@/features/browser/components/BrowserView'
 import { useBrowser } from '@/features/browser/store'
 import { FilesView } from '@/features/files/components/FilesView'
-import { getT, useT } from '@/lib/i18n'
+import { getT, useLocale, useT } from '@/lib/i18n'
+import { useAppearance } from '@/lib/theme'
 import { useSession } from '@/features/session/store'
 import { BootSequence, BOOT_TOTAL_MS } from '@/components/boot/BootSequence'
 import { ModuleBoundary } from '@/components/shell/ErrorBoundary'
@@ -120,6 +121,13 @@ export function AppShell() {
       offTerminal()
     }
   }, [])
+  // The browser's pages follow Mindeck's light/dark mode, its menus and what it names (an import's Reading List) speak
+  // Mindeck's language — from the start, not only once the Browser was opened (an import from the setup or Settings).
+  const mode = useAppearance((s) => s.appearance.mode)
+  const locale = useLocale((s) => s.locale)
+  useEffect(() => {
+    if (isDesktop()) void useBrowser.getState().run('browser:ui', { theme: mode, locale })
+  }, [mode, locale])
   // The chat open in the Agents module shows its approvals inline — no toast for it.
   const activeChat = useAssistant((s) => s.activeId)
   const activeSession = useAgents((s) => (s.view === 'session' ? s.activeId : undefined))

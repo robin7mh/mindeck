@@ -8,7 +8,6 @@ import { relayout } from '@/lib/relayout'
 import { PaneContext } from '@/features/workspace/pane'
 import { useAssistant } from '@/features/agents/store'
 import { useProjects } from '@/features/projects/store'
-import { useAppearance } from '@/lib/theme'
 import { BrowserView } from '@/features/browser/components/BrowserView'
 import { Omnibox } from '@/features/browser/components/Omnibox'
 import { TabStrip } from '@/features/browser/components/TabStrip'
@@ -58,13 +57,11 @@ describe('BrowserView', () => {
     expect(screen.getAllByText('The browser lives in the desktop app')).toHaveLength(2)
   })
 
-  it('drives the tab on screen from the toolbar and follows the UI’s look and language', async () => {
+  it('drives the tab on screen from the toolbar', async () => {
     const { sent } = bridge()
-    useAppearance.setState({ appearance: { ...useAppearance.getState().appearance, mode: 'dark' } })
     useBrowser.setState({ state: state([tab('a', 'https://a.dev/', { title: 'A', canGoBack: true, zoom: 1.25, shared: true })]) })
     render(<BrowserView active />)
     await settle()
-    expect(sent('browser:ui')).toEqual([{ theme: 'dark', locale: 'en' }])
 
     fireEvent.click(screen.getByRole('button', { name: 'Back' }))
     expect(screen.getByRole('button', { name: 'Forward' })).toBeDisabled()

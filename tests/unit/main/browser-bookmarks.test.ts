@@ -98,24 +98,24 @@ describe('bookmarks', () => {
     expect(b.suggest('GIT', 1).map((x) => x.title)).toEqual(['Hub'])
   })
 
-  it('merge imports without duplicates: the bar while empty, else into a named folder', async () => {
+  it('merge imports where they were, without duplicates: the bar onto the bar, the rest into Other — no folder around them', async () => {
     const { b, onChange, setNow } = await setup()
+    b.add({ title: 'Github', url: 'https://github.com/' }) // on the bar already
     const chrome = { bar: [link('A', 'https://a.dev/'), folder('Dev', [link('MDN', 'https://mdn.dev/'), folder('Empty', [])])], other: [link('O', 'https://o.dev/')] }
-    expect(b.merge(chrome, 'From Chrome')).toBe(3)
-    expect(titles(b.tree()[0].children)).toEqual(['A', { Dev: ['MDN'] }])
-    expect(titles(b.tree()[1].children)).toEqual([{ 'From Chrome': ['O'] }])
+    expect(b.merge(chrome)).toBe(3)
+    expect(titles(b.tree()[0].children)).toEqual(['Github', 'A', { Dev: ['MDN'] }])
+    expect(titles(b.tree()[1].children)).toEqual(['O'])
     // again: nothing new, nothing changes
     onChange.mockClear()
-    expect(b.merge(chrome, 'From Chrome')).toBe(0)
+    expect(b.merge(chrome)).toBe(0)
     expect(onChange).not.toHaveBeenCalled()
-    expect(titles(b.tree()[1].children)).toEqual([{ 'From Chrome': ['O'] }])
-    // a second browser: the bar is taken, so its bar goes into a folder; same addresses are skipped
+    // a second browser: onto the same bar, its folder joining the one of the same name; same addresses are skipped
     setNow(2000)
-    expect(b.merge({ bar: [link('B', 'https://b.dev/'), link('A again', 'https://a.dev/')], other: [] }, 'From Firefox')).toBe(1)
-    expect(titles(b.tree()[0].children)).toEqual(['A', { Dev: ['MDN'] }, { 'From Firefox': ['B'] }])
-    expect(b.merge({ bar: [], other: [] }, 'Nothing')).toBe(0)
+    expect(b.merge({ bar: [link('B', 'https://b.dev/'), link('A again', 'https://a.dev/'), folder('Dev', [link('React', 'https://react.dev/')])], other: [] })).toBe(2)
+    expect(titles(b.tree()[0].children)).toEqual(['Github', 'A', { Dev: ['MDN', 'React'] }, 'B'])
+    expect(b.merge({ bar: [], other: [] })).toBe(0)
     // junk from an import is dropped
-    expect(b.merge({ bar: [{ id: '', title: 'no url', url: '', added: 1 } as BookmarkNode, null as unknown as BookmarkNode], other: [] }, 'Junk')).toBe(0)
+    expect(b.merge({ bar: [{ id: '', title: 'no url', url: '', added: 1 } as BookmarkNode, null as unknown as BookmarkNode], other: [] })).toBe(0)
   })
 
   it('load a saved file, keep what fits, and set a broken file aside', async () => {
@@ -147,7 +147,7 @@ describe('bookmarks', () => {
   it('stop at the limit, and log a save that fails', async () => {
     const { b } = await setup()
     const many = Array.from({ length: 50_010 }, (_, i) => link(`L${i}`, `https://l${i}.dev/`))
-    expect(b.merge({ bar: many, other: [] }, 'Many')).toBe(50_000)
+    expect(b.merge({ bar: many, other: [] })).toBe(50_000)
     expect(() => b.add({ title: 'one more', url: 'https://more.dev/' })).toThrow(expect.objectContaining({ code: 'too-many' }))
 
     const err = vi.spyOn(console, 'error').mockImplementation(() => {})
