@@ -1811,7 +1811,8 @@ agents: {
     kinds: { bookmarks: 'Bookmarks', history: 'History', settings: 'Search engine' },
     looking: 'Looking for browsers…',
     noBrowsers: 'Neither Chrome, Safari nor Firefox was found on this computer.',
-    locked: (names: string) => `${names}: macOS lets Mindeck read the data only with Full Disk Access. Turn it on for Mindeck in System Settings, restart Mindeck, then look again.`,
+    locked: (names: string) =>
+      `${names}: macOS lets Mindeck read the data only with Full Disk Access. Turn it on for Mindeck in System Settings (if Mindeck isn't in the list, add it with "+" from the Applications folder), restart Mindeck, then look again.`,
     openPrivacySettings: 'Open System Settings',
     lookAgain: 'Look again',
     importNote:

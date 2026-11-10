@@ -1787,7 +1787,8 @@ agents: {
     kinds: { bookmarks: 'Lesezeichen', history: 'Verlauf', settings: 'Suchmaschine' },
     looking: 'Suche nach Browsern …',
     noBrowsers: 'Auf diesem Computer wurde weder Chrome noch Safari oder Firefox gefunden.',
-    locked: (names) => `${names}: macOS gibt Mindeck die Daten nur mit „Festplattenvollzugriff“ frei. Schalte ihn für Mindeck in den Systemeinstellungen ein, starte Mindeck neu und such dann erneut.`,
+    locked: (names) =>
+      `${names}: macOS gibt Mindeck die Daten nur mit „Festplattenvollzugriff“ frei. Schalte ihn für Mindeck in den Systemeinstellungen ein (steht Mindeck nicht in der Liste, füge es mit „+“ aus dem Programme-Ordner hinzu), starte Mindeck neu und such dann erneut.`,
     openPrivacySettings: 'Systemeinstellungen öffnen',
     lookAgain: 'Erneut suchen',
     importNote:
