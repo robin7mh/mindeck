@@ -258,6 +258,20 @@ describe('BookmarksBar', () => {
     expect(useBrowser.getState().importOpen).toBe(true)
   })
 
+  it('many bookmarks scroll sideways without a bar; "Other bookmarks" stays at the right', () => {
+    bridge()
+    useBrowser.setState({ bookmarks: tree })
+    render(<BookmarksBar />)
+    const bar = screen.getByRole('toolbar', { name: 'Bookmarks bar' })
+    const list = within(bar).getByText('Alpha').closest('.no-scrollbar') as HTMLElement
+    expect(list).toHaveClass('overflow-x-auto')
+    expect(within(list).queryByRole('button', { name: 'Other bookmarks' })).toBeNull()
+    let left = 0
+    Object.defineProperty(list, 'scrollLeft', { configurable: true, get: () => left, set: (v: number) => (left = v) })
+    fireEvent.wheel(list, { deltaY: 90 })
+    expect(left).toBe(90)
+  })
+
   it('opens links here or in a tab behind, and folders as menus with their subfolders', async () => {
     const { sent } = bridge()
     const go = vi.fn(async () => {})

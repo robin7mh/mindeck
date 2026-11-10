@@ -4,6 +4,7 @@ import { isFolder, type BookmarkFolder, type BookmarkNode } from '@shared/types/
 import { cn } from '@/lib/cn'
 import { useT } from '@/lib/i18n'
 import { useOverlay } from '@/lib/overlay'
+import { scrollSideways } from '@/lib/wheel'
 import { nodeName } from '../library'
 import { useBrowser } from '../store'
 import { initial } from '../url'
@@ -172,31 +173,34 @@ export function BookmarksBar() {
           </button>
         </span>
       )}
-      {bar.children.map((node) => (
-        <button
-          key={node.id}
-          type="button"
-          draggable
-          title={isFolder(node) ? node.title : `${node.title}\n${node.url}`}
-          onDragStart={(e) => e.dataTransfer.setData(BOOKMARK_DRAG, node.id)}
-          onDragOver={(e) => dragOver(e, node.id)}
-          onDragLeave={() => setDropAt((d) => (d === node.id ? null : d))}
-          onDrop={(e) => drop(e, node)}
-          onClick={(e) => (isFolder(node) ? setOpen({ folder: node, at: below(e) }) : openBookmark(node.url, e))}
-          onAuxClick={(e) => !isFolder(node) && e.button === 1 && openBookmark(node.url, e)}
-          onContextMenu={(e) => {
-            e.preventDefault()
-            setMenu({ node, at: { x: e.clientX, y: e.clientY } })
-          }}
-          className={cn(
-            'flex h-6 min-w-0 max-w-[180px] shrink-0 items-center gap-1.5 rounded-md border border-transparent px-2 font-sans text-[11.5px] text-text-secondary transition-colors hover:bg-elevated/60 hover:text-text-primary',
-            dropAt === node.id && 'border-cyan/60'
-          )}
-        >
-          <NodeIcon node={node} />
-          <span className="truncate">{nodeName(node)}</span>
-        </button>
-      ))}
+      {/* Many bookmarks: they scroll sideways without a bar; "Other bookmarks" stays at the right. */}
+      <div onWheel={scrollSideways} className="no-scrollbar flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto">
+        {bar.children.map((node) => (
+          <button
+            key={node.id}
+            type="button"
+            draggable
+            title={isFolder(node) ? node.title : `${node.title}\n${node.url}`}
+            onDragStart={(e) => e.dataTransfer.setData(BOOKMARK_DRAG, node.id)}
+            onDragOver={(e) => dragOver(e, node.id)}
+            onDragLeave={() => setDropAt((d) => (d === node.id ? null : d))}
+            onDrop={(e) => drop(e, node)}
+            onClick={(e) => (isFolder(node) ? setOpen({ folder: node, at: below(e) }) : openBookmark(node.url, e))}
+            onAuxClick={(e) => !isFolder(node) && e.button === 1 && openBookmark(node.url, e)}
+            onContextMenu={(e) => {
+              e.preventDefault()
+              setMenu({ node, at: { x: e.clientX, y: e.clientY } })
+            }}
+            className={cn(
+              'flex h-6 min-w-0 max-w-[180px] shrink-0 items-center gap-1.5 rounded-md border border-transparent px-2 font-sans text-[11.5px] text-text-secondary transition-colors hover:bg-elevated/60 hover:text-text-primary',
+              dropAt === node.id && 'border-cyan/60'
+            )}
+          >
+            <NodeIcon node={node} />
+            <span className="truncate">{nodeName(node)}</span>
+          </button>
+        ))}
+      </div>
       {other.children.length > 0 && (
         <button
           type="button"
