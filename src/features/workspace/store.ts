@@ -43,14 +43,16 @@ interface WorkspaceState {
   apply(target: string | number): void
 }
 
+/** The saved workspaces of this device. */
 const KEY = 'mindeck.workspace'
+/** The layout on screen, for this run only: a reload (⌘R, a crashed page) keeps it; every start opens on Core. */
+const SESSION_KEY = 'mindeck.workspace.session'
 export const MAX_NAME = 40
 
-/** What a fresh install starts with: the dashboard, and two layouts to try. */
-function initial(): Pick<WorkspaceState, 'layout' | 'saved' | 'current'> {
+/** What a fresh install starts with: two layouts to try (the screen itself always starts on Core). */
+function initial(): Pick<WorkspaceState, 'saved'> {
   const t = getT().workspace
   return {
-    layout: L.singleLayout('core'),
     saved: [
       { id: 'w1', name: t.seedCoding, layout: L.makeLayout('main', ['editor', 'terminal', 'browser']) },
       { id: 'w2', name: t.seedReview, layout: L.makeLayout('columns', ['agents', 'browser']) }
@@ -58,31 +60,47 @@ function initial(): Pick<WorkspaceState, 'layout' | 'saved' | 'current'> {
   }
 }
 
-/** The layout of this device (each device has its own screen), as it was left. */
-function load(): Pick<WorkspaceState, 'layout' | 'saved' | 'current'> {
+/** The saved workspaces of this device (each device has its own screen). */
+function loadSaved(): SavedWorkspace[] {
   try {
     const raw = localStorage.getItem(KEY)
-    if (!raw) return initial()
-    const stored = JSON.parse(raw) as { layout?: unknown; saved?: unknown; current?: unknown }
-    const layout = L.parseLayout(stored.layout) ?? L.singleLayout('core')
+    if (!raw) return initial().saved
+    const stored = JSON.parse(raw) as { saved?: unknown }
     const saved: SavedWorkspace[] = []
     for (const w of Array.isArray(stored.saved) ? (stored.saved as Partial<SavedWorkspace>[]) : []) {
       const parsed = L.parseLayout(w?.layout)
       const name = typeof w?.name === 'string' ? w.name.trim().slice(0, MAX_NAME) : ''
       if (parsed && name && typeof w.id === 'string' && !saved.some((s) => s.id === w.id)) saved.push({ id: w.id, name, layout: { ...parsed, maximized: undefined } })
     }
-    const current = saved.some((s) => s.id === stored.current) ? (stored.current as string) : undefined
-    return { layout, saved, current }
+    return saved
   } catch {
-    return initial()
+    return initial().saved
   }
+}
+
+/**
+ * What the workspace starts with: Core on its own, every time Mindeck starts —
+ * the screen left last time doesn't come back (the saved workspaces do). Only a
+ * reload within this run (⌘R, a crashed page) keeps the layout on screen.
+ */
+function load(): Pick<WorkspaceState, 'layout' | 'saved' | 'current'> {
+  const saved = loadSaved()
+  try {
+    const session = JSON.parse(sessionStorage.getItem(SESSION_KEY) ?? 'null') as { layout?: unknown; current?: unknown } | null
+    const layout = L.parseLayout(session?.layout)
+    if (layout) return { layout, saved, current: saved.some((s) => s.id === session?.current) ? (session?.current as string) : undefined }
+  } catch {
+    /* unreadable: a start */
+  }
+  return { layout: L.singleLayout('core'), saved, current: undefined }
 }
 
 function persist(s: WorkspaceState): void {
   try {
-    localStorage.setItem(KEY, JSON.stringify({ v: 1, layout: s.layout, saved: s.saved, current: s.current }))
+    localStorage.setItem(KEY, JSON.stringify({ v: 2, saved: s.saved }))
+    sessionStorage.setItem(SESSION_KEY, JSON.stringify({ layout: s.layout, current: s.current }))
   } catch {
-    /* storage unavailable: the layout lasts until reload */
+    /* storage unavailable: the saved workspaces last until reload */
   }
 }
 
@@ -98,8 +116,8 @@ function newId(saved: SavedWorkspace[]): string {
 
 /**
  * The workspace on screen: which panes, which module in each, the sizes, the
- * focus — remembered per device and restored at start — plus the named
- * layouts the user saved.
+ * focus — kept through a reload, while every start opens on Core — plus the
+ * named layouts the user saved (kept per device).
  */
 export const useWorkspace = create<WorkspaceState>((set, get) => {
   const edit = (fn: (layout: L.Layout) => L.Layout) => {

@@ -19,7 +19,7 @@ async function paneBox(page: Page, module: string) {
   return (await page.locator(`[data-pane-id="${id}"]`).boundingBox())!
 }
 
-test('workspace: two panes side by side with agents, terminal and browser — divider, zen mode, saved workspaces, restored after a restart', async ({ app, page, restart }) => {
+test('workspace: two panes side by side with agents, terminal and browser — divider, zen mode, saved workspaces; a restart opens on Core, the saved one a click away', async ({ app, page, restart }) => {
   const site = await localSite()
   try {
     const menu = page.getByRole('button', { name: 'Layout and workspaces' })
@@ -88,13 +88,20 @@ test('workspace: two panes side by side with agents, terminal and browser — di
     await expect(divider).toHaveAttribute('aria-valuenow', '35')
     await expect(menu).toContainText('QA review')
 
-    // a restart brings the same workspace back
+    // a restart opens on Core alone — not the screen it was left on
     const next = await restart()
     const again = next.page
+    await expect(again.getByText('Command Center', { exact: true })).toBeVisible()
+    await expect(again.locator('[data-testid^="pane-head-"]')).toHaveCount(0)
+    const againMenu = again.getByRole('button', { name: 'Layout and workspaces' })
+    await expect(againMenu).not.toContainText('QA review')
+    // the saved workspace is still there, one click away
+    await againMenu.click()
+    await again.getByRole('button', { name: 'Switch to QA review' }).click()
     await expect(again.getByTestId('pane-head-agents')).toBeVisible()
     await expect(again.getByTestId('pane-head-browser')).toBeVisible()
     await expect(again.getByRole('separator', { name: 'Resize the columns' })).toHaveAttribute('aria-valuenow', '35')
-    await expect(again.getByRole('button', { name: 'Layout and workspaces' })).toContainText('QA review')
+    await expect(againMenu).toContainText('QA review')
     await expect(again.getByRole('tab', { name: /Mindeck E2E/ })).toHaveCount(0) // the browser starts with a new tab
   } finally {
     await site.close()

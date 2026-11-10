@@ -3,18 +3,22 @@ import { en } from '@/lib/i18n/en'
 import { makeLayout, singleLayout } from '@/features/workspace/layout'
 
 const KEY = 'mindeck.workspace'
+const SESSION_KEY = 'mindeck.workspace.session'
 
-/** The store as a fresh start reads it from this device's storage. */
-async function fresh(stored?: unknown) {
+/** The store as a start reads it from this device's storage (and, after a reload, this run's). */
+async function fresh(stored?: unknown, session?: unknown) {
   if (stored !== undefined) localStorage.setItem(KEY, typeof stored === 'string' ? stored : JSON.stringify(stored))
+  if (session !== undefined) sessionStorage.setItem(SESSION_KEY, typeof session === 'string' ? session : JSON.stringify(session))
   vi.resetModules()
   const { useWorkspace } = await import('@/features/workspace/store')
   return useWorkspace
 }
-const saved = () => JSON.parse(localStorage.getItem(KEY)!) as { layout: unknown; saved: { name: string }[]; current?: string }
+/** What this run keeps for a reload: the layout on screen and the saved workspace it came from. */
+const kept = () => JSON.parse(sessionStorage.getItem(SESSION_KEY)!) as { layout: unknown; current?: string }
 
 afterEach(() => {
   vi.useRealTimers()
+  sessionStorage.clear() // the next test is a new start
 })
 
 describe('workspace store', () => {
@@ -29,8 +33,9 @@ describe('workspace store', () => {
     expect(ws.getState().zen).toBe(false)
   })
 
-  it('restores the layout of this device — what is valid of it', async () => {
+  it('every start opens on Core; the saved workspaces of this device stay — what is valid of them', async () => {
     const layout = makeLayout('columns', ['agents', 'browser'])
+    // Stored by an earlier version with the screen it was left on: that screen doesn't come back.
     const ws = await fresh({
       v: 1,
       layout: { ...layout, maximized: 'p2' },
@@ -46,10 +51,19 @@ describe('workspace store', () => {
       ],
       current: 'e'
     })
-    expect(ws.getState().layout).toMatchObject({ preset: 'columns', maximized: 'p2', focus: 'p2' })
+    expect(ws.getState().layout).toEqual(singleLayout('core'))
     expect(ws.getState().saved.map((w) => w.name)).toEqual(['Coding', 'Max'])
     expect(ws.getState().saved[1].layout.maximized).toBeUndefined() // a saved layout has nothing maximized
-    expect(ws.getState().current).toBe('e')
+    expect(ws.getState().current).toBeUndefined() // Core on screen, not the saved workspace
+
+    // A reload within the run: the layout on screen and the workspace it came from stay.
+    const reloaded = await fresh(undefined, { layout: { ...layout, maximized: 'p2' }, current: 'e' })
+    expect(reloaded.getState().layout).toMatchObject({ preset: 'columns', maximized: 'p2', focus: 'p2' })
+    expect(reloaded.getState().current).toBe('e')
+    expect((await fresh(undefined, { layout, current: 'gone' })).getState().current).toBeUndefined()
+    expect((await fresh(undefined, { layout: 'garbage' })).getState().layout).toEqual(singleLayout('core'))
+    expect((await fresh(undefined, '{broken')).getState().layout).toEqual(singleLayout('core'))
+    sessionStorage.clear()
 
     localStorage.clear()
     const other = await fresh({ layout: 'garbage', saved: 'nope', current: 'zz' })
@@ -62,7 +76,7 @@ describe('workspace store', () => {
     const ws = await fresh()
     const s = () => ws.getState()
     s().split()
-    expect(saved().layout).toMatchObject({ preset: 'columns' })
+    expect(kept().layout).toMatchObject({ preset: 'columns' })
     s().show('browser')
     expect(s().layout.panes.map((p) => p.module)).toEqual(['core', 'browser'])
     s().place('p1', 'browser') // swaps
@@ -106,7 +120,7 @@ describe('workspace store', () => {
     expect(s().layout.panes.map((p) => p.module)).toEqual(['browser', 'core'])
     s().openBeside('terminal')
     expect(s().layout.panes.map((p) => p.module)).toEqual(['browser', 'terminal', 'core'])
-    expect(JSON.parse(localStorage.getItem('mindeck.workspace')!).layout.preset).toBe('main')
+    expect(kept().layout).toMatchObject({ preset: 'main' })
   })
 
   it('saves, updates, renames, removes and switches named workspaces', async () => {
@@ -120,7 +134,8 @@ describe('workspace store', () => {
     expect(s().saved.at(-1)).toMatchObject({ id: 'w3', name: 'Writing' })
     expect(s().saved.at(-1)!.layout).toMatchObject({ preset: 'rows', maximized: undefined })
     expect(s().current).toBe('w3')
-    expect(saved().current).toBe('w3')
+    expect(kept().current).toBe('w3')
+    expect((JSON.parse(localStorage.getItem(KEY)!) as { saved: { name: string }[] }).saved.at(-1)!.name).toBe('Writing') // kept on the device
 
     s().apply(0) // ⌘⌥1
     expect(s().layout.preset).toBe('main')
