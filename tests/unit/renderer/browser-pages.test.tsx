@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { settle } from './bridge'
 import { bridge, dataTransfer, folder, library, link } from './browserLibraryFixtures'
 import { useBrowser } from '@/features/browser/store'
+import { useSession } from '@/features/session/store'
 import { useOverlays } from '@/lib/overlay'
 import { useLocale } from '@/lib/i18n'
 import { HistoryPage } from '@/features/browser/components/HistoryPage'
@@ -357,8 +358,56 @@ describe('ImportDialog', () => {
     })
     render(<ImportDialog onClose={onClose} />)
     await settle()
-    expect(screen.getAllByText('No other browser was found on this computer.')).toHaveLength(1)
+    expect(screen.getAllByText('Neither Chrome, Safari nor Firefox was found on this computer.')).toHaveLength(1)
     expect(screen.queryAllByRole('button', { name: 'Import' })).toHaveLength(1) // only the first dialog's
+  })
+
+  it('a browser macOS keeps locked: says so, opens System Settings at Full Disk Access, looks again — then offers it', async () => {
+    const session = useSession.getState()
+    useSession.setState({ info: { mode: 'desktop', version: '1.0.0', platform: 'darwin', hostname: 'mac', remoteTerminal: false } })
+    try {
+      let list: ImportSource[] = [{ id: 'safari:/s', browser: 'safari', profile: '', kinds: [], locked: true }, sources[0]]
+      let refuse = false
+      const b = bridge({
+        'browser:importSources': () => list,
+        'finder:privacySettings': () => {
+          if (refuse) throw new Error('no System Settings')
+        }
+      })
+      render(<ImportDialog onClose={vi.fn()} />)
+      await settle()
+      expect(screen.getByRole('note')).toHaveTextContent('Safari: macOS lets Mindeck read the data only with Full Disk Access.')
+      // the locked one isn't offered; the readable one is
+      expect(screen.getByRole('combobox', { name: 'From' })).toHaveTextContent('Google Chrome — Robin')
+      fireEvent.click(screen.getByRole('button', { name: 'Open System Settings' }))
+      refuse = true
+      fireEvent.click(screen.getByRole('button', { name: 'Open System Settings' }))
+      await settle()
+      expect(b.sent('finder:privacySettings')).toHaveLength(2)
+      expect(screen.queryByRole('alert')).toBeNull() // a System Settings that didn't open says nothing more
+
+      // Full Disk Access granted: Safari is offered — by its name alone, it has just the one profile
+      list = [{ id: 'safari:/s', browser: 'safari', profile: '', kinds: ['bookmarks', 'history'] }]
+      fireEvent.click(screen.getByRole('button', { name: 'Look again' }))
+      expect(screen.getByText('Looking for browsers…')).toBeInTheDocument()
+      await settle()
+      expect(screen.queryByRole('note')).toBeNull()
+      expect(screen.getByRole('combobox', { name: 'From' })).toHaveTextContent(/^Safari$/)
+    } finally {
+      useSession.setState(session, true)
+    }
+  })
+
+  it('only locked browsers, not on a Mac: nothing to pick, no way to System Settings — only looking again', async () => {
+    bridge({ 'browser:importSources': () => [{ id: 'firefox:/f', browser: 'firefox', profile: '', kinds: [], locked: true }] })
+    render(<ImportDialog onClose={vi.fn()} />)
+    await settle()
+    expect(screen.getByRole('note')).toHaveTextContent('Firefox:')
+    expect(screen.queryByRole('button', { name: 'Open System Settings' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Look again' })).toBeInTheDocument()
+    expect(screen.queryByRole('combobox')).toBeNull()
+    expect(screen.queryByText(/Passwords and cookies stay/)).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Import' })).toBeNull()
   })
 
   it('is a step of the first-run setup too: skipping or finishing moves on', async () => {

@@ -41,18 +41,14 @@ export function internalPage(url: string): InternalPage | undefined {
   return key === 'history' || key === 'bookmarks' ? key : undefined
 }
 
-/** Browsers Mindeck takes bookmarks and history over from. */
-export const IMPORT_BROWSERS = ['chrome', 'brave', 'edge', 'arc', 'vivaldi', 'chromium', 'firefox'] as const
+/** Browsers Mindeck takes bookmarks and history over from: the three most people use. */
+export const IMPORT_BROWSERS = ['chrome', 'safari', 'firefox'] as const
 export type ImportBrowser = (typeof IMPORT_BROWSERS)[number]
 
 /** How the browsers call themselves. */
 export const BROWSER_NAMES: Record<ImportBrowser, string> = {
   chrome: 'Google Chrome',
-  brave: 'Brave',
-  edge: 'Microsoft Edge',
-  arc: 'Arc',
-  vivaldi: 'Vivaldi',
-  chromium: 'Chromium',
+  safari: 'Safari',
   firefox: 'Firefox'
 }
 
@@ -63,10 +59,16 @@ export interface ImportSource {
   /** `<browser>:<profile folder>` — stable between scans. */
   id: string
   browser: ImportBrowser
-  /** The profile as that browser names it ("Person 1", "Work", "default-release"). */
+  /** The profile as that browser names it ("Person 1", "Work", "default-release"); '' where it has just the one (Safari). */
   profile: string
   /** What there is to take over. */
   kinds: ImportKind[]
+  /**
+   * The browser is there, but the system doesn't let Mindeck read it (macOS:
+   * Safari always, other browsers where macOS guards their data) — Full Disk
+   * Access for Mindeck opens it. `kinds` is empty until then.
+   */
+  locked?: boolean
 }
 
 export interface ImportRequest {

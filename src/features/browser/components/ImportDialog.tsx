@@ -1,24 +1,28 @@
 import { useEffect, useState } from 'react'
-import { CircleCheck, Import, KeyRound, Loader2, TriangleAlert, X } from 'lucide-react'
+import { CircleCheck, Import, KeyRound, Loader2, LockKeyhole, TriangleAlert, X } from 'lucide-react'
 import { errorMessage, ipc, onEvent } from '@shared/ipc/client'
 import { BROWSER_NAMES, type ImportKind, type ImportResult, type ImportSource } from '@shared/types/browserData'
 import { Select } from '@/components/ui/Select'
 import { useT } from '@/lib/i18n'
 import { useOverlay } from '@/lib/overlay'
+import { useSession } from '@/features/session/store'
 import { ENGINE_LABELS } from '../url'
 import { dialogButton } from './BookmarkEditor'
 
 const ORDER: ImportKind[] = ['bookmarks', 'history', 'settings']
 
 /**
- * Taking bookmarks, history and the search engine over from another browser
- * on this machine: pick the browser and profile, then what to bring. Says up
- * front that passwords and cookies stay behind (Chromium encrypts them).
+ * Taking bookmarks, history and the search engine over from Chrome, Safari or
+ * Firefox on this machine: pick the browser and profile, then what to bring.
+ * Says up front that passwords and cookies stay behind (the browsers encrypt
+ * them). A browser the system won't let Mindeck read (macOS: Safari, and
+ * others where it guards them) says so, with the way to Full Disk Access.
  * `onClose`: finished, skipped or cancelled. `onBusy`: an import runs (or ended).
  * Stands alone: in a dialog (ImportDialog) or as a step of the first-run setup (ImportStep).
  */
 export function ImportPanel({ onClose, onBusy }: { onClose(): void; onBusy?(busy: boolean): void }) {
   const t = useT()
+  const mac = useSession((s) => s.info?.platform) === 'darwin'
   const [sources, setSources] = useState<ImportSource[] | null>(null)
   const [sourceId, setSourceId] = useState('')
   const [kinds, setKinds] = useState<ImportKind[]>([])
@@ -26,18 +30,28 @@ export function ImportPanel({ onClose, onBusy }: { onClose(): void; onBusy?(busy
   const [step, setStep] = useState<ImportKind>()
   const [result, setResult] = useState<ImportResult>()
   const [error, setError] = useState('')
-  const source = sources?.find((s) => s.id === sourceId)
+  const readable = sources?.filter((s) => !s.locked) ?? []
+  const locked = sources?.filter((s) => s.locked) ?? []
+  const source = readable.find((s) => s.id === sourceId)
 
-  useEffect(() => {
-    const off = onEvent('browser:import', (p) => setStep(p.kind))
+  /** Looks for the browsers (again: after Full Disk Access was granted). */
+  const look = () => {
+    setSources(null)
     void ipc('browser:importSources').then(
       (list) => {
         setSources(list)
-        if (list[0]) pick(list[0])
+        const first = list.find((s) => !s.locked)
+        if (first) pick(first)
       },
       () => setSources([])
     )
+  }
+
+  useEffect(() => {
+    const off = onEvent('browser:import', (p) => setStep(p.kind))
+    look()
     return off
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once, when the panel opens; `look` is recreated each render
   }, [])
 
   function pick(s: ImportSource) {
@@ -58,7 +72,7 @@ export function ImportPanel({ onClose, onBusy }: { onClose(): void; onBusy?(busy
     onBusy?.(false)
   }
 
-  const label = (s: ImportSource) => `${BROWSER_NAMES[s.browser]} — ${s.profile}`
+  const label = (s: ImportSource) => (s.profile ? `${BROWSER_NAMES[s.browser]} — ${s.profile}` : BROWSER_NAMES[s.browser])
 
   return (
     <>
@@ -79,6 +93,25 @@ export function ImportPanel({ onClose, onBusy }: { onClose(): void; onBusy?(busy
       {!sources && <p className="py-4 font-sans text-[12.5px] text-text-muted">{t.library.looking}</p>}
       {sources && !sources.length && <p className="py-4 font-sans text-[12.5px] text-text-secondary">{t.library.noBrowsers}</p>}
 
+      {!result && locked.length > 0 && (
+        <div role="note" className="mb-3 flex items-start gap-2 rounded-md border border-cyan/30 bg-cyan/5 px-2.5 py-2">
+          <LockKeyhole size={13} className="mt-0.5 shrink-0 text-cyan" />
+          <div className="min-w-0 flex-1 font-sans text-[12px] text-text-secondary">
+            <p>{t.library.locked(locked.map((s) => BROWSER_NAMES[s.browser]).join(', '))}</p>
+            <div className="mt-1.5 flex flex-wrap gap-3">
+              {mac && (
+                <button type="button" onClick={() => void ipc('finder:privacySettings').catch(() => {})} className="text-cyan hover:underline">
+                  {t.library.openPrivacySettings}
+                </button>
+              )}
+              <button type="button" onClick={look} className="text-cyan hover:underline">
+                {t.library.lookAgain}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {source && !result && (
         <>
           <div className="mb-3">
@@ -86,8 +119,8 @@ export function ImportPanel({ onClose, onBusy }: { onClose(): void; onBusy?(busy
             <Select
               label={t.library.importFrom}
               value={sourceId}
-              options={sources!.map((s) => ({ value: s.id, label: label(s) }))}
-              onChange={(id) => pick(sources!.find((s) => s.id === id)!)}
+              options={readable.map((s) => ({ value: s.id, label: label(s) }))}
+              onChange={(id) => pick(readable.find((s) => s.id === id)!)}
             />
           </div>
           <fieldset className="mb-3">
@@ -127,7 +160,7 @@ export function ImportPanel({ onClose, onBusy }: { onClose(): void; onBusy?(busy
         </p>
       )}
 
-      {sources && sources.length > 0 && (
+      {readable.length > 0 && (
         <p className="mb-4 flex items-start gap-2 rounded-md border border-hud/50 bg-surface/50 px-2.5 py-2 font-sans text-[11.5px] text-text-secondary">
           <KeyRound size={13} className="mt-0.5 shrink-0 text-text-muted" /> {t.library.importNote}
         </p>

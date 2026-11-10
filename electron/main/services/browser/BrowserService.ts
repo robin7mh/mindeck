@@ -793,7 +793,8 @@ export class BrowserService {
       this.deps.publish('browser:import', { sourceId: source.id, kind })
       try {
         if (kind === 'bookmarks') {
-          result.bookmarks = this.bookmarks.merge(await importer.bookmarks(source.id), labels(this.ui.locale).importedFrom(BROWSER_NAMES[source.browser]))
+          const names = labels(this.ui.locale)
+          result.bookmarks = this.bookmarks.merge(await importer.bookmarks(source.id, names.readingList), names.importedFrom(BROWSER_NAMES[source.browser]))
         } else if (kind === 'history') {
           result.history = await this.history.merge(await importer.history(source.id))
         } else {

@@ -1,6 +1,8 @@
 import { spawn } from 'node:child_process'
-import { mkdir } from 'node:fs/promises'
+import { constants } from 'node:fs'
+import { access, mkdir } from 'node:fs/promises'
 import { homedir } from 'node:os'
+import { dirname, join } from 'node:path'
 import { LANGUAGES, type LanguageStatus, type RuntimeInfo, type ToolProgress, type ToolState } from '@shared/types/languages'
 import { loginShellProbe, type Probe } from '../agents/detect'
 import { shellCommand, shellEnv } from '../terminal/TerminalService'
@@ -10,6 +12,17 @@ import { CATALOG, osOf, type InstallSpec, type LocateContext, type ToolSpec } fr
 
 function coded(code: string, message: string): Error {
   return Object.assign(new Error(message), { code })
+}
+
+/** Whether this process may write `dir`: the folder itself, or — not made yet — the nearest one above it that is there. */
+export async function writable(dir: string): Promise<boolean> {
+  try {
+    await access(dir, constants.W_OK)
+    return true
+  } catch (err) {
+    const parent = dirname(dir)
+    return (err as NodeJS.ErrnoException).code === 'ENOENT' && parent !== dir ? writable(parent) : false
+  }
 }
 
 export type Part = 'server' | 'debugger'
@@ -90,6 +103,8 @@ export interface ToolsOptions {
   env?: Record<string, string | undefined>
   run?: Runner
   publish?: (progress: ToolProgress) => void
+  /** Whether a folder may be written (default: writable()). */
+  writable?: (dir: string) => Promise<boolean>
 }
 
 /**
@@ -161,16 +176,29 @@ export class ToolsService {
 
   /** Node, npm and git: whether they are on the PATH, and their versions. */
   async runtimes(): Promise<RuntimeInfo[]> {
-    return this.resolve((ctx) =>
-      Promise.all(
+    const versionOf = (out: string) => /(\d+\.\d+\.\d+)/.exec(out)?.[1]
+    return this.resolve(async (ctx) => {
+      const list = await Promise.all(
         RUNTIMES.map(async (name): Promise<RuntimeInfo> => {
           const path = ctx.which(name)
           if (!path) return { name, found: false }
-          const version = /(\d+\.\d+\.\d+)/.exec(await ctx.ask(name, ['--version']))?.[1]
-          return { name, found: true, path, version }
+          const version = versionOf(await ctx.ask(name, ['--version']))
+          if (name !== 'npm') return { name, found: true, path, version }
+          const prefix = await ctx.ask(name, ['prefix', '-g'])
+          return { name, found: true, path, version, ...(prefix ? { globalWritable: await this.globalWritable(prefix) } : {}) }
         })
       )
-    )
+      // Homebrew, where it is there (macOS, Linux): the setup installs with it where npm may not.
+      const brew = this.platform === 'win32' ? undefined : ctx.which('brew')
+      if (brew) list.push({ name: 'brew', found: true, path: brew, version: versionOf(await ctx.ask('brew', ['--version'])) })
+      return list
+    })
+  }
+
+  /** npm's global folders under `prefix` — its packages and the links to their commands (Windows: right in it) — may be written. */
+  private async globalWritable(prefix: string): Promise<boolean> {
+    const dirs = this.platform === 'win32' ? [prefix] : [join(prefix, 'lib', 'node_modules'), join(prefix, 'bin')]
+    return (await Promise.all(dirs.map(this.opts.writable ?? writable))).every(Boolean)
   }
 
   /** Install a language's server or debugger; its output streams as `tools:progress`. */

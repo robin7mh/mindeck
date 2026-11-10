@@ -52,11 +52,12 @@ async function claude(probe: Probe, bin: string): Promise<AgentAvailability> {
 
 /**
  * Whether an ACP agent is signed in, as far as it tells: `codex login status`
- * succeeds when it is; Gemini keeps its Google sign-in in ~/.gemini or takes
- * an API key from the environment.
+ * exits with 0 when it is (its "Logged in using …" goes to stderr, not to
+ * stdout); Gemini keeps its Google sign-in in ~/.gemini or takes an API key
+ * from the environment.
  */
 async function acpSignedIn(kind: 'codex' | 'gemini', probe: Probe, home: string, env: Record<string, string | undefined>): Promise<boolean> {
-  if (kind === 'codex') return !!(await probe('codex login status').catch(() => ''))
+  if (kind === 'codex') return probe('codex login status').then(() => true, () => false)
   return !!(env.GEMINI_API_KEY || env.GOOGLE_API_KEY) || existsSync(join(home, '.gemini', 'oauth_creds.json'))
 }
 

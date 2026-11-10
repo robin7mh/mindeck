@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { tempDir } from './helpers'
 import { CATALOG, inDir, llvmBuild, osOf, pythonFor, systemPython, which, type InstallSpec, type LocateContext, type OS } from '../../../electron/main/services/tools/catalog'
-import { loginShellRunner, PS_PRELUDE, ToolsService, userEnv, userPath, type Runner } from '../../../electron/main/services/tools/ToolsService'
+import { loginShellRunner, PS_PRELUDE, ToolsService, userEnv, userPath, writable, type Runner } from '../../../electron/main/services/tools/ToolsService'
 import type { ToolProgress } from '@shared/types/languages'
 
 /** A machine as locate() sees it: programs on the PATH, files that exist, programs' answers. */
@@ -250,14 +250,63 @@ describe('ToolsService', () => {
     expect(exec.mock.calls.some(([file]) => file.endsWith('rustup'))).toBe(true)
   })
 
-  it('Node, npm and git with their versions', async () => {
-    const exec = vi.fn(async (file: string) => (file.endsWith('node') ? 'v22.11.0\n' : 'no version'))
-    const { tools, bin } = await setup(['node', 'npm'], { exec })
+  it('Node, npm and git with their versions; whether npm may install globally; Homebrew where it is there', async () => {
+    const exec = vi.fn(async (file: string, args: string[]) =>
+      file.endsWith('node') ? 'v22.11.0\n' : file.endsWith('brew') ? 'Homebrew 4.6.3\n' : args[0] === 'prefix' ? '/usr/local\n' : 'no version'
+    )
+    const checked: string[] = []
+    // The Node.js installer's /usr/local: its packages folder belongs to root.
+    const writable = async (dir: string) => (checked.push(dir), !dir.endsWith('node_modules'))
+    const { tools, bin } = await setup(['node', 'npm', 'brew'], { exec, writable })
     expect(await tools.runtimes()).toEqual([
       { name: 'node', found: true, path: join(bin, 'node'), version: '22.11.0' },
-      { name: 'npm', found: true, path: join(bin, 'npm'), version: undefined },
+      { name: 'npm', found: true, path: join(bin, 'npm'), version: undefined, globalWritable: false },
+      { name: 'git', found: false },
+      { name: 'brew', found: true, path: join(bin, 'brew'), version: '4.6.3' }
+    ])
+    expect(checked).toEqual([join('/usr/local', 'lib', 'node_modules'), join('/usr/local', 'bin')])
+
+    // npm names no prefix: nothing said about it; no Homebrew: no entry for it.
+    const quiet = await setup(['npm'])
+    expect(await quiet.tools.runtimes()).toEqual([
+      { name: 'node', found: false },
+      { name: 'npm', found: true, path: join(quiet.bin, 'npm'), version: undefined },
       { name: 'git', found: false }
     ])
+
+    // Windows: the prefix itself (%AppData%\\npm), and no Homebrew looked for.
+    await writeFile(join(quiet.bin, 'npm.cmd'), '')
+    const seen: string[] = []
+    const win = new ToolsService({
+      dir: quiet.dir,
+      path: async () => quiet.bin,
+      platform: 'win32',
+      env: { PATHEXT: '.CMD' },
+      exec: async (_file, args) => (args[0] === 'prefix' ? 'C:\\Users\\me\\AppData\\Roaming\\npm' : ''),
+      where: async () => new Map(),
+      writable: async (dir) => (seen.push(dir), true)
+    })
+    expect((await win.runtimes()).map((r) => [r.name, r.globalWritable])).toEqual([
+      ['node', undefined],
+      ['npm', true],
+      ['git', undefined]
+    ])
+    expect(seen).toEqual(['C:\\Users\\me\\AppData\\Roaming\\npm'])
+  })
+
+  it('a folder may be written: itself, or — not made yet — the nearest one above it', async () => {
+    const dir = await tempDir()
+    expect(await writable(dir)).toBe(true)
+    expect(await writable(join(dir, 'not', 'yet'))).toBe(true)
+    const shut = join(dir, 'shut')
+    await mkdir(shut)
+    await chmod(shut, 0o500)
+    try {
+      expect(await writable(shut)).toBe(false)
+      expect(await writable(join(shut, 'inside'))).toBe(false)
+    } finally {
+      await chmod(shut, 0o700)
+    }
   })
 
   it('Windows: PATHEXT’s endings, where.exe for what the PATH missed, PowerShell installs with the fresh PATH', async () => {
@@ -336,7 +385,7 @@ describe('ToolsService', () => {
     const tools = new ToolsService({ dir })
     expect((await tools.status()).map((l) => l.id)).toContain('python')
     expect(await tools.locate('kotlin', 'server')).toSatisfy((v: unknown) => v === undefined || typeof v === 'string')
-    expect((await tools.runtimes()).map((r) => r.name)).toEqual(['node', 'npm', 'git'])
+    expect((await tools.runtimes()).map((r) => r.name).filter((n) => n !== 'brew')).toEqual(['node', 'npm', 'git'])
     const way = CATALOG.yaml.server.install!.linux![0]
     const original = way.command
     way.command = () => 'echo installed'

@@ -16,7 +16,7 @@ import { Onboarding } from '@/features/onboarding/components/Onboarding'
 import { OnboardingCard } from '@/features/onboarding/components/OnboardingCard'
 import { loadOnboarding, useOnboarding } from '@/features/onboarding/store'
 import { BROWSER_IMPORT_CHANNEL, browserImportStep, fillBrowserImportSlot, type StepProps } from '@/features/onboarding/slots'
-import { guides } from '@/features/onboarding/guides'
+import { guides, untilDone, type Machine } from '@/features/onboarding/guides'
 import { useAgents } from '@/features/agents/sessions'
 import { useProjects } from '@/features/projects/store'
 import { useSession } from '@/features/session/store'
@@ -151,14 +151,31 @@ describe('the browser-import slot', () => {
 })
 
 describe('install guides', () => {
-  it('each platform its own commands', () => {
-    const by = (platform: string) => Object.fromEntries(guides(platform).map((g) => [g.id, g]))
-    expect(by('win32')['claude-code'].install).toBe('irm https://claude.ai/install.ps1 | iex')
-    expect(by('darwin')['claude-code'].install).toBe('curl -fsSL https://claude.ai/install.sh | bash')
-    expect(by('win32').node.install).toBe('winget install --id OpenJS.NodeJS.LTS --exact')
-    expect(by('darwin').node.install).toBe('brew install node')
-    expect(by('linux').node.install).toBeUndefined()
-    expect(by('linux').codex).toMatchObject({ install: 'npm install -g @openai/codex', signIn: 'codex login', npm: true })
+  it('each platform and machine its own commands', () => {
+    const by = (m: Machine) => Object.fromEntries(guides(m).map((g) => [g.id, g]))
+    const mac = { platform: 'darwin' }
+    expect(by({ platform: 'win32' })['claude-code'].install).toBe('irm https://claude.ai/install.ps1 | iex')
+    expect(by(mac)['claude-code'].install).toBe('curl -fsSL https://claude.ai/install.sh | bash')
+    // Codex: its own installer — no npm, no admin rights.
+    expect(by({ platform: 'win32' }).codex).toMatchObject({ install: 'irm https://chatgpt.com/codex/install.ps1 | iex', signIn: 'codex login' })
+    expect(by({ platform: 'linux' }).codex.install).toBe('curl -fsSL https://chatgpt.com/codex/install.sh | sh')
+    expect(by(mac).codex.npm).toBeUndefined()
+    expect(by({ platform: 'win32' }).node.install).toBe('winget install --id OpenJS.NodeJS.LTS --exact')
+    expect(by({ ...mac, brew: true }).node.install).toBe('brew install node')
+    expect(by(mac).node.install).toBeUndefined() // no Homebrew: the installer from nodejs.org
+    expect(by({ platform: 'linux' }).node.install).toBeUndefined()
+    // Gemini CLI: npm where it may write, else Homebrew, else sudo; without npm yet, Node.js first.
+    expect(by({ ...mac, npm: { globalWritable: true } }).gemini).toMatchObject({ install: 'npm install -g @google/gemini-cli', npm: true })
+    expect(by({ ...mac, npm: {} }).gemini.install).toBe('npm install -g @google/gemini-cli') // not known: npm
+    const brewed = by({ ...mac, npm: { globalWritable: false }, brew: true }).gemini
+    expect([brewed.install, brewed.npm]).toEqual(['brew install gemini-cli', undefined]) // Homebrew brings its own Node.js
+    expect(by({ ...mac, brew: true }).gemini.install).toBe('brew install gemini-cli')
+    expect(by({ ...mac, npm: { globalWritable: false } }).gemini).toMatchObject({ install: 'sudo npm install -g @google/gemini-cli', sudo: true, npm: true })
+    expect(by(mac).gemini).toMatchObject({ install: 'npm install -g @google/gemini-cli', npm: true })
+    expect(by({ platform: 'win32', npm: { globalWritable: false } }).gemini.install).toBe('npm install -g @google/gemini-cli')
+    // Run here, the shell ends once the command succeeded.
+    expect(untilDone('codex login', 'darwin')).toBe('codex login && exit')
+    expect(untilDone('codex login', 'win32')).toBe('codex login; if ($?) { exit }')
   })
 })
 
@@ -176,7 +193,7 @@ describe('Onboarding', () => {
   it('walks through welcome, agents, project, import and done — and remembers it is done', async () => {
     const bridge = installBridge({
       'agents:detect': () => agents(),
-      'tools:runtimes': () => runtimes(),
+      'tools:runtimes': () => [...runtimes(), { name: 'brew', found: true, version: '4.6.3' }],
       'projects:list': () => [],
       'projects:pickFolder': () => ({ path: '/code/shop' }),
       'projects:add': () => project('shop'),
@@ -201,9 +218,12 @@ describe('Onboarding', () => {
     expect(screen.getByText('Installed · v2.1.0 · Signed in · Max plan')).toBeInTheDocument()
     expect(screen.getByText('Installed · v0.98.0 · Not signed in yet')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Run in terminal: codex login' })).toBeInTheDocument()
-    expect(screen.getByText('Not installed · needs Node.js first')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Copy: npm install -g @google/gemini-cli' })).toBeInTheDocument()
+    // No npm yet, but Homebrew: Gemini CLI and Node.js through it.
+    expect(screen.getAllByText('Not installed')).toHaveLength(2)
+    expect(screen.getByRole('button', { name: 'Copy: brew install gemini-cli' })).toBeInTheDocument()
+    expect(screen.getByText('Mindeck needs Node.js to connect Codex and Gemini CLI.')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Copy: brew install node' })).toBeInTheDocument()
+    expect(screen.queryByRole('link')).not.toBeInTheDocument() // no instructions to follow elsewhere
     expect(JSON.parse(localStorage.getItem(KEY)!)).toEqual({ done: false, step: 'agents' })
 
     next()
@@ -236,7 +256,7 @@ describe('Onboarding', () => {
     expect(JSON.parse(localStorage.getItem(KEY)!)).toEqual({ done: true, step: 'welcome' })
   })
 
-  it('agents: copy a command, run it in a terminal here, check again', async () => {
+  it('agents: copy a command, run it in a terminal here — once it succeeded, checked again by itself; check again by hand', async () => {
     const writeText = vi.fn(async () => {})
     Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
     const written: unknown[] = []
@@ -270,15 +290,35 @@ describe('Onboarding', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Run in terminal: codex login' }))
     await settle()
-    expect(written).toEqual([{ id: 't-run', data: 'codex login\r' }])
+    expect(written).toEqual([{ id: 't-run', data: 'codex login && exit\r' }])
     expect(screen.getByTestId('xterm')).toHaveTextContent('t-run')
     expect(screen.getByText(/Runs in a terminal/)).toBeInTheDocument()
 
     const detects = () => bridge.invoke.mock.calls.filter(([c]) => c === 'agents:detect').length
     expect(detects()).toBe(1)
-    fireEvent.click(screen.getByRole('button', { name: /Check again/ }))
+    // The sign-in went through: the shell ends, and the step looks again.
+    act(() => useTerminals.getState().markExited('t-run', 0))
     await settle()
     expect(detects()).toBe(2)
+    fireEvent.click(screen.getByRole('button', { name: /Check again/ }))
+    await settle()
+    expect(detects()).toBe(3)
+  })
+
+  it('agents: npm may not write its global folder and there is no Homebrew — Gemini CLI through sudo, and it says so', async () => {
+    installBridge({
+      'agents:detect': () => agents(),
+      'tools:runtimes': () => [
+        { name: 'node', found: true, version: '22.15.1' },
+        { name: 'npm', found: true, version: '10.9.2', globalWritable: false },
+        { name: 'git', found: false }
+      ]
+    })
+    act(() => useOnboarding.setState({ step: 'agents' }))
+    render(<Onboarding />)
+    await settle()
+    expect(screen.getByRole('button', { name: 'Copy: sudo npm install -g @google/gemini-cli' })).toBeInTheDocument()
+    expect(screen.getByText(/so the command asks for your password/)).toBeInTheDocument()
   })
 
   it('agents: Windows commands; nothing to run for Node.js on Linux; a terminal that can’t open; checks that fail', async () => {
@@ -292,10 +332,10 @@ describe('Onboarding', () => {
     act(() => useOnboarding.setState({ step: 'agents' }))
     const { unmount } = render(<Onboarding />)
     await settle()
-    // Unknown platform: the POSIX installer; Node.js only through its website.
+    // Unknown platform: the POSIX installer; Node.js only through its installer from nodejs.org.
     expect(screen.getByRole('button', { name: 'Copy: curl -fsSL https://claude.ai/install.sh | bash' })).toBeInTheDocument()
-    expect(screen.getByText(/Not installed — Codex and Gemini CLI install with npm/)).toBeInTheDocument()
-    expect(screen.getAllByRole('link', { name: /Instructions/ })[3]).toHaveAttribute('href', 'https://nodejs.org/en/download')
+    expect(screen.getByText('Mindeck needs Node.js to connect Codex and Gemini CLI. Get the installer at nodejs.org.')).toBeInTheDocument()
+    expect(screen.queryByRole('link')).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Run in terminal: curl -fsSL https://claude.ai/install.sh | bash' }))
     await settle()
     expect(screen.getByText('remote shells are off')).toBeInTheDocument()

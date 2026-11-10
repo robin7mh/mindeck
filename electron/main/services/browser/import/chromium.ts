@@ -81,12 +81,9 @@ export function engineOf(url: string): SearchEngine | undefined {
   return undefined
 }
 
-/** What each browser searches with until the user picks another engine. */
-const DEFAULT_ENGINE: Partial<Record<string, SearchEngine>> = { chrome: 'google', chromium: 'google', arc: 'google', brave: 'brave', edge: 'bing' }
-
-/** The search engine the profile uses (from `Preferences`), else the browser's own default. */
-export async function chromiumSearchEngine(profile: string, browser: string): Promise<SearchEngine | undefined> {
+/** The search engine the profile uses (from `Preferences`), else Chrome's own default: Google. */
+export async function chromiumSearchEngine(profile: string): Promise<SearchEngine | undefined> {
   const prefs = (await readJson(join(profile, 'Preferences'))) as { default_search_provider_data?: { template_url_data?: { url?: unknown } } }
   const url = prefs?.default_search_provider_data?.template_url_data?.url
-  return typeof url === 'string' ? engineOf(url) : DEFAULT_ENGINE[browser]
+  return typeof url === 'string' ? engineOf(url) : 'google'
 }

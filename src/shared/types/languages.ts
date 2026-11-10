@@ -81,8 +81,15 @@ export interface ToolProgress {
 
 /** A program the onboarding looks for besides the coding agents. */
 export interface RuntimeInfo {
-  name: 'node' | 'npm' | 'git'
+  /** `brew` (Homebrew) is listed only where it is there. */
+  name: 'node' | 'npm' | 'git' | 'brew'
   found: boolean
   path?: string
   version?: string
+  /**
+   * npm: whether `npm install -g` may write where npm puts global packages —
+   * false where that is the system's own folder (/usr/local from the Node.js
+   * installer, a distro's /usr), which only sudo may write.
+   */
+  globalWritable?: boolean
 }

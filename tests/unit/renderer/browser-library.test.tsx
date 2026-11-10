@@ -557,7 +557,7 @@ describe('the browser module · library pieces', () => {
     render(<BrowserView active />)
     expect(screen.getByRole('button', { name: 'Send to an agent' })).toBeDisabled()
     act(() => useBrowser.setState({ importOpen: true }))
-    expect(await screen.findByText('No other browser was found on this computer.')).toBeInTheDocument()
+    expect(await screen.findByText('Neither Chrome, Safari nor Firefox was found on this computer.')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
     expect(useBrowser.getState().importOpen).toBe(false)
   })

@@ -10,15 +10,11 @@ export interface ImportEnv {
   env: Record<string, string | undefined>
 }
 
-/** A profile found on disk, with the folders the import reads. */
+/** A profile found on disk, with the folder the import reads. */
 export interface FoundProfile extends ImportSource {
-  /** The profile's own folder. */
+  /** The profile's own folder (a locked browser: the folder that may not be read). */
   dir: string
-  /** Arc: its sidebar file (the bookmarks). */
-  sidebar?: string
 }
-
-type Chromium = Exclude<ImportBrowser, 'firefox'>
 
 const exists = (path: string) =>
   access(path).then(
@@ -26,46 +22,20 @@ const exists = (path: string) =>
     () => false
   )
 
-/** Folders matching `prefix*` in `dir` (Windows Store apps carry a publisher hash in their folder name). */
-async function matching(dir: string, prefix: string): Promise<string[]> {
-  const names = await readdir(dir).catch(() => [] as string[])
-  return names.filter((n) => n.startsWith(prefix)).map((n) => join(dir, n))
+/** The system refused to read it (macOS guards Safari's data, and other apps' where it chooses to), not "not there". */
+function refused(err: unknown): boolean {
+  const code = (err as NodeJS.ErrnoException).code
+  return code === 'EPERM' || code === 'EACCES'
 }
 
-/** The "User Data" folders of the Chromium browsers on this OS. */
-async function chromiumRoots(e: ImportEnv): Promise<[Chromium, string][]> {
-  if (e.platform === 'darwin') {
-    const base = join(e.home, 'Library', 'Application Support')
-    return [
-      ['chrome', join(base, 'Google', 'Chrome')],
-      ['brave', join(base, 'BraveSoftware', 'Brave-Browser')],
-      ['edge', join(base, 'Microsoft Edge')],
-      ['arc', join(base, 'Arc', 'User Data')],
-      ['vivaldi', join(base, 'Vivaldi')],
-      ['chromium', join(base, 'Chromium')]
-    ]
-  }
-  if (e.platform === 'win32') {
-    const local = e.env.LOCALAPPDATA || join(e.home, 'AppData', 'Local')
-    const arc = await matching(join(local, 'Packages'), 'TheBrowserCompany.Arc_')
-    return [
-      ['chrome', join(local, 'Google', 'Chrome', 'User Data')],
-      ['brave', join(local, 'BraveSoftware', 'Brave-Browser', 'User Data')],
-      ['edge', join(local, 'Microsoft', 'Edge', 'User Data')],
-      ...arc.map((dir): [Chromium, string] => ['arc', join(dir, 'LocalCache', 'Local', 'Arc', 'User Data')]),
-      ['vivaldi', join(local, 'Vivaldi', 'User Data')],
-      ['chromium', join(local, 'Chromium', 'User Data')]
-    ]
-  }
-  const config = e.env.XDG_CONFIG_HOME || join(e.home, '.config')
-  return [
-    ['chrome', join(config, 'google-chrome')],
-    ['brave', join(config, 'BraveSoftware', 'Brave-Browser')],
-    ['edge', join(config, 'microsoft-edge')],
-    ['vivaldi', join(config, 'vivaldi')],
-    ['chromium', join(config, 'chromium')],
-    ['chromium', join(e.home, 'snap', 'chromium', 'common', 'chromium')]
-  ]
+/** A browser that is there but may not be read: one entry that says so (Full Disk Access opens it). */
+const locked = (browser: ImportBrowser, dir: string): FoundProfile => ({ id: `${browser}:${dir}`, browser, profile: '', kinds: [], dir, locked: true })
+
+/** Chrome's "User Data" folder on this OS. */
+function chromeRoot(e: ImportEnv): string {
+  if (e.platform === 'darwin') return join(e.home, 'Library', 'Application Support', 'Google', 'Chrome')
+  if (e.platform === 'win32') return join(e.env.LOCALAPPDATA || join(e.home, 'AppData', 'Local'), 'Google', 'Chrome', 'User Data')
+  return join(e.env.XDG_CONFIG_HOME || join(e.home, '.config'), 'google-chrome')
 }
 
 /** Folders holding Firefox's `profiles.ini`. */
@@ -79,8 +49,14 @@ function firefoxRoots(e: ImportEnv): string[] {
   ]
 }
 
-/** A Chromium browser's profiles: named in `Local State`, else every `Default` / `Profile N` folder. */
-async function chromiumProfiles(browser: Chromium, root: string): Promise<FoundProfile[]> {
+/** Chrome's profiles: named in `Local State`, else every `Default` / `Profile N` folder. */
+async function chromeProfiles(root: string): Promise<FoundProfile[]> {
+  let folders: string[]
+  try {
+    folders = await readdir(root)
+  } catch (err) {
+    return refused(err) ? [locked('chrome', root)] : []
+  }
   let names: Record<string, string> = {}
   try {
     const state = JSON.parse(await readFile(join(root, 'Local State'), 'utf8')) as { profile?: { info_cache?: Record<string, { name?: unknown }> } }
@@ -89,26 +65,43 @@ async function chromiumProfiles(browser: Chromium, root: string): Promise<FoundP
     names = {}
   }
   if (!Object.keys(names).length) {
-    for (const folder of await readdir(root).catch(() => [] as string[])) if (folder === 'Default' || /^Profile \d+$/.test(folder)) names[folder] = folder
+    for (const folder of folders) if (folder === 'Default' || /^Profile \d+$/.test(folder)) names[folder] = folder
   }
-  // Arc keeps its bookmarks in the sidebar file next to "User Data" (Windows: under Roaming).
-  const sidebars = browser === 'arc' ? [join(root, '..', 'StorableSidebar.json'), join(root, '..', '..', '..', 'Roaming', 'Arc', 'StorableSidebar.json')] : []
-  let sidebar: string | undefined
-  for (const s of sidebars) if (!sidebar && (await exists(s))) sidebar = s
   const out: FoundProfile[] = []
   for (const [folder, profile] of Object.entries(names)) {
     const dir = join(root, folder)
     const kinds: ImportKind[] = []
-    if (sidebar || (browser !== 'arc' && (await exists(join(dir, 'Bookmarks'))))) kinds.push('bookmarks')
+    if (await exists(join(dir, 'Bookmarks'))) kinds.push('bookmarks')
     if (await exists(join(dir, 'History'))) kinds.push('history')
     if (await exists(join(dir, 'Preferences'))) kinds.push('settings')
-    if (kinds.length) out.push({ id: `${browser}:${dir}`, browser, profile, kinds, dir, ...(sidebar ? { sidebar } : {}) })
+    if (kinds.length) out.push({ id: `chrome:${dir}`, browser: 'chrome', profile, kinds, dir })
   }
   return out
 }
 
+/** Safari's library (macOS): its bookmarks and history — macOS lets an app read them only with Full Disk Access. */
+async function safariProfiles(e: ImportEnv): Promise<FoundProfile[]> {
+  if (e.platform !== 'darwin') return []
+  const dir = join(e.home, 'Library', 'Safari')
+  let files: string[]
+  try {
+    files = await readdir(dir)
+  } catch (err) {
+    return refused(err) ? [locked('safari', dir)] : []
+  }
+  const kinds: ImportKind[] = []
+  if (files.includes('Bookmarks.plist')) kinds.push('bookmarks')
+  if (files.includes('History.db')) kinds.push('history')
+  return kinds.length ? [{ id: `safari:${dir}`, browser: 'safari', profile: '', kinds, dir }] : []
+}
+
 async function firefoxProfiles(root: string): Promise<FoundProfile[]> {
-  const ini = await readFile(join(root, 'profiles.ini'), 'utf8').catch(() => '')
+  let ini: string
+  try {
+    ini = await readFile(join(root, 'profiles.ini'), 'utf8')
+  } catch (err) {
+    return refused(err) ? [locked('firefox', root)] : []
+  }
   const out: FoundProfile[] = []
   for (const p of parseProfilesIni(ini, root)) {
     if (await exists(join(p.dir, 'places.sqlite'))) out.push({ id: `firefox:${p.dir}`, browser: 'firefox', profile: p.name, kinds: ['bookmarks', 'history'], dir: p.dir })
@@ -116,10 +109,9 @@ async function firefoxProfiles(root: string): Promise<FoundProfile[]> {
   return out
 }
 
-/** Every browser profile on this machine Mindeck can import from. */
+/** Every profile of Chrome, Safari and Firefox on this machine — and those of them the system won't let Mindeck read. */
 export async function findSources(e: ImportEnv): Promise<FoundProfile[]> {
-  const found: FoundProfile[] = []
-  for (const [browser, root] of await chromiumRoots(e)) found.push(...(await chromiumProfiles(browser, root)))
+  const found = [...(await chromeProfiles(chromeRoot(e))), ...(await safariProfiles(e))]
   for (const root of firefoxRoots(e)) found.push(...(await firefoxProfiles(root)))
   return found
 }

@@ -65,6 +65,9 @@ describe('detectAgents', () => {
     const answers = { 'codex --version': '1.0.0', 'gemini --version': '0.5.0', 'npx --version': '10.0.0' }
     const [, codex, gemini] = await detectAgents(probe({ ...answers, 'codex login status': 'Logged in using ChatGPT' }), 'claude', home, {})
     expect([codex.signedIn, gemini.signedIn]).toEqual([true, false])
+    // Codex 0.159 says it on stderr — stdout stays empty; the exit code is what counts.
+    expect((await detectAgents(probe({ ...answers, 'codex login status': '' }), 'claude', home, {}))[1].signedIn).toBe(true)
+    expect((await detectAgents(probe({ ...answers, 'codex login status': new Error('exit 1: Not logged in') }), 'claude', home, {}))[1].signedIn).toBe(false)
     expect((await detectAgents(probe(answers), 'claude', home, { GEMINI_API_KEY: 'k' }))[2].signedIn).toBe(true)
     expect((await detectAgents(probe(answers), 'claude', home, { GOOGLE_API_KEY: 'k' }))[2].signedIn).toBe(true)
     await mkdir(join(home, '.gemini'))
