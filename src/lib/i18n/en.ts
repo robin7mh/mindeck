@@ -745,6 +745,7 @@ agents: {
     note: 'Note',
     newNote: 'New note',
     newFolder: 'New folder',
+    collapseAll: 'Collapse all folders',
     loading: 'Loading memory…',
     notes: (n: number) => `${n} notes`,
     showInFinder: 'Show in Finder',

@@ -103,6 +103,27 @@ describe('NoteList', () => {
     expect(p.onStartCreate).toHaveBeenCalledWith('folder', '')
   })
 
+  it('collapses every folder at once, like VS Code — the root notes stay; nothing to do while searching or all closed', () => {
+    const p = listProps()
+    const { rerender } = render(<NoteList {...p} />)
+    const button = screen.getByRole('button', { name: 'Collapse all folders' })
+    expect(button).toBeEnabled()
+    fireEvent.click(button)
+    // the notes in folders are gone, the ones at the root stay, the folders themselves too
+    expect(screen.queryByText('A')).toBeNull()
+    expect(screen.queryByText('Empty — drop notes here')).toBeNull()
+    expect(screen.getByText('Root')).toBeInTheDocument()
+    expect(screen.getByText('Ideen/Sub')).toBeInTheDocument()
+    expect(button).toBeDisabled() // all closed already
+    // one opened again: it can close them all again
+    fireEvent.click(screen.getByText('Ideen'))
+    expect(screen.getByText('A')).toBeInTheDocument()
+    expect(button).toBeEnabled()
+    // while searching there is no tree to close
+    rerender(<NoteList {...p} query="alpha" />)
+    expect(screen.getByRole('button', { name: 'Collapse all folders' })).toBeDisabled()
+  })
+
   it('folder dots follow the graph style', () => {
     const { container, rerender } = render(<NoteList {...listProps()} />)
     const dots = () => [...container.querySelectorAll<HTMLElement>('span.h-1\\.5.w-1\\.5')].map((e) => e.style.background)

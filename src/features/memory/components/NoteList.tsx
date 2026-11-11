@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ChevronDown, FilePlus2, FileText, Folder, FolderPlus, Search, X } from 'lucide-react'
+import { ChevronDown, CopyMinus, FilePlus2, FileText, Folder, FolderPlus, Search, X } from 'lucide-react'
 import type { GraphStyle, NoteMeta, SearchHit } from '@shared/types/memory'
 import { TechLabel } from '@/components/ui/TechLabel'
 import { cn } from '@/lib/cn'
@@ -67,6 +67,10 @@ export function NoteList(p: Props) {
       else next.add(dir)
       return next
     })
+  // Every folder closed, like VS Code's "Collapse All" — nothing to do while searching or when all are closed already.
+  const dirs = groups.map(([dir]) => dir).filter(Boolean)
+  const allClosed = !!p.query.trim() || dirs.every((d) => collapsed.has(d))
+  const collapseAll = () => setCollapsed(new Set(dirs))
 
   // --- drag & drop ---------------------------------------------------------
   const dropProps = (folder: string) => ({
@@ -145,6 +149,16 @@ export function NoteList(p: Props) {
           className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-elevated/60 hover:text-text-primary"
         >
           <FolderPlus size={15} />
+        </button>
+        <button
+          type="button"
+          title={t.memory.collapseAll}
+          aria-label={t.memory.collapseAll}
+          onClick={collapseAll}
+          disabled={allClosed}
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-muted transition-colors enabled:hover:bg-elevated/60 enabled:hover:text-text-primary disabled:opacity-40"
+        >
+          <CopyMinus size={15} />
         </button>
       </div>
 

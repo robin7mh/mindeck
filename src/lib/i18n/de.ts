@@ -729,6 +729,7 @@ agents: {
     note: 'Notiz',
     newNote: 'Neue Notiz',
     newFolder: 'Neuer Ordner',
+    collapseAll: 'Alle Ordner zuklappen',
     loading: 'Lade Gedächtnis …',
     notes: (n) => `${n} Notizen`,
     showInFinder: 'Im Finder zeigen',
