@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { fail, installBridge, installRemote, settle, choose } from './bridge'
 import type { AgentAvailability, AgentSession } from '@shared/types/agents'
@@ -911,6 +911,33 @@ describe('SessionSide and diffs', () => {
     expect(screen.getByText(/Notes the agent reads or writes show up here/)).toBeInTheDocument()
     fireEvent.click(screen.getByRole('tab', { name: 'Plan' }))
     expect(screen.getByText(/No plan yet/)).toBeInTheDocument()
+  })
+
+  it('the plan says where it stands: proposed, in progress (the step in hand), paused, done', () => {
+    useAgents.setState({ loadChanges: vi.fn(async () => {}) })
+    const steps = (done: boolean[], active = -1) => ['Tests', 'CI', 'Docs'].map((text, i) => ({ id: `mode-${i}`, text, done: done[i], active: i === active }))
+    const phase = () => within(screen.getByTestId('plan-phase'))
+    const { rerender } = render(<SessionSide onHide={() => {}} session={session({ plan: steps([false, false, false], 0), planStatus: 'draft', status: 'approval' })} onOpenNote={vi.fn()} />)
+    fireEvent.click(screen.getByRole('tab', { name: 'Plan 3' }))
+    // proposed: no progress yet, no step in hand
+    expect(phase().getByText('Proposed — not approved yet')).toBeInTheDocument()
+    expect(phase().getByText('0/3')).toBeInTheDocument()
+    expect(screen.getByText('Tests')).not.toHaveClass('font-medium')
+    // approved and worked on: the step in hand stands out
+    rerender(<SessionSide onHide={() => {}} session={session({ plan: steps([true, false, false], 1), planStatus: 'active', status: 'working' })} onOpenNote={vi.fn()} />)
+    expect(phase().getByText('In progress')).toBeInTheDocument()
+    expect(phase().getByText('1/3')).toBeInTheDocument()
+    expect(screen.getByText('Tests')).toHaveClass('line-through')
+    expect(screen.getByText('CI')).toHaveClass('font-medium')
+    expect(screen.getByText('Docs')).toHaveClass('text-text-secondary')
+    // the agent stopped with steps open
+    rerender(<SessionSide onHide={() => {}} session={session({ plan: steps([true, true, false]), planStatus: 'active', status: 'idle' })} onOpenNote={vi.fn()} />)
+    expect(phase().getByText('Paused')).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'Plan 1' })).toBeInTheDocument()
+    // every step done
+    rerender(<SessionSide onHide={() => {}} session={session({ plan: steps([true, true, true]), planStatus: 'active', status: 'idle' })} onOpenNote={vi.fn()} />)
+    expect(phase().getByText('Done')).toHaveClass('text-green')
+    expect(phase().getByText('3/3')).toBeInTheDocument()
   })
 
   it('the diff opens in Monaco\'s diff editor and closes', async () => {

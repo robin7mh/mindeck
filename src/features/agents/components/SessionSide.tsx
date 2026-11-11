@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useState } from 'react'
-import { ArrowDownToLine, BookOpen, Check, CircleDot, FileDiff, GitMerge, Loader2, PanelRightClose, RefreshCw, Trash2, X } from 'lucide-react'
-import type { AgentSession } from '@shared/types/agents'
+import { ArrowDownToLine, BookOpen, Check, Circle, CircleCheck, CircleDot, FileDiff, GitMerge, Loader2, PanelRightClose, RefreshCw, Trash2, X } from 'lucide-react'
+import { planPhase, type AgentSession } from '@shared/types/agents'
 import { TechLabel } from '@/components/ui/TechLabel'
 import { cn } from '@/lib/cn'
 import { useT } from '@/lib/i18n'
@@ -247,19 +247,7 @@ export function SessionSide({ session, onOpenNote, onHide }: { session: AgentSes
           </div>
         )}
 
-        {tab === 'plan' &&
-          (session.plan.length ? (
-            <ul className="space-y-1">
-              {session.plan.map((p) => (
-                <li key={p.id} className="flex items-start gap-2 px-1 py-0.5 font-sans text-[12px]">
-                  {p.done ? <Check size={13} className="mt-0.5 shrink-0 text-green" /> : <CircleDot size={13} className="mt-0.5 shrink-0 text-text-muted" />}
-                  <span className={p.done ? 'text-text-muted line-through' : 'text-text-secondary'}>{p.text}</span>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="px-1 py-2 font-mono text-[11px] text-text-muted">{t.agents.noPlan}</p>
-          ))}
+        {tab === 'plan' && <PlanList session={session} />}
 
         {tab === 'memory' && (
           <div className="space-y-1">
@@ -284,5 +272,54 @@ export function SessionSide({ session, onOpenNote, onHide }: { session: AgentSes
         )}
       </div>
     </aside>
+  )
+}
+
+/** The plan: where it stands (proposed, in progress, paused, done) and its steps — done, being worked on, open. */
+function PlanList({ session }: { session: AgentSession }) {
+  const t = useT()
+  const phase = planPhase(session)
+  if (!phase) return <p className="px-1 py-2 font-mono text-[11px] text-text-muted">{t.agents.noPlan}</p>
+  const done = session.plan.filter((p) => p.done).length
+  return (
+    <div className="space-y-2.5">
+      <div className="space-y-1.5 px-1 pt-0.5" data-testid="plan-phase">
+        <div className="flex items-center gap-1.5 font-sans text-[12px]">
+          {phase === 'done' ? (
+            <CircleCheck size={13} className="shrink-0 text-green" />
+          ) : phase === 'working' ? (
+            <Loader2 size={13} className="shrink-0 animate-spin text-cyan" />
+          ) : (
+            <CircleDot size={13} className={cn('shrink-0', phase === 'draft' ? 'text-amber' : 'text-text-muted')} />
+          )}
+          <span className={cn('min-w-0 flex-1 truncate font-medium', phase === 'done' ? 'text-green' : 'text-text-primary')}>{t.agents.planPhases[phase]}</span>
+          <span className="shrink-0 font-mono text-[11px] tabular-nums text-text-muted">
+            {done}/{session.plan.length}
+          </span>
+        </div>
+        {phase !== 'draft' && (
+          <div className="h-1 overflow-hidden rounded-full bg-elevated">
+            <div className={cn('h-full rounded-full transition-[width] duration-500', phase === 'done' ? 'bg-green' : 'bg-cyan')} style={{ width: `${(done / session.plan.length) * 100}%` }} />
+          </div>
+        )}
+      </div>
+      <ul className="space-y-1">
+        {session.plan.map((p) => {
+          const active = !p.done && !!p.active && phase !== 'draft'
+          return (
+            <li key={p.id} className="flex items-start gap-2 px-1 py-0.5 font-sans text-[12px]">
+              {p.done ? (
+                <Check size={13} className="mt-0.5 shrink-0 text-green" />
+              ) : active ? (
+                <CircleDot size={13} className="mt-0.5 shrink-0 text-cyan" />
+              ) : (
+                <Circle size={13} className="mt-0.5 shrink-0 text-text-muted" />
+              )}
+              <span className={p.done ? 'text-text-muted line-through' : active ? 'font-medium text-text-primary' : 'text-text-secondary'}>{p.text}</span>
+            </li>
+          )
+        })}
+      </ul>
+    </div>
   )
 }

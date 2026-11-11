@@ -10,6 +10,7 @@ import {
   hookSettings,
   MCP_BROWSER_READ_TOOLS,
   MCP_TERMINAL_READ_TOOLS,
+  MCP_PLAN_TOOLS,
   mcpConfig,
   MEMORY_READ_TOOLS,
   SYSTEM_HINT
@@ -102,7 +103,8 @@ describe('Claude Code launch', () => {
     })
     expect(args[args.indexOf('--append-system-prompt') + 1]).toBe(SYSTEM_HINT)
     // reading memory, the browser's shared tabs and the agents' own terminals runs unasked; everything else asks in Mindeck
-    expect(args.slice(args.indexOf('--allowedTools') + 1, -2)).toEqual([...MEMORY_READ_TOOLS, ...MCP_BROWSER_READ_TOOLS, ...MCP_TERMINAL_READ_TOOLS])
+    expect(args.slice(args.indexOf('--allowedTools') + 1, -2)).toEqual([...MEMORY_READ_TOOLS, ...MCP_BROWSER_READ_TOOLS, ...MCP_TERMINAL_READ_TOOLS, ...MCP_PLAN_TOOLS])
+    expect(MCP_PLAN_TOOLS).toEqual(['mcp__mindeck__plan_update'])
     expect(args.slice(-2)).toEqual(['--', '--looks like a flag'])
   })
 
@@ -189,18 +191,26 @@ describe('hook events → chat, status and plan', () => {
 
   it('plan from TodoWrite and task hooks; notifications; session end', () => {
     const s = fresh()
-    applyHook(s, { hook_event_name: 'PreToolUse', tool_name: 'TodoWrite', tool_use_id: 'p', tool_input: { todos: [{ content: 'find bug', status: 'completed' }, { status: 'pending' }] } })
+    applyHook(s, {
+      hook_event_name: 'PreToolUse',
+      tool_name: 'TodoWrite',
+      tool_use_id: 'p',
+      tool_input: { todos: [{ content: 'find bug', status: 'completed' }, { content: 'fix it', status: 'in_progress' }, { status: 'pending' }] }
+    })
+    // its to-do list is worked through right away; the one in progress is marked
     expect(s.plan).toEqual([
-      { id: 'todo-0', text: 'find bug', done: true },
-      { id: 'todo-1', text: '', done: false }
+      { id: 'todo-0', text: 'find bug', done: true, active: false },
+      { id: 'todo-1', text: 'fix it', done: false, active: true },
+      { id: 'todo-2', text: '', done: false, active: false }
     ])
+    expect(s.planStatus).toBe('active')
     applyHook(s, { hook_event_name: 'PreToolUse', tool_name: 'TodoWrite', tool_use_id: 'q', tool_input: {} }) // malformed: plan kept
-    expect(s.plan).toHaveLength(2)
+    expect(s.plan).toHaveLength(3)
     applyHook(s, { hook_event_name: 'TaskCreated', task_id: 't1', task_subject: 'write test', task_description: 'with vitest' })
     applyHook(s, { hook_event_name: 'TaskCreated', task_id: 't1', task_description: 'write the test' }) // no title: the description
     applyHook(s, { hook_event_name: 'TaskCreated', task_id: 't2' })
     applyHook(s, { hook_event_name: 'TaskCompleted', task_id: 't1' })
-    expect(s.plan.slice(2)).toEqual([
+    expect(s.plan.slice(3)).toEqual([
       { id: 't1', text: 'write the test', done: true },
       { id: 't2', text: '', done: false }
     ])
@@ -238,10 +248,11 @@ describe('hook events → chat, status and plan', () => {
     applyHook(s, { hook_event_name: 'UserPromptSubmit', prompt: 'plan it' })
     applyHook(s, { hook_event_name: 'Stop', last_assistant_message: answer })
     expect(s.plan).toEqual([
-      { id: 'plan-0', text: 'Tests einführen', done: false },
-      { id: 'plan-1', text: 'lib/game.js aufteilen', done: false },
-      { id: 'plan-2', text: 'Gameplay-Bugs beheben', done: false }
+      { id: 'answer-0', text: 'Tests einführen', done: false },
+      { id: 'answer-1', text: 'lib/game.js aufteilen', done: false },
+      { id: 'answer-2', text: 'Gameplay-Bugs beheben', done: false }
     ])
+    expect(s.planStatus).toBe('draft') // a proposal
     // a later answer with one numbered line, or none, keeps it
     applyHook(s, { hook_event_name: 'Stop', last_assistant_message: '1. only this' })
     applyHook(s, { hook_event_name: 'Stop', last_assistant_message: '' })
@@ -259,6 +270,7 @@ describe('hook events → chat, status and plan', () => {
       ['mode-1', 'Extract predictBallY', false],
       ['mode-2', 'Ship it', false]
     ])
+    expect(s.planStatus).toBe('draft')
     applyHook(s, { hook_event_name: 'Stop', last_assistant_message: '1. a\n2. b' })
     expect(s.plan[0].id).toBe('mode-0')
     applyHook(s, { hook_event_name: 'PreToolUse', tool_name: 'ExitPlanMode', tool_use_id: 'y', tool_input: {} }) // no plan in it: kept
@@ -267,6 +279,11 @@ describe('hook events → chat, status and plan', () => {
     // tasks are the live plan: what was only written down gives way
     applyHook(s, { hook_event_name: 'TaskCreated', task_id: 't1', task_subject: 'Tests einführen' })
     expect(s.plan).toEqual([{ id: 't1', text: 'Tests einführen', done: false }])
+    expect(s.planStatus).toBe('active')
+    // a plan that is through gives way to the next numbered answer
+    applyHook(s, { hook_event_name: 'TaskCompleted', task_id: 't1' })
+    applyHook(s, { hook_event_name: 'Stop', last_assistant_message: '1. next\n2. after' })
+    expect(s.plan.map((p) => p.id)).toEqual(['answer-0', 'answer-1'])
 
     // not planning first (Claude Code says so, or the user didn't choose it): a numbered answer is just an answer
     const free = fresh()
@@ -276,8 +293,66 @@ describe('hook events → chat, status and plan', () => {
     expect(free.plan).toHaveLength(3)
 
     // long steps are cut at a word
-    expect(planFromMarkdown(`1. ${'word '.repeat(40)}`, 'plan', true)[0].text).toMatch(/^word( word)+…$/)
-    expect(planFromMarkdown(`1. ${'x'.repeat(130)}`, 'plan', true)[0].text).toHaveLength(121)
+    expect(planFromMarkdown(`1. ${'word '.repeat(40)}`, 'answer', true)[0].text).toMatch(/^word( word)+…$/)
+    expect(planFromMarkdown(`1. ${'x'.repeat(130)}`, 'answer', true)[0].text).toHaveLength(121)
+    // numbered steps first: the bullets under them (a "Verification" list) are no steps
+    expect(planFromMarkdown('## Plan\n1. **Tests:** add\n2. CI\n## Verifikation\n- npm test is green\n- check /pong', 'mode').map((p) => p.text)).toEqual(['Tests', 'CI'])
+    // a step's full stop goes, an ellipsis stays
+    expect(planFromMarkdown('1. Create a.txt containing a.\n2. Then see…\n3. Wait...', 'mode').map((p) => p.text)).toEqual(['Create a.txt containing a', 'Then see…', 'Wait...'])
+    // asked for numbered ones only, bullets alone make none
+    expect(planFromMarkdown('- a\n- b', 'answer', true)).toEqual([])
+  })
+
+  it('a plan’s life: proposed, approved (its steps handed over), marked as it goes, done — asked to catch up when it stops with work done and steps open', () => {
+    const s: SessionState = { ...fresh(), mode: 'plan' }
+    applyHook(s, { hook_event_name: 'UserPromptSubmit', prompt: 'plan it' })
+    const plan = '# Plan\n1. **Tests:** add them\n2. **CI:** set it up\n3. Docs\n## Verification\n- npm test is green'
+    applyHook(s, { hook_event_name: 'PreToolUse', tool_name: 'ExitPlanMode', tool_use_id: 'x1', tool_input: { plan } })
+    expect([s.plan.map((p) => p.text), s.planStatus]).toEqual([['Tests', 'CI', 'Docs'], 'draft'])
+    // turned down: still a proposal, nothing handed over
+    expect(applyHook(s, { hook_event_name: 'PostToolUseFailure', tool_name: 'ExitPlanMode', tool_use_id: 'x1', error: 'denied' }).reply).toBeUndefined()
+    expect(s.planStatus).toBe('draft')
+
+    // approved: carried out now — Claude Code gets the steps and how to mark them
+    applyHook(s, { hook_event_name: 'PreToolUse', tool_name: 'ExitPlanMode', tool_use_id: 'x2', tool_input: { plan } })
+    const approved = applyHook(s, { hook_event_name: 'PostToolUse', tool_name: 'ExitPlanMode', tool_use_id: 'x2', tool_response: { plan } })
+    expect(s.planStatus).toBe('active')
+    expect(approved.reply).toEqual({ hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: expect.stringContaining('1. Tests\n2. CI\n3. Docs') } })
+    expect(JSON.stringify(approved.reply)).toContain('mcp__mindeck__plan_update')
+    // handed over once: it is no proposal any more
+    expect(applyHook(s, { hook_event_name: 'PostToolUse', tool_name: 'ExitPlanMode', tool_use_id: 'x2' }).reply).toBeUndefined()
+
+    // it only talked and stops with steps open: no news — the turn is done
+    expect(applyHook(s, { hook_event_name: 'Stop', last_assistant_message: 'Starting.' })).toMatchObject({ attention: 'done', reply: undefined })
+
+    // it worked (an edit) and would stop with steps open: asked to catch up — the turn goes on, no "done" yet
+    applyHook(s, { hook_event_name: 'UserPromptSubmit', prompt: 'go' })
+    applyHook(s, { hook_event_name: 'PreToolUse', tool_name: 'Edit', tool_use_id: 'e1', tool_input: { file_path: 'a.test.ts' } })
+    applyHook(s, { hook_event_name: 'PostToolUse', tool_name: 'Edit', tool_use_id: 'e1' })
+    s.plan = s.plan.map((p, i) => ({ ...p, done: i === 0 }))
+    const stop = applyHook(s, { hook_event_name: 'Stop', last_assistant_message: 'All three are done.' })
+    expect(stop.attention).toBeUndefined()
+    expect(stop.reply).toEqual({ hookSpecificOutput: { hookEventName: 'Stop', additionalContext: expect.stringContaining('2. CI\n3. Docs') } })
+    expect(JSON.stringify(stop.reply)).not.toContain('1. Tests')
+    const turn = s.messages.at(-1)!
+    expect([s.status, turn.status, turn.parts.at(-1)]).toEqual(['working', 'streaming', { type: 'text', text: 'All three are done.' }])
+    // going on because of that, it stops for good — even with a step it left open
+    s.plan = s.plan.map((p, i) => ({ ...p, done: i < 2 }))
+    expect(applyHook(s, { hook_event_name: 'Stop', last_assistant_message: 'Docs stay open.', stop_hook_active: true })).toMatchObject({ attention: 'done', reply: undefined })
+    expect([s.status, turn.status]).toEqual(['idle', 'done'])
+
+    // every step done: nothing to catch up on
+    applyHook(s, { hook_event_name: 'UserPromptSubmit', prompt: 'docs too' })
+    applyHook(s, { hook_event_name: 'PreToolUse', tool_name: 'Write', tool_use_id: 'w1', tool_input: { file_path: 'README.md' } })
+    s.plan = s.plan.map((p) => ({ ...p, done: true }))
+    expect(applyHook(s, { hook_event_name: 'Stop', last_assistant_message: 'Done.' })).toMatchObject({ attention: 'done', reply: undefined })
+
+    // its own task list isn't a plan Mindeck asks about
+    const tasks = fresh()
+    applyHook(tasks, { hook_event_name: 'UserPromptSubmit', prompt: 'go' })
+    applyHook(tasks, { hook_event_name: 'TaskCreated', task_id: 't1', task_subject: 'a' })
+    applyHook(tasks, { hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_use_id: 'b1', tool_input: { command: 'make' } })
+    expect(applyHook(tasks, { hook_event_name: 'Stop', last_assistant_message: 'ok' }).reply).toBeUndefined()
   })
 
   it('a request without a tool id is about the open card of that tool — the one with its input first', () => {

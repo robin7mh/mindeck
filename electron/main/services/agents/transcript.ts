@@ -2,8 +2,9 @@ import { randomUUID } from 'node:crypto'
 import { realpath } from 'node:fs/promises'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import type { ChatMessage, ToolCallPart, ToolRisk } from '@shared/types/ai'
-import type { PlanItem, SessionStatus } from '@shared/types/agents'
+import type { PlanItem, PlanStatus, SessionStatus } from '@shared/types/agents'
 import { landsAt } from '../../lib/confine'
+import { approvedHint, PLAN_TOOL_KEY, stopHint, writtenStep } from './planTool'
 import { isDeniedName } from '../../server/RemoteAccess'
 
 /** A Claude Code hook event (common fields + whatever the event adds). */
@@ -28,6 +29,8 @@ export interface HookEvent {
   task_description?: string
   /** The permission mode Claude Code runs in (`plan` while it plans first). */
   permission_mode?: string
+  /** Stop: it goes on because a stop hook said so. */
+  stop_hook_active?: boolean
   source?: string
   reason?: string
 }
@@ -40,6 +43,7 @@ export interface SessionState {
   status: SessionStatus
   messages: ChatMessage[]
   plan: PlanItem[]
+  planStatus?: PlanStatus
   /** The mode the user chose for the session (`plan`: plan first). */
   readonly mode?: string
 }
@@ -48,10 +52,12 @@ const OUTPUT_LIMIT = 4000
 
 const READ = new Set(['Read', 'Glob', 'Grep', 'LS', 'WebSearch', 'WebFetch', 'TodoWrite', 'TaskCreate', 'TaskUpdate', 'TaskList', 'TaskGet', 'ToolSearch'])
 const WRITE = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit'])
+/** Tools that ask the user something (its plan, its questions) — no work on the project. */
+const ASKS_USER = new Set(['ExitPlanMode', 'AskUserQuestion'])
 
 /** read: looks only · write: changes files · execute: runs things (asked every time). */
 export function toolRisk(name: string): ToolRisk {
-  if (READ.has(name) || /^mcp__mindeck__(memory_search|memory_read|memory_list|project_context|browser_(tabs|snapshot|read|screenshot|console)|terminal_read)$/.test(name)) return 'read'
+  if (READ.has(name) || /^mcp__mindeck__(memory_search|memory_read|memory_list|project_context|browser_(tabs|snapshot|read|screenshot|console)|terminal_read|plan_update)$/.test(name)) return 'read'
   // Starting a command in a Mindeck terminal is running one, like the agent's own shell.
   if (name === 'mcp__mindeck__terminal_run') return 'execute'
   if (WRITE.has(name) || /^mcp__mindeck__/.test(name)) return 'write'
@@ -180,6 +186,7 @@ export function toolTitle(name: string): string {
   const mcp = /^mcp__([^_]+(?:_[^_]+)*)__(.+)$/.exec(name)
   if (mcp && mcp[1] === 'mindeck' && mcp[2].startsWith('browser_')) return `Mindeck browser · ${mcp[2].slice(8)}`
   if (mcp && mcp[1] === 'mindeck' && mcp[2].startsWith('terminal_')) return `Mindeck terminal · ${mcp[2].slice(9)}`
+  if (name === PLAN_TOOL_KEY) return 'Update plan'
   if (mcp) return mcp[1] === 'mindeck' ? `Mindeck memory · ${mcp[2].replace(/_/g, ' ')}` : `${mcp[1]} · ${mcp[2].replace(/_/g, ' ')}`
   return TITLES[name] ?? name
 }
@@ -253,33 +260,45 @@ function addTool(state: SessionState, e: HookEvent): ToolCallPart {
 /** Claude's own to-do list (TodoWrite) becomes the session plan. */
 function planFromTodos(input: Record<string, unknown>): PlanItem[] | undefined {
   if (!Array.isArray(input.todos)) return undefined
-  return input.todos.map((t: { content?: string; status?: string }, i) => ({ id: `todo-${i}`, text: String(t.content ?? ''), done: t.status === 'completed' }))
+  return input.todos.map((t: { content?: string; status?: string }, i) => ({
+    id: `todo-${i}`,
+    text: String(t.content ?? ''),
+    done: t.status === 'completed',
+    active: t.status === 'in_progress'
+  }))
 }
 
-/** A plan step's words: its Markdown (bold, code, links, a trailing colon) taken off, long ones cut at a word. */
+/** A plan step's words: its Markdown (bold, code, links, a trailing colon or full stop) taken off, long ones cut at a word. */
 function stepText(raw: string): string {
   const text = raw
     .replace(/\*\*|__/g, '')
     .replace(/`([^`]*)`/g, '$1')
     .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
-    .replace(/[:：]\s*$/, '')
+    .replace(/(?<!\.)[:：.]\s*$/, '')
     .trim()
   return text.length > 120 ? `${text.slice(0, 120).replace(/\s+\S*$/, '')}…` : text
 }
 
 /**
- * The steps of a plan written in Markdown: its top-level list items — numbered
- * ones only (`ordered`), else bullets and task boxes too — each by its bold
- * lead-in ("**Add tests:** the pure …" → "Add tests"), else in full. `prefix`
+ * The steps of a plan written in Markdown: its top-level numbered items — or,
+ * without any (and not `ordered`), its bullets and task boxes — each by its
+ * bold lead-in ("**Add tests:** the pure …" → "Add tests"), else in full. So a
+ * "Verification" list of bullets under numbered steps is no step. `prefix`
  * tells where the plan came from (ids `<prefix>-<n>`).
  */
 export function planFromMarkdown(markdown: string, prefix: string, ordered = false): PlanItem[] {
-  const items: PlanItem[] = []
+  const numbered: string[] = []
+  const bullets: string[] = []
   for (const line of markdown.split('\n')) {
-    const m = (ordered ? /^\d+[.)]\s+(.+)$/ : /^(?:\d+[.)]|[-*+])\s+(.+)$/).exec(line)
-    if (!m) continue
-    const box = /^\[([ xX])\]\s+(.*)$/.exec(m[1])
-    const body = box ? box[2] : m[1]
+    const n = /^\d+[.)]\s+(.+)$/.exec(line)
+    const b = /^[-*+]\s+(.+)$/.exec(line)
+    if (n) numbered.push(n[1])
+    else if (b && !ordered) bullets.push(b[1])
+  }
+  const items: PlanItem[] = []
+  for (const line of numbered.length ? numbered : bullets) {
+    const box = /^\[([ xX])\]\s+(.*)$/.exec(line)
+    const body = box ? box[2] : line
     const lead = /^\*\*(.+?)\*\*/.exec(body)
     const text = stepText(lead ? lead[1] : body)
     if (text) items.push({ id: `${prefix}-${items.length}`, text, done: !!box && box[1] !== ' ' })
@@ -287,8 +306,8 @@ export function planFromMarkdown(markdown: string, prefix: string, ordered = fal
   return items
 }
 
-/** Claude Code's tasks (TaskCreated/TaskCompleted) are the live plan: a plan only written down (`plan-`, `mode-`) gives way to them. */
-const tasksOf = (plan: PlanItem[]) => plan.filter((p) => !p.id.startsWith('plan-') && !p.id.startsWith('mode-'))
+/** Claude Code's tasks (TaskCreated/TaskCompleted) are the live plan: a plan only written down gives way to them. */
+const tasksOf = (plan: PlanItem[]) => plan.filter((p) => !writtenStep(p))
 
 /** What changed for the rest of Mindeck (messages to push, a notification to show). */
 export interface Applied {
@@ -296,6 +315,8 @@ export interface Applied {
   changed: ChatMessage[]
   /** The agent stopped and is now waiting for the user. */
   attention?: 'approval' | 'waiting' | 'done'
+  /** The hook's answer to Claude Code (context for it, or that it goes on). */
+  reply?: unknown
 }
 
 /**
@@ -306,6 +327,7 @@ export interface Applied {
 export function applyHook(state: SessionState, e: HookEvent): Applied {
   const changed = new Set<ChatMessage>()
   let attention: Applied['attention']
+  let reply: unknown
   const touch = (m: ChatMessage) => changed.add(m)
 
   switch (e.hook_event_name) {
@@ -331,9 +353,11 @@ export function applyHook(state: SessionState, e: HookEvent): Applied {
       const part = findTool(state, e.tool_use_id) ?? addTool(state, e)
       part.status = 'running'
       const input = part.input as Record<string, unknown>
-      // Its to-do list, or the plan it presents when it leaves plan mode (Claude Code puts the plan file's text in).
-      const plan = e.tool_name === 'TodoWrite' ? planFromTodos(input) : e.tool_name === 'ExitPlanMode' ? planFromMarkdown(String(input.plan ?? ''), 'mode') : undefined
-      if (plan?.length) state.plan = plan
+      // Its to-do list (being worked through), or the plan it presents to leave plan mode (Claude Code puts the plan file's text in) — a proposal.
+      const todos = e.tool_name === 'TodoWrite' ? planFromTodos(input) : undefined
+      const proposed = e.tool_name === 'ExitPlanMode' ? planFromMarkdown(String(input.plan ?? ''), 'mode') : undefined
+      if (todos?.length) setPlan(state, todos, 'active')
+      if (proposed?.length) setPlan(state, proposed, 'draft')
       touch(currentTurn(state))
       state.status = 'working'
       break
@@ -360,16 +384,31 @@ export function applyHook(state: SessionState, e: HookEvent): Applied {
       part.output = outputText(failed ? (e.error ?? 'failed') : (e.tool_response ?? ''))
       touch(currentTurn(state))
       state.status = 'working'
+      // The plan approved, it carries it out now — and gets the steps to mark as it goes.
+      if (!failed && e.tool_name === 'ExitPlanMode' && state.planStatus === 'draft' && state.plan.length && state.plan.every(writtenStep)) {
+        state.planStatus = 'active'
+        reply = { hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: approvedHint(state.plan) } }
+      }
       break
     }
     case 'Stop': {
       const turn = currentTurn(state)
       const text = e.last_assistant_message?.trim()
       if (text) turn.parts.push({ type: 'text', text })
-      // Planning first, it answered with a numbered plan: that is the plan — unless one came from its tools.
-      if (text && (state.mode === 'plan' || e.permission_mode === 'plan') && state.plan.every((p) => p.id.startsWith('plan-'))) {
-        const plan = planFromMarkdown(text, 'plan', true)
-        if (plan.length >= 2) state.plan = plan
+      // Planning first, it answered with a numbered plan: that is the plan (a proposal) — unless one came from its tools and isn't through.
+      const replaceable = state.plan.every((p) => p.id.startsWith('answer-')) || state.plan.every((p) => p.done)
+      if (text && (state.mode === 'plan' || e.permission_mode === 'plan') && replaceable) {
+        const plan = planFromMarkdown(text, 'answer', true)
+        if (plan.length >= 2) setPlan(state, plan, 'draft')
+      }
+      // Carrying out a plan, it worked this turn (changed or ran something) and would stop with steps open:
+      // asked once to mark what it finished (a turn it only talked in, or one it goes on in because of that, isn't).
+      const open = state.planStatus === 'active' && state.plan.length > 0 && state.plan.every(writtenStep) && state.plan.some((p) => !p.done)
+      const worked = turn.parts.some((p) => p.type === 'tool' && p.risk !== 'read' && !ASKS_USER.has(p.name))
+      if (open && worked && !e.stop_hook_active) {
+        touch(turn)
+        reply = { hookSpecificOutput: { hookEventName: 'Stop', additionalContext: stopHint(state.plan) } }
+        break
       }
       turn.status = 'done'
       touch(turn)
@@ -389,7 +428,7 @@ export function applyHook(state: SessionState, e: HookEvent): Applied {
       // Its title is the step (the description, when there is no title).
       const step = { id: String(e.task_id), text: (e.task_subject ?? e.task_description ?? '').trim(), done: false }
       const tasks = tasksOf(state.plan)
-      state.plan = tasks.some((p) => p.id === step.id) ? tasks.map((p) => (p.id === step.id ? { ...p, text: step.text } : p)) : [...tasks, step]
+      setPlan(state, tasks.some((p) => p.id === step.id) ? tasks.map((p) => (p.id === step.id ? { ...p, text: step.text } : p)) : [...tasks, step], 'active')
       break
     }
     case 'TaskCompleted':
@@ -399,5 +438,11 @@ export function applyHook(state: SessionState, e: HookEvent): Applied {
       if (!conversationOnly(e)) state.status = 'ended'
       break
   }
-  return { changed: [...changed], attention }
+  return { changed: [...changed], attention, reply }
+}
+
+/** A new plan, proposed or being worked through. */
+function setPlan(state: SessionState, plan: PlanItem[], status: PlanStatus): void {
+  state.plan = plan
+  state.planStatus = status
 }

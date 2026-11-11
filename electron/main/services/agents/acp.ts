@@ -246,7 +246,8 @@ export function applyAcpUpdate(state: SessionState, update: SessionUpdate): Appl
       return { changed: [hit.message] }
     }
     case 'plan':
-      state.plan = update.entries.map((e, i) => ({ id: `plan-${i}`, text: e.content, done: e.status === 'completed' }))
+      state.plan = update.entries.map((e, i) => ({ id: `plan-${i}`, text: e.content, done: e.status === 'completed', active: e.status === 'in_progress' }))
+      state.planStatus = 'active'
       return { changed: [] }
     default:
       return { changed: [] }

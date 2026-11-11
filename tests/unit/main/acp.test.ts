@@ -53,11 +53,21 @@ describe('ACP updates → chat, tools, plan', () => {
     expect(tool('t2').output).toMatch(/\[100 more characters\]$/)
     expect(up({ sessionUpdate: 'tool_call_update', toolCallId: 'nope', status: 'completed' }).changed).toEqual([])
 
-    up({ sessionUpdate: 'plan', entries: [{ content: 'a', status: 'completed', priority: 'high' }, { content: 'b', status: 'pending', priority: 'low' }] })
+    up({
+      sessionUpdate: 'plan',
+      entries: [
+        { content: 'a', status: 'completed', priority: 'high' },
+        { content: 'b', status: 'in_progress', priority: 'low' },
+        { content: 'c', status: 'pending', priority: 'low' }
+      ]
+    })
+    // its live plan: being worked through, the step in progress marked
     expect(s.plan).toEqual([
-      { id: 'plan-0', text: 'a', done: true },
-      { id: 'plan-1', text: 'b', done: false }
+      { id: 'plan-0', text: 'a', done: true, active: false },
+      { id: 'plan-1', text: 'b', done: false, active: true },
+      { id: 'plan-2', text: 'c', done: false, active: false }
     ])
+    expect(s.planStatus).toBe('active')
     expect(up({ sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'hmm' } }).changed).toEqual([])
   })
 
@@ -350,6 +360,11 @@ describe('AgentSessionService with ACP agents (Codex, Gemini)', () => {
     }
     await t.settled(s.id, 'approval')
     expect(agent.newSession[0]).toMatchObject({ cwd: t.dir, mcpServers: [{ type: 'http', name: 'mindeck', url: `http://127.0.0.1:1/mcp/${s.id}`, headers: [{ name: 'Authorization', value: 'Bearer tok' }] }] })
+    // ACP agents report their plan themselves: Mindeck's MCP server offers them no plan_update, and the name means nothing
+    vi.mocked(t.deps.mcp).mockResolvedValueOnce({ jsonrpc: '2.0', id: 2, result: { tools: [{ name: 'memory_search' }] } })
+    expect(await t.svc.handleMcp(s.id, { jsonrpc: '2.0', id: 2, method: 'tools/list' })).toEqual({ jsonrpc: '2.0', id: 2, result: { tools: [{ name: 'memory_search' }] } })
+    await t.svc.handleMcp(s.id, { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'plan_update', arguments: { done: [1] } } })
+    expect(t.deps.mcp).toHaveBeenLastCalledWith(expect.objectContaining({ sessionId: s.id }), expect.objectContaining({ method: 'tools/call' }))
     expect(agent.prompts[0]).toMatchObject({ sessionId: 'acp-1', prompt: [{ type: 'text', text: 'Run the tests' }] })
     expect(t.asks[0].input).toMatchObject({ agentId: 'codex', risk: 'execute', allowAlways: false, toolName: 'execute', toolTitle: 'npm test' })
     expect((t.svc.get(s.id).messages[1].parts[1] as ToolCallPart).requestId).toBe('req-1')
@@ -362,7 +377,8 @@ describe('AgentSessionService with ACP agents (Codex, Gemini)', () => {
     ])
     expect(detail.messages[1].parts[0]).toEqual({ type: 'text', text: 'Running them.' })
     expect(detail.messages[1].parts[1]).toMatchObject({ status: 'done', output: 'ok' })
-    expect(detail.plan).toEqual([{ id: 'plan-0', text: 'run tests', done: true }])
+    expect(detail.plan).toEqual([{ id: 'plan-0', text: 'run tests', done: true, active: false }])
+    expect(detail.planStatus).toBe('active')
     expect(t.deps.notify).toHaveBeenLastCalledWith('Codex', 'Done — your turn', s.id)
     expect(t.asks).toHaveLength(1)
   })

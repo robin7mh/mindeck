@@ -7,6 +7,7 @@
 // it from the environment.
 
 import type { AgentCommand } from '@shared/types/agents'
+import { PLAN_TOOL_KEY } from './planTool'
 
 /** Built-in commands that answer in the chat (not only in the terminal) and keep the session. */
 export const CLAUDE_COMMANDS: AgentCommand[] = [
@@ -23,6 +24,8 @@ export const MEMORY_READ_TOOLS = ['mcp__mindeck__memory_search', 'mcp__mindeck__
 export const MCP_BROWSER_READ_TOOLS = ['mcp__mindeck__browser_tabs', 'mcp__mindeck__browser_snapshot', 'mcp__mindeck__browser_read', 'mcp__mindeck__browser_screenshot', 'mcp__mindeck__browser_console']
 /** So does reading a terminal: only the ones an agent started a command in. */
 export const MCP_TERMINAL_READ_TOOLS = ['mcp__mindeck__terminal_read']
+/** And marking its progress on the plan Mindeck shows: it changes nothing but that. */
+export const MCP_PLAN_TOOLS = [PLAN_TOOL_KEY]
 
 export const SYSTEM_HINT =
   "You are running inside Mindeck, the user's workspace. Mindeck's memory (MCP server \"mindeck\") holds project knowledge, decisions " +
@@ -31,7 +34,8 @@ export const SYSTEM_HINT =
   "it shows the user's local dev pages and tabs they share — after UI changes, check the page with browser_snapshot and browser_console. " +
   'Start whatever keeps running (dev servers like npm run dev, watchers, games, local apps) with mcp__mindeck__terminal_run: it runs in a ' +
   'Mindeck terminal the user sees. Never run those in the background yourself (no run_in_background, no `&` or nohup). ' +
-  'Check their output with mcp__mindeck__terminal_read and stop them with mcp__mindeck__terminal_stop.'
+  'Check their output with mcp__mindeck__terminal_read and stop them with mcp__mindeck__terminal_stop. ' +
+  `Mindeck shows the plan the user approved beside the session: mark its steps with ${PLAN_TOOL_KEY} as you start and finish them.`
 
 /**
  * For the two events HTTP hooks don't cover (SessionStart, Notification):
@@ -93,7 +97,8 @@ export function claudeArgs(input: LaunchInput): string[] {
     '--allowedTools',
     ...MEMORY_READ_TOOLS,
     ...MCP_BROWSER_READ_TOOLS,
-    ...MCP_TERMINAL_READ_TOOLS
+    ...MCP_TERMINAL_READ_TOOLS,
+    ...MCP_PLAN_TOOLS
   ]
   // `--allowedTools` takes several values: the prompt must not be read as one more.
   if (input.prompt && !input.resume) args.push('--', input.prompt)

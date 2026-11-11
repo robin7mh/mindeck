@@ -41,6 +41,7 @@ import { CLAUDE_COMMANDS, claudeArgs, claudeEnv, hookSettings, mcpConfig } from 
 import { detectAgents, loginShellProbe, type Probe } from './detect'
 import { applyHook, approvalRisk, conversationOnly, landings, staysInside, toolPaths, toolOf, toolSummary, toolTitle, type Applied, type HookEvent } from './transcript'
 import { journalBody, journalTitle } from './journal'
+import { markPlan, PLAN_TOOL } from './planTool'
 import {
   ACP_AGENTS,
   acpApprovalRisk,
@@ -508,18 +509,27 @@ export class AgentSessionService {
     if (!l || typeof body !== 'object' || body === null) return undefined
     const e = body as HookEvent
     if (e.hook_event_name === 'PermissionRequest') return this.approve(l, e, signal)
-    this.applied(l, applyHook(this.state(l), e))
+    const applied = applyHook(this.state(l), e)
+    this.applied(l, applied)
     // The plan approved, Claude Code left plan mode (for the mode it says): the session shows that one.
     const mode = e.permission_mode
     if (e.hook_event_name === 'PostToolUse' && e.tool_name === 'ExitPlanMode' && mode !== l.session.mode && CLAUDE_MODES.some((m) => m.id === mode)) this.update(l, { mode })
     if (e.hook_event_name === 'SessionEnd' && !conversationOnly(e)) this.deps.server.unregister(id)
-    return undefined
+    return applied.reply
   }
 
-  /** An MCP message from the session's agent: Mindeck's memory, scoped to its project. */
-  handleMcp(id: string, body: unknown): Promise<unknown> {
+  /**
+   * An MCP message from the session's agent: Mindeck's memory, scoped to its
+   * project — and for Claude Code also `plan_update`, its progress on the plan.
+   */
+  async handleMcp(id: string, body: unknown): Promise<unknown> {
     const l = this.require(id)
-    return this.deps.mcp(
+    const msg = (typeof body === 'object' && body !== null ? body : {}) as { jsonrpc?: unknown; id?: string | number | null; method?: unknown; params?: { name?: unknown; arguments?: unknown } }
+    const ours = l.session.kind === 'claude-code' && msg.jsonrpc === '2.0' && msg.id !== undefined
+    if (ours && msg.method === 'tools/call' && msg.params?.name === PLAN_TOOL.name) {
+      return { jsonrpc: '2.0', id: msg.id, result: this.markPlan(l, (msg.params.arguments ?? {}) as Record<string, unknown>) }
+    }
+    const answer = (await this.deps.mcp(
       {
         sessionId: id,
         agentId: l.session.kind,
@@ -529,7 +539,17 @@ export class AgentSessionService {
         onCall: (tool, input) => this.usedNote(l, tool, input)
       },
       body
-    )
+    )) as { result?: { tools?: unknown[] } } | undefined
+    if (ours && msg.method === 'tools/list') answer?.result?.tools?.push(PLAN_TOOL)
+    return answer
+  }
+
+  /** `plan_update`: the steps it names, done or being worked on — the plan is being carried out. */
+  private markPlan(l: Live, args: Record<string, unknown>) {
+    const marked = markPlan(l.session.plan, args)
+    if ('error' in marked) return { content: [{ type: 'text', text: marked.error }], isError: true }
+    this.update(l, { plan: marked.plan, planStatus: 'active' })
+    return { content: [{ type: 'text', text: marked.text }] }
   }
 
   /** App quit: stop every agent (their sessions can be resumed next time). */
@@ -984,6 +1004,12 @@ export class AgentSessionService {
       },
       set plan(plan) {
         l.session = { ...l.session, plan }
+      },
+      get planStatus() {
+        return l.session.planStatus
+      },
+      set planStatus(planStatus) {
+        l.session = { ...l.session, planStatus }
       },
       get mode() {
         return l.session.mode

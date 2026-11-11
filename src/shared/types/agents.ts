@@ -33,6 +33,21 @@ export interface PlanItem {
   id: string
   text: string
   done: boolean
+  /** The step the agent is working on now. */
+  active?: boolean
+}
+
+/** draft: proposed, waiting for the user's yes · active: being carried out (finished once every step is done). */
+export type PlanStatus = 'draft' | 'active'
+
+/** Where a plan stands, as Mindeck shows it: proposed, being worked on, paused (the agent stopped with steps open) or done. */
+export type PlanPhase = 'draft' | 'working' | 'paused' | 'done'
+
+export function planPhase(session: { plan: PlanItem[]; planStatus?: PlanStatus; status: SessionStatus }): PlanPhase | undefined {
+  if (!session.plan.length) return undefined
+  if (session.planStatus === 'draft') return 'draft'
+  if (session.plan.every((p) => p.done)) return 'done'
+  return session.status === 'working' || session.status === 'approval' || session.status === 'starting' ? 'working' : 'paused'
 }
 
 export interface FileChange {
@@ -89,6 +104,8 @@ export interface AgentSession {
   /** The PTY running the agent (Claude Code), for "Terminal ▸" — ACP agents have none. */
   terminalId?: string
   plan: PlanItem[]
+  /** Where the plan stands — unset: being carried out. */
+  planStatus?: PlanStatus
   /** Vault notes the agent read or wrote through Mindeck's memory tools. */
   notes: string[]
   /** The session's journal note in the vault. */

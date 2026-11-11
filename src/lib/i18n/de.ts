@@ -687,6 +687,7 @@ agents: {
     discardChanges: 'Änderungen verwerfen',
     takeOverHint: 'Übernehmen kopiert die Änderungen als nicht committete Änderungen in dein Projekt — committe und pushe sie wie gewohnt, um sie auf GitHub zu sehen. Verwerfen löscht den Ordner und seinen Branch.',
     noPlan: 'Noch kein Plan — er erscheint, sobald der Agent einen macht',
+    planPhases: { draft: 'Vorschlag — noch nicht freigegeben', working: 'In Arbeit', paused: 'Angehalten', done: 'Abgeschlossen' },
     journal: 'Sitzungsjournal',
     noNotes: 'Notizen, die der Agent liest oder schreibt, erscheinen hier; das Sitzungsjournal entsteht nach seiner ersten Antwort.',
     ev: {

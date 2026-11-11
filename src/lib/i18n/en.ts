@@ -701,6 +701,7 @@ agents: {
     discardChanges: 'Discard changes',
     takeOverHint: 'Take over copies the changes into your project as uncommitted edits — commit and push them as usual to see them on GitHub. Discard deletes the folder and its branch.',
     noPlan: 'No plan yet — it appears when the agent makes one',
+    planPhases: { draft: 'Proposed — not approved yet', working: 'In progress', paused: 'Paused', done: 'Done' },
     journal: 'Session journal',
     noNotes: 'Notes the agent reads or writes show up here; the session journal is written after its first answer.',
     // activity lines

@@ -250,7 +250,6 @@ describe('data & shared constants', () => {
     // type-only modules: loading them proves they compile to side-effect-free modules
     for (const mod of await Promise.all([
       import('@shared/types/context'),
-      import('@shared/types/agents'),
       import('@shared/types/entity'),
       import('@shared/types/files'),
       import('@shared/types/project'),
@@ -260,6 +259,8 @@ describe('data & shared constants', () => {
     ])) {
       expect(Object.keys(mod)).toEqual([])
     }
+    // the agents' types come with where a plan stands
+    expect(Object.keys(await import('@shared/types/agents'))).toEqual(['planPhase'])
     // the Terminal's types come with its defaults and bounds
     expect(Object.keys(await import('@shared/types/terminal')).sort()).toEqual(['DEFAULT_TERMINAL_SETTINGS', 'TERMINAL_CURSORS', 'TERMINAL_LIMITS'])
   })

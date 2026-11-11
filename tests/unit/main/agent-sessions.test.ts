@@ -666,7 +666,7 @@ describe('AgentSessionService: hooks, approvals, memory', () => {
     expect(await t.svc.handleMcp(s.id, { jsonrpc: '2.0', id: 1, method: 'ping' })).toEqual({ echo: { jsonrpc: '2.0', id: 1, method: 'ping' } })
     expect(t.deps.mcp).toHaveBeenCalledWith(expect.objectContaining({ projectId: 'p1' }), expect.anything())
     expect(t.svc.get(s.id).notes).toEqual(['Projekte/Demo.md', 'Projekte/Decision.md', 'Loose.md'])
-    expect(() => t.svc.handleMcp('nope', {})).toThrow(expect.objectContaining({ code: 'not-found' }))
+    await expect(t.svc.handleMcp('nope', {})).rejects.toMatchObject({ code: 'not-found' })
   })
 
   it('the plan follows Claude\'s task hooks', async () => {
@@ -675,6 +675,44 @@ describe('AgentSessionService: hooks, approvals, memory', () => {
     await t.hook(s.id, { hook_event_name: 'TaskCompleted', task_id: 'a' })
     expect(t.svc.get(s.id).plan).toEqual([{ id: 'a', text: 'write the test', done: true }])
     expect(t.published.filter((p) => p.channel === 'agents:changed').at(-1)!.payload).toMatchObject({ session: { plan: [{ done: true }] } })
+  })
+
+  it('a plan approved in plan mode: its steps go to Claude Code, it marks them over MCP (plan_update), the panel follows', async () => {
+    const s = await t.svc.create({ kind: 'claude-code', projectId: 'p1', mode: 'plan' })
+    await t.hook(s.id, { hook_event_name: 'UserPromptSubmit', prompt: 'plan it' })
+    const plan = { plan: '# Plan\n1. Tests\n2. CI\n3. Docs', planFilePath: '/home/me/.claude/plans/p.md' }
+    await t.hook(s.id, { hook_event_name: 'PreToolUse', tool_name: 'ExitPlanMode', tool_use_id: 'x', tool_input: plan })
+    expect(t.svc.get(s.id).planStatus).toBe('draft')
+    // the hook's answer goes back to Claude Code: the steps, and how to mark them
+    const handedOver = await t.hook(s.id, { hook_event_name: 'PostToolUse', tool_name: 'ExitPlanMode', tool_use_id: 'x', tool_response: plan, permission_mode: 'default' })
+    expect(handedOver).toMatchObject({ hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: expect.stringContaining('1. Tests\n2. CI\n3. Docs') } })
+    expect(t.svc.get(s.id)).toMatchObject({ planStatus: 'active', mode: 'default' })
+
+    // Claude Code finds the tool among Mindeck's
+    vi.mocked(t.deps.mcp).mockResolvedValueOnce({ jsonrpc: '2.0', id: 1, result: { tools: [{ name: 'memory_search' }] } })
+    const listed = (await t.svc.handleMcp(s.id, { jsonrpc: '2.0', id: 1, method: 'tools/list' })) as { result: { tools: { name: string }[] } }
+    expect(listed.result.tools.map((tool) => tool.name)).toEqual(['memory_search', 'plan_update'])
+    vi.mocked(t.deps.mcp).mockResolvedValueOnce(undefined) // a notification: nothing to add to
+    expect(await t.svc.handleMcp(s.id, { jsonrpc: '2.0', id: 9, method: 'tools/list' })).toBeUndefined()
+
+    // it marks: step 1 done, step 2 in hand — Mindeck answers itself, the panel follows
+    const call = (id: string, args?: unknown) => t.svc.handleMcp(id, { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'plan_update', arguments: args } })
+    const marked = (await call(s.id, { done: [1], doing: 2 })) as { result: { content: { text: string }[]; isError?: boolean } }
+    expect(marked.result.isError).toBeUndefined()
+    expect(marked.result.content[0].text).toContain('1 of 3 steps done')
+    expect(t.svc.get(s.id).plan.map((p) => [p.text, p.done, p.active])).toEqual([
+      ['Tests', true, false],
+      ['CI', false, true],
+      ['Docs', false, false]
+    ])
+    expect(t.published.filter((p) => p.channel === 'agents:changed').at(-1)!.payload).toMatchObject({ session: { plan: [{ done: true }, { active: true }, {}] } })
+    // a step that doesn't exist: told so, nothing changed
+    expect(await call(s.id, { done: [7] })).toMatchObject({ result: { isError: true, content: [{ text: 'Steps are numbered 1 to 3.' }] } })
+    expect(await call(s.id)).toMatchObject({ result: { content: [{ text: expect.stringContaining('1 of 3') }] } }) // no arguments: just where it stands
+    // and every other message to Claude Code's goes on there too, as does one that isn't JSON-RPC
+    await t.svc.handleMcp(s.id, { jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'memory_read' } })
+    await t.svc.handleMcp(s.id, null)
+    expect(t.deps.mcp).toHaveBeenLastCalledWith(expect.objectContaining({ sessionId: s.id }), null)
   })
 
   it('works without a notifier', async () => {
