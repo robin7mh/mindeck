@@ -173,6 +173,22 @@ describe('hooks', () => {
     unmount()
   })
 
+  it('useClock rests off screen and is on time again when back', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date(2026, 0, 1, 10, 0, 0))
+    const { result, rerender } = renderHook(({ active }) => useClock(active), { initialProps: { active: false } })
+    act(() => {
+      vi.advanceTimersByTime(5000)
+    })
+    expect(result.current.getSeconds()).toBe(0) // no ticks while it rests
+    rerender({ active: true })
+    expect(result.current.getSeconds()).toBe(5) // the time now, at once
+    act(() => {
+      vi.advanceTimersByTime(1000)
+    })
+    expect(result.current.getSeconds()).toBe(6)
+  })
+
   it('useBoot finishes after the total time, or immediately on skip', () => {
     vi.useFakeTimers()
     const a = renderHook(() => useBoot(500))

@@ -40,7 +40,7 @@ export interface SystemView {
  * arrive in natural units; network is CPU+RAM-style summed MB/s.
  * Falls back to zeros (live=false) when the bridge is unavailable.
  */
-export function useSystemMetrics(): SystemView {
+export function useSystemMetrics(active = true): SystemView {
   const [metrics, setMetrics] = useState<Metrics>(seed)
   const [processes, setProcesses] = useState<ProcessRow[]>([])
   const [uptimeSec, setUptimeSec] = useState(0)
@@ -48,7 +48,9 @@ export function useSystemMetrics(): SystemView {
   const [live, setLive] = useState(false)
   const [snapshot, setSnapshot] = useState<SystemSnapshot>()
 
+  // Not `active` (off screen): no stream — the last values stay until it is back.
   useEffect(() => {
+    if (!active) return
     let mounted = true
     let primed = false
 
@@ -80,7 +82,7 @@ export function useSystemMetrics(): SystemView {
       off()
       ipc('system:unsubscribe').catch(() => {})
     }
-  }, [])
+  }, [active])
 
   return { metrics, processes, uptimeSec, battery, live, snapshot }
 }

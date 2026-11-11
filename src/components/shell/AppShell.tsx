@@ -65,8 +65,11 @@ const panelIn = (delay: number) => ({
   transition: { duration: 0.45, delay, ease: [0.22, 1, 0.36, 1] as const }
 })
 
-/** Modules that stay mounted once shown: running shells, open files and their undo history, the browser's tabs. */
-const KEEP: ModuleId[] = ['terminal', 'editor', 'browser']
+/**
+ * Modules that stay mounted once shown: running shells, open files and their undo history, the browser's tabs —
+ * and Core, so coming back to it shows it as it was (its tiles don't load and grow again), then up to date in place.
+ */
+const KEEP: ModuleId[] = ['core', 'terminal', 'editor', 'browser']
 
 /** Bring a module up: its pane gets the focus, or the focused pane shows it. */
 const show = (id: ModuleId) => useWorkspace.getState().show(id)
@@ -156,7 +159,7 @@ export function AppShell() {
     // Core: the dashboard over the pane's full width (the machine's load lives in the System module).
     return (
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <Dashboard onNavigate={show} />
+        <Dashboard onNavigate={show} active={visible} />
       </div>
     )
   }

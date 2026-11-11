@@ -17,19 +17,25 @@ import { useT } from '@/lib/i18n'
 import { greeting, isoWeek, longDate } from '../i18n'
 import { HudClock } from './HudClock'
 
+/** The user's first name, once known: the greeting has it from its first frame on. */
+let knownName: string | undefined
+
 /**
  * Core: the personal HUD. Greeting, date and a calm clock, plus three tiles
  * with real data only — projects (live git state), the brain (vault), and a
- * one-line system verdict. Everything links into its module.
+ * one-line system verdict. Everything links into its module. It stays mounted
+ * off screen (`active` false): the clock and the system stream rest, and the
+ * tiles bring themselves up to date in place when it is back — nothing loads
+ * or moves again.
  */
-export function Dashboard({ onNavigate }: { onNavigate: (id: ModuleId) => void }) {
+export function Dashboard({ onNavigate, active = true }: { onNavigate: (id: ModuleId) => void; active?: boolean }) {
   const t = useT()
-  const now = useClock()
-  const [firstName, setFirstName] = useState<string>()
+  const now = useClock(active)
+  const [firstName, setFirstName] = useState(knownName)
 
   useEffect(() => {
     ipc('system:user')
-      .then((u) => setFirstName(u.firstName))
+      .then((u) => setFirstName((knownName = u.firstName)))
       .catch(() => {})
   }, [])
 
@@ -59,9 +65,9 @@ export function Dashboard({ onNavigate }: { onNavigate: (id: ModuleId) => void }
         </div>
 
         <div className="grid w-full max-w-5xl grid-cols-1 gap-4 pane-md:grid-cols-3">
-          <ProjectsTile onNavigate={onNavigate} />
-          <BrainTile onNavigate={onNavigate} />
-          <SystemTile onNavigate={onNavigate} />
+          <ProjectsTile onNavigate={onNavigate} active={active} />
+          <BrainTile onNavigate={onNavigate} active={active} />
+          <SystemTile onNavigate={onNavigate} active={active} />
         </div>
       </div>
     </Panel>
@@ -123,7 +129,8 @@ function Tile({
 }) {
   const t = useT()
   return (
-    <section className="group flex min-h-[170px] flex-col rounded-lg border border-hud/45 bg-surface p-5">
+    // As tall as a tile with its data (three projects) while it loads: the row doesn't grow when the data comes.
+    <section className="group flex min-h-[243px] flex-col rounded-lg border border-hud/45 bg-surface p-5">
       <header className="mb-4 flex items-center gap-2.5">
         <span className="flex h-7 w-7 items-center justify-center rounded-md bg-elevated text-text-secondary">
           <Icon size={15} strokeWidth={1.75} />
@@ -154,12 +161,13 @@ function BigNumber({ value, label }: { value: number | string; label: string }) 
   )
 }
 
-function ProjectsTile({ onNavigate }: { onNavigate: (id: ModuleId) => void }) {
+function ProjectsTile({ onNavigate, active }: { onNavigate: (id: ModuleId) => void; active: boolean }) {
   const t = useT()
   const [projects, setProjects] = useState<Project[]>()
 
-  // Cached list first, then a live git refresh (git state is never trusted from cache).
+  // Cached list first, then a live git refresh (git state is never trusted from cache) — again each time Core is back.
   useEffect(() => {
+    if (!active) return
     let alive = true
     ipc('projects:list')
       .then(async (list) => {
@@ -172,7 +180,7 @@ function ProjectsTile({ onNavigate }: { onNavigate: (id: ModuleId) => void }) {
     return () => {
       alive = false
     }
-  }, [])
+  }, [active])
 
   const open = (id?: string) => {
     if (id) useProjects.getState().select(id)
@@ -218,11 +226,13 @@ function ProjectsTile({ onNavigate }: { onNavigate: (id: ModuleId) => void }) {
   )
 }
 
-function BrainTile({ onNavigate }: { onNavigate: (id: ModuleId) => void }) {
+function BrainTile({ onNavigate, active }: { onNavigate: (id: ModuleId) => void; active: boolean }) {
   const t = useT()
   const [state, setState] = useState<{ exists: boolean; notes: NoteMeta[]; links: number }>()
 
+  // Again each time Core is back (notes written meanwhile).
   useEffect(() => {
+    if (!active) return
     let alive = true
     Promise.all([ipc('memory:status'), ipc('memory:list'), ipc('memory:graph')])
       .then(([status, notes, graph]) => {
@@ -232,7 +242,7 @@ function BrainTile({ onNavigate }: { onNavigate: (id: ModuleId) => void }) {
     return () => {
       alive = false
     }
-  }, [])
+  }, [active])
 
   const slots = useMemo(() => folderColors(state?.notes ?? []), [state])
   const folders = useMemo(() => {
@@ -274,9 +284,9 @@ function BrainTile({ onNavigate }: { onNavigate: (id: ModuleId) => void }) {
   )
 }
 
-function SystemTile({ onNavigate }: { onNavigate: (id: ModuleId) => void }) {
+function SystemTile({ onNavigate, active }: { onNavigate: (id: ModuleId) => void; active: boolean }) {
   const t = useT()
-  const { metrics: m, battery, live } = useSystemMetrics()
+  const { metrics: m, battery, live } = useSystemMetrics(active)
 
   const warnings = [
     m.cpu.value > 85 && t.dashboard.cpuHigh,

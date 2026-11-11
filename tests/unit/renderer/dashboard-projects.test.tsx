@@ -158,6 +158,44 @@ describe('Dashboard', () => {
     expect(onNavigate).toHaveBeenCalledWith('memory')
   })
 
+  it('off screen it rests; back on screen it is as it was at once, then up to date in place', async () => {
+    let list = [proj('a', { git: { isRepo: true, branch: 'main', dirty: false } })]
+    let nextList: (v: Project[]) => void = () => {}
+    let held = false
+    const bridge = installBridge({
+      'projects:list': () => (held ? new Promise<Project[]>((r) => (nextList = r)) : list),
+      'projects:refresh': ({ id }: { id: string }) => list.find((p) => p.id === id),
+      'memory:status': () => ({ exists: true }),
+      'memory:list': () => [note('A/1.md', 'A')],
+      'memory:graph': () => ({ nodes: [], edges: [] }),
+      'system:snapshot': () => snap(10, 20, 30, { pct: 50, charging: false, hasBattery: true })
+    })
+    const calls = (channel: string) => bridge.invoke.mock.calls.filter(([c]) => c === channel).length
+    const view = render(<Dashboard onNavigate={vi.fn()} active />)
+    await act(settle)
+    expect(screen.getByText('Project a')).toBeInTheDocument()
+    expect([calls('projects:list'), calls('memory:status'), calls('system:subscribe')]).toEqual([1, 1, 1])
+
+    // off screen: the system stream ends, nothing is fetched
+    view.rerender(<Dashboard onNavigate={vi.fn()} active={false} />)
+    await act(settle)
+    expect(calls('system:unsubscribe')).toBe(1)
+    expect([calls('projects:list'), calls('memory:status'), calls('system:snapshot')]).toEqual([1, 1, 1])
+
+    // back: what it showed is there at once (no "Loading…"), while it fetches anew…
+    held = true
+    view.rerender(<Dashboard onNavigate={vi.fn()} active />)
+    await act(settle)
+    expect(screen.getByText('Project a')).toBeInTheDocument()
+    expect(screen.queryByText(t.loading)).toBeNull()
+    expect([calls('projects:list'), calls('memory:status'), calls('system:snapshot'), calls('system:subscribe')]).toEqual([2, 2, 2, 2])
+    // …and comes up to date in place
+    list = [proj('a', { git: { isRepo: true, branch: 'main', dirty: true } })]
+    await act(async () => nextList(list))
+    await act(settle)
+    expect(screen.getByText(`1 ${t.changed}`)).toBeInTheDocument()
+  })
+
   it('no battery; empty project list button; ignores results after unmount', async () => {
     let resolveList: (v: Project[]) => void = () => {}
     let resolveRefresh: (v: Project) => void = () => {}
