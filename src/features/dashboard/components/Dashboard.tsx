@@ -61,7 +61,7 @@ export function Dashboard({ onNavigate }: { onNavigate: (id: ModuleId) => void }
         <div className="grid w-full max-w-5xl grid-cols-1 gap-4 pane-md:grid-cols-3">
           <ProjectsTile onNavigate={onNavigate} />
           <BrainTile onNavigate={onNavigate} />
-          <SystemTile />
+          <SystemTile onNavigate={onNavigate} />
         </div>
       </div>
     </Panel>
@@ -274,7 +274,7 @@ function BrainTile({ onNavigate }: { onNavigate: (id: ModuleId) => void }) {
   )
 }
 
-function SystemTile() {
+function SystemTile({ onNavigate }: { onNavigate: (id: ModuleId) => void }) {
   const t = useT()
   const { metrics: m, battery, live } = useSystemMetrics()
 
@@ -293,7 +293,7 @@ function SystemTile() {
   ]
 
   return (
-    <Tile icon={Cpu} title={t.dashboard.system}>
+    <Tile icon={Cpu} title={t.dashboard.system} onOpen={() => onNavigate('system')}>
       {!live ? (
         <p className="font-sans text-[13px] text-text-muted">{t.dashboard.loading}</p>
       ) : (

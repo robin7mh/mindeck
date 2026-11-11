@@ -125,6 +125,9 @@ describe('Dashboard', () => {
     fireEvent.click(screen.getByText(`${t.openGraph} →`))
     fireEvent.click(screen.getByLabelText(`Open ${t.brain}`))
     expect(onNavigate).toHaveBeenLastCalledWith('memory')
+    // the System tile opens the System module, like the others theirs
+    fireEvent.click(screen.getByLabelText(`Open ${t.system}`))
+    expect(onNavigate).toHaveBeenLastCalledWith('system')
 
     expect(screen.getByText(t.cpuHigh)).toBeInTheDocument()
     expect(screen.getByText([t.ramHigh, t.diskHigh, t.batteryLow].join(' · '))).toHaveClass('text-cyan')
