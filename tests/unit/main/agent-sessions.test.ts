@@ -459,6 +459,45 @@ describe('AgentSessionService: hooks, approvals, memory', () => {
     await expect(t.svc.create({ kind: 'codex', isolated: true })).rejects.toMatchObject({ code: 'bad-input' })
   })
 
+  it('as Claude Code sends them: no tool id in a request; leaving plan mode gets the plan back; its questions are the user’s turn', async () => {
+    const s = await t.svc.create({ kind: 'claude-code', projectId: 'p1', mode: 'plan' })
+    await t.hook(s.id, { hook_event_name: 'UserPromptSubmit', prompt: 'plan it' })
+    const parts = () => t.svc.get(s.id).messages.at(-1)!.parts
+    const plan = { plan: '# Plan\n1. **Tests:** add them\n2. Ship', planFilePath: '/home/me/.claude/plans/p.md' }
+    await t.hook(s.id, { hook_event_name: 'PreToolUse', tool_name: 'ExitPlanMode', tool_use_id: 'x1', tool_input: plan, permission_mode: 'plan' })
+    const asked = t.asks.length
+    const allow = t.hook(s.id, { hook_event_name: 'PermissionRequest', tool_name: 'ExitPlanMode', tool_input: plan, permission_mode: 'plan' })
+    await vi.waitFor(() => expect(t.asks).toHaveLength(asked + 1))
+    // the card its PreToolUse started is the one asked about — no second one
+    expect(parts()).toHaveLength(1)
+    expect(parts()[0]).toMatchObject({ id: 'x1', status: 'awaiting-approval', requestId: expect.any(String) })
+    t.asks.at(-1)!.settle('once')
+    // a bare yes would leave Claude Code asking in its terminal: the plan goes back with it
+    expect(await allow).toEqual({ hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: { behavior: 'allow', updatedInput: plan } } })
+    expect(parts()[0]).toMatchObject({ id: 'x1', status: 'running' })
+    expect(t.svc.get(s.id).plan.map((p) => p.text)).toEqual(['Tests', 'Ship'])
+    // out of plan mode: the session shows the mode Claude Code goes on in — not one Mindeck doesn't offer
+    await t.hook(s.id, { hook_event_name: 'PostToolUse', tool_name: 'ExitPlanMode', tool_use_id: 'x1', tool_response: { plan: plan.plan }, permission_mode: 'auto' })
+    expect(t.svc.get(s.id).mode).toBe('plan')
+    await t.hook(s.id, { hook_event_name: 'PostToolUse', tool_name: 'ExitPlanMode', tool_use_id: 'x1', tool_response: { plan: plan.plan }, permission_mode: 'default' })
+    expect(t.svc.get(s.id).mode).toBe('default')
+    await t.hook(s.id, { hook_event_name: 'PostToolUse', tool_name: 'ExitPlanMode', tool_use_id: 'x1', permission_mode: 'default' }) // already
+    expect(t.svc.get(s.id).mode).toBe('default')
+    // no input to give back: an empty one
+    const bare = t.hook(s.id, { hook_event_name: 'PermissionRequest', tool_name: 'ExitPlanMode' })
+    await vi.waitFor(() => expect(t.asks).toHaveLength(asked + 2))
+    t.asks.at(-1)!.settle('once')
+    expect(await bare).toMatchObject({ hookSpecificOutput: { decision: { behavior: 'allow', updatedInput: {} } } })
+
+    // its questions need answers, not a yes: Claude Code asks them in its terminal — no approval, the user's turn
+    await t.hook(s.id, { hook_event_name: 'PreToolUse', tool_name: 'AskUserQuestion', tool_use_id: 'q1', tool_input: { questions: [] } })
+    expect(await t.hook(s.id, { hook_event_name: 'PermissionRequest', tool_name: 'AskUserQuestion', tool_input: { questions: [] } })).toBeUndefined()
+    expect(t.asks).toHaveLength(asked + 2)
+    expect(t.svc.get(s.id).status).toBe('waiting')
+    expect(parts().find((p) => p.type === 'tool' && p.id === 'q1')).toMatchObject({ status: 'running' })
+    expect(t.deps.notify).toHaveBeenLastCalledWith(expect.any(String), expect.any(String), s.id)
+  })
+
   it('journal: nothing before the first prompt; failures are logged', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const s = await t.svc.create({ kind: 'claude-code', projectId: 'p1' })

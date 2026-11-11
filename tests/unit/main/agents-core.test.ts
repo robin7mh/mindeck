@@ -14,7 +14,7 @@ import {
   MEMORY_READ_TOOLS,
   SYSTEM_HINT
 } from '../../../electron/main/services/agents/claudeLaunch'
-import { applyHook, approvalRisk, landings, planFromMarkdown, reachesOutside, runsByItself, staysInside, toolPaths, toolRisk, toolSummary, toolTitle, type SessionState } from '../../../electron/main/services/agents/transcript'
+import { applyHook, approvalRisk, landings, planFromMarkdown, toolOf, reachesOutside, runsByItself, staysInside, toolPaths, toolRisk, toolSummary, toolTitle, type SessionState } from '../../../electron/main/services/agents/transcript'
 import type { ChatMessage, ToolCallPart } from '../../../src/shared/types/ai'
 import type { AgentSession } from '../../../src/shared/types/agents'
 import { journalBody, journalTitle, vaultJournal } from '../../../electron/main/services/agents/journal'
@@ -278,6 +278,32 @@ describe('hook events → chat, status and plan', () => {
     // long steps are cut at a word
     expect(planFromMarkdown(`1. ${'word '.repeat(40)}`, 'plan', true)[0].text).toMatch(/^word( word)+…$/)
     expect(planFromMarkdown(`1. ${'x'.repeat(130)}`, 'plan', true)[0].text).toHaveLength(121)
+  })
+
+  it('a request without a tool id is about the open card of that tool — the one with its input first', () => {
+    const s = fresh()
+    applyHook(s, { hook_event_name: 'UserPromptSubmit', prompt: 'go' })
+    s.messages.at(-1)!.parts.push({ type: 'text', text: 'looking' })
+    applyHook(s, { hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_use_id: 'b0', tool_input: { command: 'ls' } })
+    applyHook(s, { hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_use_id: 'b0' }) // done: not open any more
+    applyHook(s, { hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_use_id: 'b1', tool_input: { command: 'npm test' } })
+    applyHook(s, { hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_use_id: 'b2', tool_input: { command: 'npm run build' } })
+    applyHook(s, { hook_event_name: 'PreToolUse', tool_name: 'Read', tool_use_id: 'r1', tool_input: { file_path: 'a' } })
+    expect(toolOf(s, { hook_event_name: 'PermissionRequest', tool_name: 'Bash', tool_input: { command: 'npm test' } })?.id).toBe('b1')
+    // nothing with that input: the latest open one of the tool
+    expect(toolOf(s, { hook_event_name: 'PermissionRequest', tool_name: 'Bash' })?.id).toBe('b2')
+    expect(toolOf(s, { hook_event_name: 'PermissionRequest', tool_name: 'Write' })).toBeUndefined()
+    // asked about, it is still the one
+    applyHook(s, { hook_event_name: 'PermissionRequest', tool_name: 'Bash', tool_input: { command: 'npm test' } })
+    expect(tool(s, 'b1').status).toBe('awaiting-approval')
+    expect(toolOf(s, { hook_event_name: 'PermissionRequest', tool_name: 'Bash', tool_input: { command: 'npm test' } })?.id).toBe('b1')
+    // none open: a card of its own
+    applyHook(s, { hook_event_name: 'PermissionRequest', tool_name: 'Write', tool_input: { file_path: 'b' } })
+    expect(s.messages.at(-1)!.parts.at(-1)).toMatchObject({ type: 'tool', name: 'Write', status: 'awaiting-approval' })
+    // its questions: the user's turn, the card goes on running
+    applyHook(s, { hook_event_name: 'PreToolUse', tool_name: 'AskUserQuestion', tool_use_id: 'q', tool_input: {} })
+    expect(applyHook(s, { hook_event_name: 'PermissionRequest', tool_name: 'AskUserQuestion', tool_input: {} }).attention).toBe('waiting')
+    expect([s.status, tool(s, 'q').status]).toEqual(['waiting', 'running'])
   })
 
   it('a Glob looks everywhere its braces say: every alternative counts, any .. in one leaves', () => {

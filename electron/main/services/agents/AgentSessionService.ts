@@ -3,7 +3,7 @@ import { mkdir, readFile, rename, rm, symlink, writeFile } from 'node:fs/promise
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import type { ApprovalDecision, ChatMessage, MessageAttachment, PermissionRequest, ToolCallPart } from '@shared/types/ai'
+import type { ApprovalDecision, ChatMessage, MessageAttachment, PermissionRequest } from '@shared/types/ai'
 import {
   ClientSideConnection,
   PROTOCOL_VERSION,
@@ -39,7 +39,7 @@ import { readJson, readJsonFile } from '../../lib/jsonFile'
 import { CLAUDE_MODELS, CLAUDE_MODES } from '@shared/types/claude'
 import { CLAUDE_COMMANDS, claudeArgs, claudeEnv, hookSettings, mcpConfig } from './claudeLaunch'
 import { detectAgents, loginShellProbe, type Probe } from './detect'
-import { applyHook, approvalRisk, conversationOnly, landings, staysInside, toolPaths, toolSummary, toolTitle, type Applied, type HookEvent } from './transcript'
+import { applyHook, approvalRisk, conversationOnly, landings, staysInside, toolPaths, toolOf, toolSummary, toolTitle, type Applied, type HookEvent } from './transcript'
 import { journalBody, journalTitle } from './journal'
 import {
   ACP_AGENTS,
@@ -509,6 +509,9 @@ export class AgentSessionService {
     const e = body as HookEvent
     if (e.hook_event_name === 'PermissionRequest') return this.approve(l, e, signal)
     this.applied(l, applyHook(this.state(l), e))
+    // The plan approved, Claude Code left plan mode (for the mode it says): the session shows that one.
+    const mode = e.permission_mode
+    if (e.hook_event_name === 'PostToolUse' && e.tool_name === 'ExitPlanMode' && mode !== l.session.mode && CLAUDE_MODES.some((m) => m.id === mode)) this.update(l, { mode })
     if (e.hook_event_name === 'SessionEnd' && !conversationOnly(e)) this.deps.server.unregister(id)
     return undefined
   }
@@ -818,11 +821,13 @@ export class AgentSessionService {
   /** Claude Code asks permission for a tool: Mindeck's approval gate decides. */
   private async approve(l: Live, e: HookEvent, signal: AbortSignal): Promise<unknown> {
     const applied = applyHook(this.state(l), e)
+    const part = toolOf(this.state(l), e)
     const name = e.tool_name ?? 'tool'
+    // Questions only its terminal can answer (they need the answers, not a yes): no decision — Claude Code asks there.
+    if (name === 'AskUserQuestion') return void this.applied(l, applied, toolTitle(name))
     // Reading outside the project or fetching from the web: allowed like a change (a device needs remote shells).
     const lands = await landings(toolPaths(name, e.tool_input), l.session.cwd)
     const risk = approvalRisk(name, e.tool_input, l.session.cwd, lands)
-    const part = this.tool(l, e.tool_use_id)
     // A grant holds in the session's folder: anywhere else it is asked every time.
     const standing = risk !== 'execute' && staysInside(name, e.tool_input, l.session.cwd, lands)
     let decision: ApprovalDecision = 'once'
@@ -856,7 +861,13 @@ export class AgentSessionService {
     return {
       hookSpecificOutput: {
         hookEventName: 'PermissionRequest',
-        decision: decision === 'deny' ? { behavior: 'deny', message: 'The user denied this in Mindeck.' } : { behavior: 'allow' }
+        // Leaving plan mode needs its input back with the yes (the plan) — a bare yes leaves Claude Code asking in its terminal.
+        decision:
+          decision === 'deny'
+            ? { behavior: 'deny', message: 'The user denied this in Mindeck.' }
+            : name === 'ExitPlanMode'
+              ? { behavior: 'allow', updatedInput: e.tool_input ?? {} }
+              : { behavior: 'allow' }
       }
     }
   }
@@ -978,14 +989,6 @@ export class AgentSessionService {
         return l.session.mode
       }
     }
-  }
-
-  private tool(l: Live, id: string | undefined): ToolCallPart | undefined {
-    for (const m of l.messages) {
-      const part = m.parts.find((p): p is ToolCallPart => p.type === 'tool' && p.id === id)
-      if (part) return part
-    }
-    return undefined
   }
 
   private file(id: string): string {

@@ -214,6 +214,27 @@ function findTool(state: SessionState, id: string | undefined): ToolCallPart | u
   return undefined
 }
 
+/**
+ * The card a tool event is about: the one with its tool id. A PermissionRequest
+ * comes without one — then the latest card of that tool still open (the one its
+ * PreToolUse started), the one with the same input first.
+ */
+export function toolOf(state: SessionState, e: HookEvent): ToolCallPart | undefined {
+  if (e.tool_use_id) return findTool(state, e.tool_use_id)
+  const input = JSON.stringify(e.tool_input ?? {})
+  let open: ToolCallPart | undefined
+  for (let i = state.messages.length - 1; i >= 0; i -= 1) {
+    const parts = state.messages[i].parts
+    for (let j = parts.length - 1; j >= 0; j -= 1) {
+      const p = parts[j]
+      if (p.type !== 'tool' || p.name !== e.tool_name || (p.status !== 'running' && p.status !== 'awaiting-approval')) continue
+      if (JSON.stringify(p.input) === input) return p
+      open ??= p
+    }
+  }
+  return open
+}
+
 function addTool(state: SessionState, e: HookEvent): ToolCallPart {
   const name = e.tool_name ?? 'tool'
   const part: ToolCallPart = {
@@ -318,9 +339,15 @@ export function applyHook(state: SessionState, e: HookEvent): Applied {
       break
     }
     case 'PermissionRequest': {
-      const part = findTool(state, e.tool_use_id) ?? addTool(state, e)
-      part.status = 'awaiting-approval'
+      const part = toolOf(state, e) ?? addTool(state, e)
       touch(currentTurn(state))
+      // Its questions are answered in its terminal: the user's turn, not an approval.
+      if (e.tool_name === 'AskUserQuestion') {
+        state.status = 'waiting'
+        attention = 'waiting'
+        break
+      }
+      part.status = 'awaiting-approval'
       state.status = 'approval'
       attention = 'approval'
       break
