@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { FolderGit2, Globe, Search, Server } from 'lucide-react'
+import { FolderGit2, Globe, Server } from 'lucide-react'
 import { ipc } from '@shared/ipc/client'
 import type { HistoryEntry } from '@shared/types/browser'
 import { TechLabel } from '@/components/ui/TechLabel'
@@ -9,6 +9,7 @@ import { useT } from '@/lib/i18n'
 import { useProjects } from '@/features/projects/store'
 import { useBrowser } from '../store'
 import { displayUrl, initial } from '../url'
+import { PageSearch } from './AddressField'
 
 const tile =
   'group flex min-w-0 items-center gap-2.5 rounded-md border border-hud/50 bg-surface/50 px-3 py-2 text-left transition-colors hover:border-cyan/40 hover:bg-cyan/4'
@@ -43,14 +44,7 @@ export function NewTabPage() {
           <div className="flex h-12 w-12 items-center justify-center rounded-xl border border-cyan/40 bg-cyan/6 text-cyan shadow-glow-sm">
             <Globe size={22} />
           </div>
-          <button
-            type="button"
-            onClick={() => useBrowser.setState((s) => ({ focusTick: s.focusTick + 1 }))}
-            className="flex w-full max-w-xl items-center gap-3 rounded-lg border border-hud/60 bg-surface/70 px-4 py-3 text-left transition-colors hover:border-hud-strong/80"
-          >
-            <Search size={16} className="text-text-muted" />
-            <span className="font-sans text-[14px] text-text-muted">{t.browser.ntpSearch}</span>
-          </button>
+          <PageSearch />
         </div>
 
         {devServers.length > 0 && (

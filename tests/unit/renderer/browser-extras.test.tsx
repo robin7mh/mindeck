@@ -269,11 +269,17 @@ describe('protection and privacy', () => {
     expect(useOverlays.getState().count).toBe(0)
   })
 
-  it('shows a private tab’s page — no history, the address bar a click away', () => {
+  it('shows a private tab’s page — no history, its search field typed into right there', () => {
+    useBrowser.setState({ focusPage: true, state: state([tab('p', '', { profile: 'private' })]) })
     render(<PrivateTabPage />)
     expect(screen.getByText('You are browsing privately')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: /Search the web/ }))
-    expect(useBrowser.getState().focusTick).toBe(1)
+    const field = screen.getByRole('textbox', { name: 'Search the web or type an address' })
+    // a new private tab: the caret is in it
+    expect(document.activeElement).toBe(field)
+    expect(useBrowser.getState().focusPage).toBe(false)
+    expect(field.closest('label')).toHaveClass('border-purple/50')
+    fireEvent.blur(field)
+    expect(field.closest('label')).toHaveClass('hover:border-purple/50')
   })
 })
 

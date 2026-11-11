@@ -184,7 +184,7 @@ describe('Viewport · split view', () => {
     expect(panes[0].className).toContain('border-cyan/50')
     expect(panes[1].className).toContain('border-hud/30')
     expect(panes[0].style.flexBasis).toBe('calc(0.3 * (100% - 6px))')
-    expect(screen.getByText('Search the web or type an address')).toBeInTheDocument() // b: the new-tab page
+    expect(screen.getByRole('textbox', { name: 'Search the web or type an address' })).toBeInTheDocument() // b: the new-tab page
     const rect = { x: 10, y: 20, width: 400, height: 300 }
     expect(sent('browser:view').at(-1)).toEqual({ bounds: rect, focused: true, panes: [{ id: 'a', bounds: rect }, { id: 'b', bounds: rect }] })
     // a click into the other side: focused at once (what is typed goes there), and told to the core

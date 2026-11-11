@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
-import { ExternalLink, Film, KeyRound, Search, Shield, ShieldAlert, ShieldOff, VenetianMask, X } from 'lucide-react'
+import { ExternalLink, Film, KeyRound, Shield, ShieldAlert, ShieldOff, VenetianMask, X } from 'lucide-react'
 import type { BrowserAuthRequest, BrowserTab } from '@shared/types/browser'
 import { cn } from '@/lib/cn'
 import { useT } from '@/lib/i18n'
 import { useOverlay } from '@/lib/overlay'
 import { useBrowser } from '../store'
 import { hostOf } from '../url'
+import { PageSearch } from './AddressField'
 
 const NONE: BrowserAuthRequest[] = []
 
@@ -25,14 +26,7 @@ export function PrivateTabPage() {
         </div>
         <h2 className="font-sans text-[16px] font-semibold text-text-primary">{t.browserExtras.privateTitle}</h2>
         <p className="font-sans text-[12.5px] text-text-secondary">{t.browserExtras.privateHint}</p>
-        <button
-          type="button"
-          onClick={() => useBrowser.setState((s) => ({ focusTick: s.focusTick + 1 }))}
-          className="flex w-full items-center gap-3 rounded-lg border border-hud/60 bg-surface/70 px-4 py-3 text-left transition-colors hover:border-purple/50"
-        >
-          <Search size={16} className="text-text-muted" />
-          <span className="font-sans text-[14px] text-text-muted">{t.browser.ntpSearch}</span>
-        </button>
+        <PageSearch tone="purple" />
       </div>
     </div>
   )

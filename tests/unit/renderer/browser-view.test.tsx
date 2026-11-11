@@ -533,11 +533,50 @@ describe('NewTabPage', () => {
     fireEvent.click(screen.getAllByText('news.dev')[0]) // no title: its address twice
     fireEvent.click(screen.getByRole('button', { name: 'shop' }))
     expect(go.mock.calls.map(([u]) => u)).toEqual(['http://localhost:5173/', 'https://github.com/acme', 'https://news.dev/', 'https://github.com/acme/shop'])
-    fireEvent.click(screen.getByText('Search the web or type an address'))
-    expect(useBrowser.getState().focusTick).toBe(1)
     // What agents see and the shortcuts live in Settings → Browser now
     expect(screen.queryByText('Reopen closed tab')).toBeNull()
     expect(screen.queryByText(/Agents see your local pages/)).toBeNull()
+  })
+
+  it('its search field is typed into right there: the address bar’s suggestions under it, Enter goes — the address bar stays as it is', async () => {
+    const { sent } = bridge({
+      'browser:history': () => [],
+      'browser:suggest': () => [
+        { kind: 'navigate', url: 'https://github.com/', title: '' },
+        { kind: 'search', url: 'https://www.google.com/search?q=gi', title: 'gi' }
+      ]
+    })
+    const go = vi.fn(async (_input: string) => {})
+    // a new tab: the caret is in the field at once
+    useBrowser.setState({ go, focusPage: true, state: state([tab('n', '')]) })
+    render(
+      <>
+        <Omnibox tab={tab('n', '')} />
+        <NewTabPage />
+      </>
+    )
+    const field = screen.getByRole('textbox', { name: 'Search the web or type an address' }) as HTMLInputElement
+    const bar = screen.getByRole('textbox', { name: 'Address or search' }) as HTMLInputElement
+    expect(document.activeElement).toBe(field)
+    expect(useBrowser.getState().focusPage).toBe(false)
+    expect(field.closest('label')).toHaveClass('border-cyan/50')
+    fireEvent.change(field, { target: { value: 'g' } })
+    fireEvent.change(field, { target: { value: 'gi' } })
+    await settle()
+    expect(sent('browser:suggest').at(-1)).toEqual({ text: 'gi' })
+    // the suggestions open under this field — the address bar has none and nothing typed
+    expect(screen.getByRole('listbox', { name: 'Search the web or type an address' })).toBeInTheDocument()
+    expect(screen.queryByRole('listbox', { name: 'Address or search' })).toBeNull()
+    expect(field.value).toBe('gi')
+    expect(bar.value).toBe('')
+    fireEvent.keyDown(field, { key: 'ArrowDown' })
+    fireEvent.keyDown(field, { key: 'Enter' })
+    expect(go).toHaveBeenLastCalledWith('https://github.com/')
+    expect(document.activeElement).not.toBe(field)
+    expect(field.closest('label')).toHaveClass('hover:border-hud-strong/80')
+    // ⌘L still means the address bar
+    act(() => useBrowser.setState((s) => ({ focusTick: s.focusTick + 1 })))
+    expect(document.activeElement).toBe(bar)
   })
 
   it('suggestions off: the search field alone, in the middle — running dev servers still under it', async () => {
@@ -551,7 +590,7 @@ describe('NewTabPage', () => {
     expect(sent('browser:history')).toEqual([]) // nothing to suggest, nothing to load
     expect(screen.queryByText('Most visited')).toBeNull()
     expect(screen.queryByText('Acme')).toBeNull()
-    expect(screen.getByText('Search the web or type an address')).toBeInTheDocument()
+    expect(screen.getByRole('textbox', { name: 'Search the web or type an address' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Open localhost:5173' })).toBeInTheDocument()
     expect(container.firstElementChild!.firstElementChild).toHaveClass('min-h-full', 'justify-center')
   })

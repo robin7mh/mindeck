@@ -44,6 +44,8 @@ interface BrowserStore {
   findOpen: boolean
   /** Bumped to put the keyboard focus into the address bar. */
   focusTick: number
+  /** A new tab wants the caret in its page's search field (taken by that field). */
+  focusPage: boolean
   downloadsOpen: boolean
   extensionsOpen: boolean
   /** The bookmarks: the bar's folder, then Other bookmarks. */
@@ -114,6 +116,7 @@ export const useBrowser = create<BrowserStore>((set, get) => {
     state: EMPTY,
     findOpen: false,
     focusTick: 0,
+    focusPage: false,
     downloadsOpen: false,
     extensionsOpen: false,
     bookmarks: NO_BOOKMARKS,
@@ -159,7 +162,7 @@ export const useBrowser = create<BrowserStore>((set, get) => {
 
     newTab: async (opts = {}) => {
       await get().run('browser:open', opts.private ? { private: true } : {})
-      set((s) => ({ focusTick: s.focusTick + 1 }))
+      set({ focusPage: true })
     },
 
     go: async (input) => {

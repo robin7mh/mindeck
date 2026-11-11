@@ -102,7 +102,8 @@ describe('browser store', () => {
     expect(calls.at(-1)).toEqual(['browser:open', { url: 'mindeck' }])
     await useBrowser.getState().newTab()
     expect(calls.at(-1)).toEqual(['browser:open', {}])
-    expect(useBrowser.getState().focusTick).toBe(1)
+    // the caret goes to the new tab's own search field, not the address bar
+    expect(useBrowser.getState()).toMatchObject({ focusPage: true, focusTick: 0 })
 
     useBrowser.setState({ state: state([tab('ntp', ''), tab('a', 'https://a.dev/')], { activeId: 'ntp' }) })
     await useBrowser.getState().sendToAgent() // the new-tab page has nothing to send

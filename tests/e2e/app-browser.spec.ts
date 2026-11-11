@@ -13,12 +13,12 @@ async function go(page: Page, address: string) {
   await bar.press('Enter')
 }
 
-/** A new tab, ready to type an address into. */
+/** A new tab, ready to type an address into (its page's search field has the caret). */
 async function newTab(page: Page) {
   const count = await page.getByRole('tab').count()
   await page.getByRole('button', { name: 'New tab', exact: true }).click()
   await expect(page.getByRole('tab')).toHaveCount(count + 1)
-  await expect(page.getByRole('textbox', { name: 'Address or search' })).toBeFocused()
+  await expect(page.getByRole('textbox', { name: 'Search the web or type an address' })).toBeFocused()
 }
 
 /** What the history knows that matches `query`. */

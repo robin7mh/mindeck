@@ -71,7 +71,7 @@ function Editor({ group, at }: { group: BrowserTabGroup; at?: { x: number; y: nu
                 const store = useBrowser.getState()
                 const tab = await store.run('browser:open', group.private ? { private: true } : {})
                 if (tab) await store.run('browser:move', { id: tab.id, index: useBrowser.getState().state.tabs.length, groupId: group.id })
-                useBrowser.setState((s) => ({ focusTick: s.focusTick + 1 }))
+                useBrowser.setState({ focusPage: true })
               })
             }
           >

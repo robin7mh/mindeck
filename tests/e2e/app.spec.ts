@@ -271,7 +271,8 @@ test('browser: a local page in a real Chromium tab — back and forth, kept acro
   const site = await localSite()
   try {
     await page.getByTitle('Browser', { exact: true }).click()
-    await expect(page.getByText('Search the web or type an address')).toBeVisible() // the new-tab page
+    const search = page.getByRole('textbox', { name: 'Search the web or type an address' })
+    await expect(search).toBeVisible() // the new-tab page
     const address = page.getByRole('textbox', { name: 'Address or search' })
     await address.fill(`localhost:${site.port}`)
     await address.press('Enter')
@@ -296,12 +297,19 @@ test('browser: a local page in a real Chromium tab — back and forth, kept acro
     await page.getByTitle('Browser', { exact: true }).click()
     await expect(page.getByRole('tab', { name: /Mindeck E2E/ })).toBeVisible()
 
-    // a new tab: its own empty address bar, ready to type; closing it shows the page again
+    // a new tab: the caret in its page's search field, the address bar empty; closing it shows the page again
     await page.getByRole('button', { name: 'New tab', exact: true }).click()
     await expect(page.getByRole('tab')).toHaveCount(2)
-    await expect(page.getByText('Search the web or type an address')).toBeVisible()
-    await expect(address).toBeFocused()
+    await expect(search).toBeFocused()
     await expect(address).toHaveValue('')
+    // typed right there: the suggestions (the history) open under it, the address bar stays empty
+    await page.keyboard.type('localhost')
+    const below = page.getByRole('listbox', { name: 'Search the web or type an address' })
+    await expect(below.getByRole('option').first()).toBeVisible()
+    expect((await below.boundingBox())!.y).toBeGreaterThan((await search.boundingBox())!.y)
+    await expect(address).toHaveValue('')
+    await page.keyboard.press('Escape')
+    await expect(below).toHaveCount(0)
     await page.getByRole('button', { name: 'Close New tab' }).click()
     await expect(page.getByRole('tab')).toHaveCount(1)
 

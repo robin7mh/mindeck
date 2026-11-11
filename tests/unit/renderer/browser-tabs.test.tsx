@@ -437,7 +437,7 @@ describe('GroupEditor', () => {
     await settle()
     expect(sent('browser:open')).toEqual([{}])
     expect(sent('browser:move')).toEqual([{ id: 'n1', index: 5, groupId: 'g' }])
-    expect(useBrowser.getState().focusTick).toBe(tick + 1)
+    expect(useBrowser.getState()).toMatchObject({ focusPage: true, focusTick: tick })
     // a private group gets a private tab
     act(() => useBrowser.getState().editGroup('h'))
     rerender(<GroupEditor />)
