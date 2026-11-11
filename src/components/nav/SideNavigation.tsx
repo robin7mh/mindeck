@@ -163,8 +163,18 @@ export function SideNavigation({
     )
   }
 
+  // A mouse click doesn't leave the keyboard focus on the rail: a key pressed next (meant for the module) would
+  // otherwise ring the item it clicked. From the keyboard (Tab, Enter: `detail` 0) the focus and its ring stay.
+  const releaseFocus = (e: ReactMouseEvent) => {
+    if (e.detail > 0) (e.target as Element).closest('button')?.blur()
+  }
+
   return (
-    <nav aria-label={t.nav.modules} className={cn('flex h-full shrink-0 flex-col items-stretch gap-0.5 overflow-y-auto border-r border-hud/40 bg-surface px-2.5 py-3', collapsed ? 'w-[60px]' : 'w-[232px]')}>
+    <nav
+      aria-label={t.nav.modules}
+      onClickCapture={releaseFocus}
+      className={cn('flex h-full shrink-0 flex-col items-stretch gap-0.5 overflow-y-auto border-r border-hud/40 bg-surface px-2.5 py-3', collapsed ? 'w-[60px]' : 'w-[232px]')}
+    >
       <div className={cn('mb-3 flex items-center gap-1.5', collapsed && 'flex-col')}>
         <button
           type="button"
