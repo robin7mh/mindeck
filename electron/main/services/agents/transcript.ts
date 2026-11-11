@@ -23,7 +23,11 @@ export interface HookEvent {
   notification_type?: string
   message?: string
   task_id?: string
+  /** A task's title (TaskCreated, TaskCompleted); `task_description` may say more. */
+  task_subject?: string
   task_description?: string
+  /** The permission mode Claude Code runs in (`plan` while it plans first). */
+  permission_mode?: string
   source?: string
   reason?: string
 }
@@ -36,6 +40,8 @@ export interface SessionState {
   status: SessionStatus
   messages: ChatMessage[]
   plan: PlanItem[]
+  /** The mode the user chose for the session (`plan`: plan first). */
+  readonly mode?: string
 }
 
 const OUTPUT_LIMIT = 4000
@@ -229,6 +235,40 @@ function planFromTodos(input: Record<string, unknown>): PlanItem[] | undefined {
   return input.todos.map((t: { content?: string; status?: string }, i) => ({ id: `todo-${i}`, text: String(t.content ?? ''), done: t.status === 'completed' }))
 }
 
+/** A plan step's words: its Markdown (bold, code, links, a trailing colon) taken off, long ones cut at a word. */
+function stepText(raw: string): string {
+  const text = raw
+    .replace(/\*\*|__/g, '')
+    .replace(/`([^`]*)`/g, '$1')
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/[:：]\s*$/, '')
+    .trim()
+  return text.length > 120 ? `${text.slice(0, 120).replace(/\s+\S*$/, '')}…` : text
+}
+
+/**
+ * The steps of a plan written in Markdown: its top-level list items — numbered
+ * ones only (`ordered`), else bullets and task boxes too — each by its bold
+ * lead-in ("**Add tests:** the pure …" → "Add tests"), else in full. `prefix`
+ * tells where the plan came from (ids `<prefix>-<n>`).
+ */
+export function planFromMarkdown(markdown: string, prefix: string, ordered = false): PlanItem[] {
+  const items: PlanItem[] = []
+  for (const line of markdown.split('\n')) {
+    const m = (ordered ? /^\d+[.)]\s+(.+)$/ : /^(?:\d+[.)]|[-*+])\s+(.+)$/).exec(line)
+    if (!m) continue
+    const box = /^\[([ xX])\]\s+(.*)$/.exec(m[1])
+    const body = box ? box[2] : m[1]
+    const lead = /^\*\*(.+?)\*\*/.exec(body)
+    const text = stepText(lead ? lead[1] : body)
+    if (text) items.push({ id: `${prefix}-${items.length}`, text, done: !!box && box[1] !== ' ' })
+  }
+  return items
+}
+
+/** Claude Code's tasks (TaskCreated/TaskCompleted) are the live plan: a plan only written down (`plan-`, `mode-`) gives way to them. */
+const tasksOf = (plan: PlanItem[]) => plan.filter((p) => !p.id.startsWith('plan-') && !p.id.startsWith('mode-'))
+
 /** What changed for the rest of Mindeck (messages to push, a notification to show). */
 export interface Applied {
   /** Messages that were added or changed. */
@@ -269,8 +309,10 @@ export function applyHook(state: SessionState, e: HookEvent): Applied {
     case 'PreToolUse': {
       const part = findTool(state, e.tool_use_id) ?? addTool(state, e)
       part.status = 'running'
-      const plan = e.tool_name === 'TodoWrite' ? planFromTodos(part.input as Record<string, unknown>) : undefined
-      if (plan) state.plan = plan
+      const input = part.input as Record<string, unknown>
+      // Its to-do list, or the plan it presents when it leaves plan mode (Claude Code puts the plan file's text in).
+      const plan = e.tool_name === 'TodoWrite' ? planFromTodos(input) : e.tool_name === 'ExitPlanMode' ? planFromMarkdown(String(input.plan ?? ''), 'mode') : undefined
+      if (plan?.length) state.plan = plan
       touch(currentTurn(state))
       state.status = 'working'
       break
@@ -297,6 +339,11 @@ export function applyHook(state: SessionState, e: HookEvent): Applied {
       const turn = currentTurn(state)
       const text = e.last_assistant_message?.trim()
       if (text) turn.parts.push({ type: 'text', text })
+      // Planning first, it answered with a numbered plan: that is the plan — unless one came from its tools.
+      if (text && (state.mode === 'plan' || e.permission_mode === 'plan') && state.plan.every((p) => p.id.startsWith('plan-'))) {
+        const plan = planFromMarkdown(text, 'plan', true)
+        if (plan.length >= 2) state.plan = plan
+      }
       turn.status = 'done'
       touch(turn)
       state.status = 'idle'
@@ -311,9 +358,13 @@ export function applyHook(state: SessionState, e: HookEvent): Applied {
         attention = 'waiting'
       }
       break
-    case 'TaskCreated':
-      state.plan = [...state.plan.filter((p) => p.id !== e.task_id), { id: String(e.task_id), text: String(e.task_description ?? ''), done: false }]
+    case 'TaskCreated': {
+      // Its title is the step (the description, when there is no title).
+      const step = { id: String(e.task_id), text: (e.task_subject ?? e.task_description ?? '').trim(), done: false }
+      const tasks = tasksOf(state.plan)
+      state.plan = tasks.some((p) => p.id === step.id) ? tasks.map((p) => (p.id === step.id ? { ...p, text: step.text } : p)) : [...tasks, step]
       break
+    }
     case 'TaskCompleted':
       state.plan = state.plan.map((p) => (p.id === e.task_id ? { ...p, done: true } : p))
       break

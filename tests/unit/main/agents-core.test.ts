@@ -14,7 +14,7 @@ import {
   MEMORY_READ_TOOLS,
   SYSTEM_HINT
 } from '../../../electron/main/services/agents/claudeLaunch'
-import { applyHook, approvalRisk, landings, reachesOutside, runsByItself, staysInside, toolPaths, toolRisk, toolSummary, toolTitle, type SessionState } from '../../../electron/main/services/agents/transcript'
+import { applyHook, approvalRisk, landings, planFromMarkdown, reachesOutside, runsByItself, staysInside, toolPaths, toolRisk, toolSummary, toolTitle, type SessionState } from '../../../electron/main/services/agents/transcript'
 import type { ChatMessage, ToolCallPart } from '../../../src/shared/types/ai'
 import type { AgentSession } from '../../../src/shared/types/agents'
 import { journalBody, journalTitle, vaultJournal } from '../../../electron/main/services/agents/journal'
@@ -196,8 +196,8 @@ describe('hook events → chat, status and plan', () => {
     ])
     applyHook(s, { hook_event_name: 'PreToolUse', tool_name: 'TodoWrite', tool_use_id: 'q', tool_input: {} }) // malformed: plan kept
     expect(s.plan).toHaveLength(2)
-    applyHook(s, { hook_event_name: 'TaskCreated', task_id: 't1', task_description: 'write test' })
-    applyHook(s, { hook_event_name: 'TaskCreated', task_id: 't1', task_description: 'write the test' })
+    applyHook(s, { hook_event_name: 'TaskCreated', task_id: 't1', task_subject: 'write test', task_description: 'with vitest' })
+    applyHook(s, { hook_event_name: 'TaskCreated', task_id: 't1', task_description: 'write the test' }) // no title: the description
     applyHook(s, { hook_event_name: 'TaskCreated', task_id: 't2' })
     applyHook(s, { hook_event_name: 'TaskCompleted', task_id: 't1' })
     expect(s.plan.slice(2)).toEqual([
@@ -220,6 +220,64 @@ describe('hook events → chat, status and plan', () => {
     applyHook(s, { hook_event_name: 'SomethingNew' })
     applyHook(s, { hook_event_name: 'SessionEnd', reason: 'other' })
     expect(s.status).toBe('ended')
+  })
+
+  it('a plan written down: ExitPlanMode’s, or the numbered answer while planning first; tasks take over from it', () => {
+    // Planning first (the user's choice), it answers with a numbered plan — as in a real session.
+    const s: SessionState = { ...fresh(), mode: 'plan' }
+    const answer = [
+      'Hier ist ein 10-Punkte-Plan, nach Priorität geordnet.',
+      '',
+      '1. **Tests einführen:** Ausgerechnet „testing-games“ hat keinen einzigen Test.',
+      '2. **`lib/game.js` aufteilen:** Die Datei ist eine einzige Funktion mit 391 Zeilen.',
+      '   - eine Phaser.Scene-Klasse', // nested: not a step
+      '3. Gameplay-Bugs beheben',
+      '',
+      'Soll ich mit einem davon anfangen?'
+    ].join('\n')
+    applyHook(s, { hook_event_name: 'UserPromptSubmit', prompt: 'plan it' })
+    applyHook(s, { hook_event_name: 'Stop', last_assistant_message: answer })
+    expect(s.plan).toEqual([
+      { id: 'plan-0', text: 'Tests einführen', done: false },
+      { id: 'plan-1', text: 'lib/game.js aufteilen', done: false },
+      { id: 'plan-2', text: 'Gameplay-Bugs beheben', done: false }
+    ])
+    // a later answer with one numbered line, or none, keeps it
+    applyHook(s, { hook_event_name: 'Stop', last_assistant_message: '1. only this' })
+    applyHook(s, { hook_event_name: 'Stop', last_assistant_message: '' })
+    expect(s.plan).toHaveLength(3)
+
+    // the plan it presents when it leaves plan mode (bullets, boxes, a link) — and that one a text doesn't replace
+    applyHook(s, {
+      hook_event_name: 'PreToolUse',
+      tool_name: 'ExitPlanMode',
+      tool_use_id: 'x',
+      tool_input: { plan: '## Refactor\n- [x] Read [the code](https://x.dev)\n- [ ] Extract `predictBallY`\n* Ship it\n- [ ] \n', planFilePath: '/p.md' }
+    })
+    expect(s.plan.map((p) => [p.id, p.text, p.done])).toEqual([
+      ['mode-0', 'Read the code', true],
+      ['mode-1', 'Extract predictBallY', false],
+      ['mode-2', 'Ship it', false]
+    ])
+    applyHook(s, { hook_event_name: 'Stop', last_assistant_message: '1. a\n2. b' })
+    expect(s.plan[0].id).toBe('mode-0')
+    applyHook(s, { hook_event_name: 'PreToolUse', tool_name: 'ExitPlanMode', tool_use_id: 'y', tool_input: {} }) // no plan in it: kept
+    expect(s.plan).toHaveLength(3)
+
+    // tasks are the live plan: what was only written down gives way
+    applyHook(s, { hook_event_name: 'TaskCreated', task_id: 't1', task_subject: 'Tests einführen' })
+    expect(s.plan).toEqual([{ id: 't1', text: 'Tests einführen', done: false }])
+
+    // not planning first (Claude Code says so, or the user didn't choose it): a numbered answer is just an answer
+    const free = fresh()
+    applyHook(free, { hook_event_name: 'Stop', last_assistant_message: answer })
+    expect(free.plan).toEqual([])
+    applyHook(free, { hook_event_name: 'Stop', last_assistant_message: answer, permission_mode: 'plan' })
+    expect(free.plan).toHaveLength(3)
+
+    // long steps are cut at a word
+    expect(planFromMarkdown(`1. ${'word '.repeat(40)}`, 'plan', true)[0].text).toMatch(/^word( word)+…$/)
+    expect(planFromMarkdown(`1. ${'x'.repeat(130)}`, 'plan', true)[0].text).toHaveLength(121)
   })
 
   it('a Glob looks everywhere its braces say: every alternative counts, any .. in one leaves', () => {

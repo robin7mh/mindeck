@@ -973,6 +973,9 @@ export class AgentSessionService {
       },
       set plan(plan) {
         l.session = { ...l.session, plan }
+      },
+      get mode() {
+        return l.session.mode
       }
     }
   }
