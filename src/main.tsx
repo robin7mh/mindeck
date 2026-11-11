@@ -2,6 +2,7 @@ import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App'
 import { startAppearance } from './lib/theme'
+import { trackInputModality } from './lib/inputModality'
 import { AppBoundary, installErrorReporting } from './components/shell/ErrorBoundary'
 // The fonts and the terminal's stylesheet come straight from their packages:
 // Vite bundles them with their font files (through Tailwind their URLs stay unresolved).
@@ -16,6 +17,8 @@ import './index.css'
 startAppearance()
 // Uncaught errors in the UI end up in the desktop app's log.
 installErrorReporting()
+// Focus rings while the keyboard moves around (Tab) — not after a click and a typed key.
+trackInputModality()
 
 ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
   <React.StrictMode>

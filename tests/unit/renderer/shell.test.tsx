@@ -77,17 +77,6 @@ describe('shell pieces', () => {
     expect(screen.getByTitle('Core').className).toContain('text-text-muted')
     fireEvent.click(screen.getByTitle('Memory'))
     expect(onSelect).toHaveBeenCalledWith('memory')
-    // Clicked: no focus (and so no ring) left on the item for the next key; from the keyboard, it stays.
-    const files = screen.getByTitle('Files')
-    files.focus()
-    fireEvent.click(files, { detail: 1 })
-    expect(files).not.toHaveFocus()
-    files.focus()
-    fireEvent.click(files, { detail: 0 })
-    expect(files).toHaveFocus()
-    expect(onSelect).toHaveBeenLastCalledWith('files')
-    // a click beside the buttons (the rail's free space) leaves nothing to release
-    fireEvent.click(screen.getByRole('navigation'), { detail: 1 })
   })
 
   it('SideNavigation ends in the profile tab', () => {

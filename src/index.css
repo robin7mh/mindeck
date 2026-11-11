@@ -29,6 +29,8 @@
 }
 
 @custom-variant hover (&:hover);
+/* `focus-visible:` only while the keyboard moves around — not after a click and a typed key (lib/inputModality.ts). */
+@custom-variant focus-visible (&:focus-visible:not([data-input='pointer'] *));
 
 /*
  * Corner radii of the modern design: small controls 6, buttons and inputs 9,
@@ -165,10 +167,15 @@
     background: rgb(var(--border-hud-strong) / 0.8);
   }
 
-  /* One focus ring for everything reachable by keyboard. */
-  :focus-visible {
+  /* One focus ring for everything reachable by keyboard — while the keyboard moves around (Tab): after a click, a
+     typed key (a shortcut, a letter) draws none (lib/inputModality.ts). */
+  :focus-visible:not([data-input='pointer'] *) {
     outline: 2px solid rgb(var(--accent-cyan) / 0.8);
     outline-offset: 2px;
+  }
+  /* …and not the browser's own ring either. */
+  [data-input='pointer'] :focus-visible {
+    outline: none;
   }
 
   ::selection {
