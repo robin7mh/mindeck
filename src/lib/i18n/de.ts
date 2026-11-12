@@ -1837,8 +1837,6 @@ agents: {
     openIn: (app) => `Dieses Repo in ${app} öffnen`,
     refreshing: 'Aktualisiere …',
     refresh: 'Aktualisieren',
-    pull: 'Pull',
-    pullHint: 'git pull — neue Commits von GitHub holen (nur Fast-Forward)',
     remove: 'Entfernen',
     removeUnsaved: (n) => `${n === 1 ? '1 Datei hat' : `${n} Dateien haben`} ungespeicherte Änderungen. Das Entfernen des Projekts schließt sie ohne zu speichern.`,
     removeAnyway: 'Entfernen und verwerfen',

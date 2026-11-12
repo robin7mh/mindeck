@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react'
 import {
   AppWindow,
-  ArrowDownToLine,
   GitBranch,
   GitCommitHorizontal,
   ArrowUp,
@@ -38,7 +37,7 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
 
 export function ProjectDetailPanel({ project, onNavigate }: { project: Project; onNavigate: (module: ModuleId) => void }) {
   const t = useT()
-  const { refresh, pull, remove, openInGitHubDesktop, githubDesktop, busyId } = useProjects()
+  const { refresh, remove, openInGitHubDesktop, githubDesktop, busyId } = useProjects()
   const busy = busyId === project.id
   const g = project.git
   const s = project.stack
@@ -167,10 +166,6 @@ export function ProjectDetailPanel({ project, onNavigate }: { project: Project; 
         {repo && <ActionButton icon={repo.Icon} label={repo.label} title={t.projects.openRepo(g!.webUrl!)} href={g!.webUrl} />}
         {desktop && githubDesktop && g?.isRepo && (
           <ActionButton icon={AppWindow} label={githubDesktop} title={t.projects.openIn(githubDesktop)} onClick={() => openInGitHubDesktop(project.id)} />
-        )}
-        {/* With an upstream: `git pull` right here — no terminal to stop for it. */}
-        {shells && (g?.ahead != null || g?.behind != null) && (
-          <ActionButton icon={ArrowDownToLine} label={t.projects.pull} title={t.projects.pullHint} onClick={() => void pull(project.id)} disabled={busy} />
         )}
         <ActionButton icon={RefreshCw} label={busy ? t.projects.refreshing : t.projects.refresh} onClick={() => refresh(project.id)} disabled={busy} />
         <div className="flex-1" />
