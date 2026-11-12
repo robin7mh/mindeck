@@ -34,6 +34,14 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm run test:coverage
+      # A coverage gap only this runner shows (timing, Linux): the full report to name it (gh run download).
+      - if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: coverage
+          path: coverage/coverage-final.json
+          retention-days: 7
+          if-no-files-found: ignore
 
   # Without a baked-in cloud the server is no release build and needs no license (server/main.ts):
   # a public image like that would be the full product for free. No image, then. A tag fails: a
