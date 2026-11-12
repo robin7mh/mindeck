@@ -57,7 +57,6 @@ function listProps(over: Partial<Parameters<typeof NoteList>[0]> = {}) {
     creating: null,
     openFolders: ['Ideen', 'Ideen/Sub', 'Leer', 'Loose', 'Zeta'],
     onToggleFolder: vi.fn(),
-    onCollapseAll: vi.fn(),
     onShowInFinder: vi.fn(),
     onSearch: vi.fn(),
     onOpen: vi.fn(),
@@ -78,7 +77,6 @@ function OpenList(p: Parameters<typeof NoteList>[0]) {
       {...p}
       openFolders={open}
       onToggleFolder={(dir) => setOpen((o) => (o.includes(dir) ? o.filter((d) => d !== dir) : [...o, dir]))}
-      onCollapseAll={() => setOpen([])}
     />
   )
 }
@@ -121,28 +119,13 @@ describe('NoteList', () => {
     expect(p.onStartCreate).toHaveBeenCalledWith('folder', '')
   })
 
-  it('collapses every folder at once, like VS Code — the root notes stay; nothing to do when all are closed', () => {
-    render(<OpenList {...listProps()} />)
-    const button = screen.getByRole('button', { name: 'Collapse all folders' })
-    expect(button).toBeEnabled()
-    fireEvent.click(button)
-    // the notes in folders are gone, the ones at the root stay, the folders themselves too
-    expect(screen.queryByText('A')).toBeNull()
-    expect(screen.queryByText('Empty — drop notes here')).toBeNull()
-    expect(screen.getByText('Root')).toBeInTheDocument()
-    expect(screen.getByText('Ideen/Sub')).toBeInTheDocument()
-    expect(button).toBeDisabled() // all closed already
-    // one opened again: it can close them all again
-    fireEvent.click(screen.getByText('Ideen'))
-    expect(screen.getByText('A')).toBeInTheDocument()
-    expect(button).toBeEnabled()
-  })
-
-  it('a row of tools — search, the vault in the Finder, new note, new folder, collapse all; the magnifier turns it into the search field', () => {
+  it('a row of tools spread over its width — search, the vault in the Finder, new note, new folder; the magnifier turns it into the search field', () => {
     const p = listProps()
     const { rerender } = render(<NoteList {...p} />)
     // the tools, in their order — no search field yet
-    expect(screen.getAllByRole('button').slice(0, 5).map((b) => b.getAttribute('aria-label'))).toEqual(['Search memory…', 'Show vault in Finder', 'New note', 'New folder', 'Collapse all folders'])
+    const row = screen.getByRole('button', { name: 'Search memory…' }).parentElement!
+    expect([...row.querySelectorAll('button')].map((b) => b.getAttribute('aria-label'))).toEqual(['Search memory…', 'Show vault in Finder', 'New note', 'New folder'])
+    expect(row).toHaveClass('justify-around')
     expect(screen.queryByRole('textbox', { name: 'Search memory…' })).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Show vault in Finder' }))
     expect(p.onShowInFinder).toHaveBeenCalled()
@@ -151,7 +134,7 @@ describe('NoteList', () => {
     const field = screen.getByRole('textbox', { name: 'Search memory…' })
     expect(field).toHaveFocus()
     expect(screen.queryByRole('button', { name: 'New note' })).toBeNull()
-    expect(screen.queryByRole('button', { name: 'Collapse all folders' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'New folder' })).toBeNull()
     // Escape empties it and brings the tools back
     fireEvent.change(field, { target: { value: 'ide' } })
     fireEvent.keyDown(field, { key: 'a' })

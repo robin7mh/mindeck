@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ComponentProps } from 'react'
-import { AlertTriangle, ArrowLeftRight, BrainCircuit, CalendarDays, ChevronDown, FileText, FolderOpen, Network, Plus, Sparkles, X } from 'lucide-react'
+import { AlertTriangle, ArrowLeftRight, BrainCircuit, CalendarDays, ChevronDown, CopyMinus, FileText, FolderOpen, Network, Plus, Sparkles, X } from 'lucide-react'
 import { isDesktop, onEvent } from '@shared/ipc/client'
 import { useShallow } from 'zustand/react/shallow'
 import { DEFAULT_GRAPH_STYLE, TEMPLATES_FOLDER, type NoteMeta } from '@shared/types/memory'
@@ -26,6 +26,11 @@ export function MemoryView() {
   const m = useMemory(useShallow(({ draft: _draft, ...rest }) => rest))
   const style = m.status?.graphStyle ?? DEFAULT_GRAPH_STYLE
   const folderSlots = useMemo(() => folderColors(m.notes), [m.notes])
+  // "Collapse all" has something to do while a folder that is there is open.
+  const anyOpen = useMemo(() => {
+    const dirs = new Set([...m.folders, ...m.notes.map((n) => (n.path.includes('/') ? n.path.slice(0, n.path.lastIndexOf('/')) : ''))])
+    return m.openFolders.some((d) => dirs.has(d))
+  }, [m.folders, m.notes, m.openFolders])
   const templates = useMemo(() => m.notes.filter((n) => n.path.startsWith(`${TEMPLATES_FOLDER}/`)), [m.notes])
   const [browsing, setBrowsing] = useState(false)
   const desktop = isDesktop()
@@ -152,6 +157,16 @@ export function MemoryView() {
               >
                 <ArrowLeftRight size={13} />
               </button>
+              <button
+                type="button"
+                onClick={m.collapseAll}
+                disabled={!anyOpen}
+                title={t.memory.collapseAll}
+                aria-label={t.memory.collapseAll}
+                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-muted transition-colors enabled:hover:bg-elevated/60 enabled:hover:text-text-primary disabled:opacity-40"
+              >
+                <CopyMinus size={13} />
+              </button>
             </div>
             <NoteList
               notes={m.notes}
@@ -164,7 +179,6 @@ export function MemoryView() {
               creating={m.creating}
               openFolders={m.openFolders}
               onToggleFolder={m.toggleFolder}
-              onCollapseAll={m.collapseAll}
               onShowInFinder={desktop ? () => void m.reveal() : undefined}
               onSearch={m.search}
               onOpen={(p) => void m.open(p)}

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ChevronDown, CopyMinus, FilePlus2, FileText, Folder, FolderOpen, FolderPlus, Search, X } from 'lucide-react'
+import { ChevronDown, FilePlus2, FileText, Folder, FolderOpen, FolderPlus, Search, X } from 'lucide-react'
 import type { GraphStyle, NoteMeta, SearchHit } from '@shared/types/memory'
 import { TechLabel } from '@/components/ui/TechLabel'
 import { cn } from '@/lib/cn'
@@ -19,7 +19,6 @@ interface Props {
   /** The folders open (the rest are closed — all of them after a start). */
   openFolders: string[]
   onToggleFolder: (dir: string) => void
-  onCollapseAll: () => void
   /** The vault in the Finder (the desktop only). */
   onShowInFinder?: () => void
   onSearch: (q: string) => void
@@ -37,7 +36,7 @@ const dirOf = (path: string) => (path.includes('/') ? path.slice(0, path.lastInd
 
 /**
  * Vault sidebar: a row of tools (search, the vault in the Finder, new note,
- * new folder, collapse all) — the magnifier turns it into the search field —
+ * new folder) spread over its width — the magnifier turns it into the search field —
  * then notes grouped by folder (root first). Notes and folders can be dragged
  * onto a folder — or onto the empty space below, which is the vault root. New
  * notes/folders get their name in an inline input.
@@ -68,8 +67,6 @@ export function NoteList(p: Props) {
   const dot = (folder: string) =>
     p.style.mode === 'colorful' ? slotColor(p.folderSlots.get(folder) ?? 0) : `rgb(var(--graph-${p.style.color}))`
 
-  // "Collapse all": nothing to do when no folder is open.
-  const anyOpen = groups.some(([dir]) => dir && p.openFolders.includes(dir))
   // Closing the search empties it and brings the tools back.
   const closeSearch = () => {
     setInput('')
@@ -121,7 +118,7 @@ export function NoteList(p: Props) {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex h-12 shrink-0 items-center gap-1 px-2">
+      <div className={cn('flex h-12 shrink-0 items-center px-2', searching ? 'gap-1' : 'justify-around')}>
         {searching ? (
           <label className="flex min-w-0 flex-1 items-center gap-2 rounded-md border border-hud/60 bg-surface/50 px-2.5 py-1.5 focus-within:border-cyan/50">
             <Search size={13} className="shrink-0 text-text-muted" />
@@ -154,9 +151,6 @@ export function NoteList(p: Props) {
             </Tool>
             <Tool label={t.memory.newFolder} onClick={() => p.onStartCreate('folder', '')}>
               <FolderPlus size={15} />
-            </Tool>
-            <Tool label={t.memory.collapseAll} onClick={p.onCollapseAll} disabled={!anyOpen}>
-              <CopyMinus size={15} />
             </Tool>
           </>
         )}
@@ -330,15 +324,14 @@ function CreateInput({
 }
 
 /** One of the tools in the row over the notes. */
-function Tool({ label, aria, onClick, disabled, children }: { label: string; aria?: string; onClick: () => void; disabled?: boolean; children: React.ReactNode }) {
+function Tool({ label, aria, onClick, children }: { label: string; aria?: string; onClick: () => void; children: React.ReactNode }) {
   return (
     <button
       type="button"
       title={label}
       aria-label={aria ?? label}
       onClick={onClick}
-      disabled={disabled}
-      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-muted transition-colors enabled:hover:bg-elevated/60 enabled:hover:text-text-primary disabled:opacity-40"
+      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-elevated/60 hover:text-text-primary"
     >
       {children}
     </button>

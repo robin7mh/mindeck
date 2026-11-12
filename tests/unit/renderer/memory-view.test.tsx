@@ -143,6 +143,10 @@ describe('MemoryView', () => {
     expect(screen.queryByLabelText('Show vault in Finder')).toBeNull()
     fireEvent.click(screen.getByLabelText('Open another vault'))
     expect(a.pickVault).toHaveBeenCalled()
+    // "Collapse all" sits in the vault's line, right of it — with no folder open, nothing to do
+    const collapse = screen.getByRole('button', { name: 'Collapse all folders' })
+    expect(screen.getByLabelText('Open another vault').nextElementSibling).toBe(collapse)
+    expect(collapse).toBeDisabled()
 
     const g = seen.graph as { onOpen(p: string): void; onOpenGhost(t: string): void; style: unknown }
     expect(g.style).toEqual({ mode: 'single', color: 'pink' })
@@ -155,9 +159,7 @@ describe('MemoryView', () => {
     l.onShowInFinder()
     expect(a.reveal).toHaveBeenCalled()
     l.onToggleFolder('X')
-    l.onCollapseAll()
     expect(a.toggleFolder).toHaveBeenCalledWith('X')
-    expect(a.collapseAll).toHaveBeenCalled()
     l.onOpen('B.md')
     l.onSubmitCreate('Neu')
     l.onMoveNote('A.md', 'X')
@@ -166,6 +168,22 @@ describe('MemoryView', () => {
     expect(a.submitCreate).toHaveBeenCalledWith('Neu')
     expect(a.moveNote).toHaveBeenCalledWith('A.md', 'X')
     expect(a.moveFolder).toHaveBeenCalledWith('X', 'Y')
+  })
+
+  it('collapse all: on while a folder that is there is open — not for one gone', () => {
+    installBridge()
+    const a = spyActions()
+    const notes = [{ path: 'Ich/A.md', title: 'A', folder: 'Ich', tags: [], modifiedAt: '', linkCount: 0 }, { path: 'Root.md', title: 'Root', folder: '', tags: [], modifiedAt: '', linkCount: 0 }]
+    useMemory.setState({ status: status(), view: 'graph', graph: { nodes: [], edges: [] }, notes, folders: ['Leer'], openFolders: ['Weg'] })
+    render(<MemoryView />)
+    const collapse = screen.getByRole('button', { name: 'Collapse all folders' })
+    expect(collapse).toBeDisabled() // only a folder that's gone is "open"
+    act(() => useMemory.setState({ openFolders: ['Ich'] })) // a folder of a note
+    expect(collapse).toBeEnabled()
+    act(() => useMemory.setState({ openFolders: ['Leer'] })) // an empty folder
+    expect(collapse).toBeEnabled()
+    fireEvent.click(collapse)
+    expect(a.collapseAll).toHaveBeenCalled()
   })
 
   it('note view: the editor and its callbacks; default style; Windows home shortening', () => {
