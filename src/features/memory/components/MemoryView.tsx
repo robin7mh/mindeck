@@ -137,17 +137,6 @@ export function MemoryView() {
                   {m.status.root.replace(/^\/Users\/[^/]+|^[A-Z]:\\Users\\[^\\]+/i, '~')}
                 </span>
               </span>
-              {desktop && (
-                <button
-                  type="button"
-                  onClick={() => void m.reveal()}
-                  title={t.memory.showInFinder}
-                  aria-label={t.memory.showVault}
-                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-elevated/60 hover:text-text-primary"
-                >
-                  <FolderOpen size={14} />
-                </button>
-              )}
               <DailySettings
                 daily={m.status.dailyNotes}
                 folders={m.folders}
@@ -173,6 +162,10 @@ export function MemoryView() {
               folderSlots={folderSlots}
               style={style}
               creating={m.creating}
+              openFolders={m.openFolders}
+              onToggleFolder={m.toggleFolder}
+              onCollapseAll={m.collapseAll}
+              onShowInFinder={desktop ? () => void m.reveal() : undefined}
               onSearch={m.search}
               onOpen={(p) => void m.open(p)}
               onStartCreate={m.startCreate}

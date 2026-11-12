@@ -1,4 +1,5 @@
 import { act, createEvent, fireEvent, render, screen, within } from '@testing-library/react'
+import { useState } from 'react'
 import { EditorView } from '@codemirror/view'
 import { describe, expect, it, vi } from 'vitest'
 import type { Note, NoteMeta, SearchHit } from '@shared/types/memory'
@@ -54,6 +55,10 @@ function listProps(over: Partial<Parameters<typeof NoteList>[0]> = {}) {
     folderSlots: new Map([['Ideen', 1]]),
     style: { mode: 'colorful' as const, color: 'cyan' as const },
     creating: null,
+    openFolders: ['Ideen', 'Ideen/Sub', 'Leer', 'Loose', 'Zeta'],
+    onToggleFolder: vi.fn(),
+    onCollapseAll: vi.fn(),
+    onShowInFinder: vi.fn(),
     onSearch: vi.fn(),
     onOpen: vi.fn(),
     onStartCreate: vi.fn(),
@@ -63,6 +68,19 @@ function listProps(over: Partial<Parameters<typeof NoteList>[0]> = {}) {
     onMoveFolder: vi.fn(),
     ...over
   }
+}
+
+/** The list with its folders open and closed as the memory store keeps them. */
+function OpenList(p: Parameters<typeof NoteList>[0]) {
+  const [open, setOpen] = useState(p.openFolders)
+  return (
+    <NoteList
+      {...p}
+      openFolders={open}
+      onToggleFolder={(dir) => setOpen((o) => (o.includes(dir) ? o.filter((d) => d !== dir) : [...o, dir]))}
+      onCollapseAll={() => setOpen([])}
+    />
+  )
 }
 
 const dt = (data: Record<string, string> = {}) => ({
@@ -76,7 +94,7 @@ const dt = (data: Record<string, string> = {}) => ({
 describe('NoteList', () => {
   it('groups notes by folder (root first, sorted), marks the active note and link counts', () => {
     const p = listProps()
-    const { container } = render(<NoteList {...p} />)
+    const { container } = render(<OpenList {...p} />)
     const folderNames = [...container.querySelectorAll('span.truncate.font-sans.text-\\[12px\\]')].map((e) => e.textContent)
     expect(folderNames).toEqual(['Ideen', 'Ideen/Sub', 'Leer', 'Loose', 'Zeta'])
     const titles = [...container.querySelectorAll('span.min-w-0.flex-1.truncate')].map((e) => e.textContent)
@@ -103,9 +121,8 @@ describe('NoteList', () => {
     expect(p.onStartCreate).toHaveBeenCalledWith('folder', '')
   })
 
-  it('collapses every folder at once, like VS Code — the root notes stay; nothing to do while searching or all closed', () => {
-    const p = listProps()
-    const { rerender } = render(<NoteList {...p} />)
+  it('collapses every folder at once, like VS Code — the root notes stay; nothing to do when all are closed', () => {
+    render(<OpenList {...listProps()} />)
     const button = screen.getByRole('button', { name: 'Collapse all folders' })
     expect(button).toBeEnabled()
     fireEvent.click(button)
@@ -119,9 +136,38 @@ describe('NoteList', () => {
     fireEvent.click(screen.getByText('Ideen'))
     expect(screen.getByText('A')).toBeInTheDocument()
     expect(button).toBeEnabled()
-    // while searching there is no tree to close
-    rerender(<NoteList {...p} query="alpha" />)
-    expect(screen.getByRole('button', { name: 'Collapse all folders' })).toBeDisabled()
+  })
+
+  it('a row of tools — search, the vault in the Finder, new note, new folder, collapse all; the magnifier turns it into the search field', () => {
+    const p = listProps()
+    const { rerender } = render(<NoteList {...p} />)
+    // the tools, in their order — no search field yet
+    expect(screen.getAllByRole('button').slice(0, 5).map((b) => b.getAttribute('aria-label'))).toEqual(['Search memory…', 'Show vault in Finder', 'New note', 'New folder', 'Collapse all folders'])
+    expect(screen.queryByRole('textbox', { name: 'Search memory…' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Show vault in Finder' }))
+    expect(p.onShowInFinder).toHaveBeenCalled()
+    // the magnifier: the other tools go, the field takes the row, the caret in it
+    fireEvent.click(screen.getByRole('button', { name: 'Search memory…' }))
+    const field = screen.getByRole('textbox', { name: 'Search memory…' })
+    expect(field).toHaveFocus()
+    expect(screen.queryByRole('button', { name: 'New note' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Collapse all folders' })).toBeNull()
+    // Escape empties it and brings the tools back
+    fireEvent.change(field, { target: { value: 'ide' } })
+    fireEvent.keyDown(field, { key: 'a' })
+    expect(screen.getByRole('textbox', { name: 'Search memory…' })).toBeInTheDocument()
+    fireEvent.keyDown(field, { key: 'Escape' })
+    expect(p.onSearch).toHaveBeenLastCalledWith('')
+    expect(screen.queryByRole('textbox', { name: 'Search memory…' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'New note' })).toBeInTheDocument()
+    // the web UI has no Finder: no such tool
+    rerender(<NoteList {...p} onShowInFinder={undefined} />)
+    expect(screen.queryByRole('button', { name: 'Show vault in Finder' })).toBeNull()
+  })
+
+  it('a search still on (memory came back on screen): the field shows it', () => {
+    render(<NoteList {...listProps({ query: 'ide' })} />)
+    expect(screen.getByRole('textbox', { name: 'Search memory…' })).toHaveValue('ide')
   })
 
   it('folder dots follow the graph style', () => {
@@ -141,6 +187,7 @@ describe('NoteList', () => {
       vi.advanceTimersByTime(200)
     })
     expect(p.onSearch).toHaveBeenLastCalledWith('')
+    fireEvent.click(screen.getByRole('button', { name: 'Search memory…' }))
     fireEvent.change(screen.getByPlaceholderText('Search memory…'), { target: { value: 'ide' } })
     act(() => {
       vi.advanceTimersByTime(200)
@@ -168,8 +215,10 @@ describe('NoteList', () => {
     expect(screen.getByText('rrr').closest('button')!.className).toContain('border-transparent')
     fireEvent.click(screen.getByText('rrr'))
     expect(p.onOpen).toHaveBeenCalledWith('Root.md')
-    fireEvent.click(screen.getByLabelText('Clear search'))
-    expect(screen.queryByLabelText('Clear search')).toBeNull()
+    // the X closes the search: emptied, the tools back
+    fireEvent.click(screen.getByLabelText('Close search'))
+    expect(screen.queryByLabelText('Close search')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Search memory…' })).toBeInTheDocument()
     vi.useRealTimers()
   })
 

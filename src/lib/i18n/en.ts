@@ -763,6 +763,7 @@ agents: {
     // list
     search: 'Search memory…',
     clearSearch: 'Clear search',
+    closeSearch: 'Close search',
     results: (n: number) => `${n} results`,
     newNoteIn: (dir: string) => `New note in ${dir}`,
     newFolderIn: (dir: string) => `New folder in ${dir}`,

@@ -49,7 +49,8 @@ function spyActions() {
   const names = [
     'init', 'onChanged', 'save', 'setGraphStyle', 'setView', 'startCreate', 'clearError', 'createVault', 'pickVault',
     'reveal', 'setVault', 'search', 'open', 'cancelCreate', 'submitCreate', 'moveNote', 'moveFolder', 'openOrCreate', 'setDraft',
-    'setMode', 'rename', 'link', 'unlink', 'trash', 'openDaily', 'setDailyNotes', 'setSource', 'renderTemplate', 'attach', 'loadImage', 'loadDisk', 'discardDraft'
+    'setMode', 'rename', 'link', 'unlink', 'trash', 'openDaily', 'setDailyNotes', 'setSource', 'renderTemplate', 'attach', 'loadImage', 'loadDisk', 'discardDraft',
+    'toggleFolder', 'collapseAll'
   ] as const
   const spies = Object.fromEntries(names.map((n) => [n, vi.fn(async () => {})])) as Record<(typeof names)[number], ReturnType<typeof vi.fn>>
   useMemory.setState(spies as never)
@@ -138,9 +139,9 @@ describe('MemoryView', () => {
     expect(a.setView).toHaveBeenCalledWith('graph')
     fireEvent.click(screen.getByText('New note'))
     expect(a.startCreate).toHaveBeenCalledWith('note', '')
-    fireEvent.click(screen.getByLabelText('Show vault in Finder'))
+    // the vault in the Finder: a tool over the notes now, not in the vault's line
+    expect(screen.queryByLabelText('Show vault in Finder')).toBeNull()
     fireEvent.click(screen.getByLabelText('Open another vault'))
-    expect(a.reveal).toHaveBeenCalled()
     expect(a.pickVault).toHaveBeenCalled()
 
     const g = seen.graph as { onOpen(p: string): void; onOpenGhost(t: string): void; style: unknown }
@@ -151,6 +152,12 @@ describe('MemoryView', () => {
     expect(a.openOrCreate).toHaveBeenCalledWith('Ghost')
 
     const l = seen.list as Record<string, (...args: string[]) => void>
+    l.onShowInFinder()
+    expect(a.reveal).toHaveBeenCalled()
+    l.onToggleFolder('X')
+    l.onCollapseAll()
+    expect(a.toggleFolder).toHaveBeenCalledWith('X')
+    expect(a.collapseAll).toHaveBeenCalled()
     l.onOpen('B.md')
     l.onSubmitCreate('Neu')
     l.onMoveNote('A.md', 'X')

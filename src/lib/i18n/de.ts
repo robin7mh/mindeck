@@ -746,6 +746,7 @@ agents: {
     newVaultAt: (path) => `Neuer Vault wird angelegt in ${path}`,
     search: 'Gedächtnis durchsuchen …',
     clearSearch: 'Suche leeren',
+    closeSearch: 'Suche schließen',
     results: (n) => `${n} Treffer`,
     newNoteIn: (dir) => `Neue Notiz in ${dir}`,
     newFolderIn: (dir) => `Neuer Ordner in ${dir}`,

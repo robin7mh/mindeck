@@ -510,6 +510,7 @@ describe('memory store', () => {
     vault(['Ich/A.md'])
     await m().init()
     expect(m().note!.path).toBe('Ich/A.md')
+    expect(m().openFolders).toEqual([]) // opened by itself at the start: its folder stays closed
 
     useMemory.setState(initial.memory, true)
     vault([])
@@ -519,6 +520,26 @@ describe('memory store', () => {
     installBridge({ 'memory:status': () => fail('no vault service') })
     await m().init()
     expect(m()).toMatchObject({ error: 'no vault service', loading: false })
+  })
+
+  it('the folders open in the note list: none at the start; a note opened, or one made in a folder, opens its folder; collapse all', async () => {
+    vault(['Willkommen.md', 'Ich/A.md', 'Ich/Tief/B.md'])
+    expect(m().openFolders).toEqual([])
+    await m().open('Ich/A.md')
+    await m().open('Ich/Tief/B.md')
+    await m().open('Ich/A.md') // open already
+    await m().open('Willkommen.md') // the root is no folder
+    expect(m().openFolders).toEqual(['Ich', 'Ich/Tief'])
+    m().toggleFolder('Ich')
+    expect(m().openFolders).toEqual(['Ich/Tief'])
+    m().toggleFolder('Ich')
+    expect(m().openFolders).toEqual(['Ich/Tief', 'Ich'])
+    m().collapseAll()
+    expect(m().openFolders).toEqual([])
+    // a new note in a closed folder: the folder opens, so its name is typed there
+    m().startCreate('note', 'Ich')
+    m().startCreate('note', '')
+    expect(m().openFolders).toEqual(['Ich'])
   })
 
   it('edits autosave after a pause, keep typing that happened mid-save, and flush on demand', async () => {

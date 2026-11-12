@@ -75,6 +75,8 @@ interface MemoryState {
   /** The draft could not be written (a read-only vault, a note too large): it stays until it can be, or the user lets it go. */
   saveFailed: boolean
   creating: Creating | null
+  /** The folders open in the note list — none after a start; they stay open while Mindeck runs. */
+  openFolders: string[]
 
   query: string
   hits: SearchHit[]
@@ -89,7 +91,11 @@ interface MemoryState {
   /** Use an existing folder as the vault (the web UI's folder browser). */
   setVault: (path: string) => Promise<void>
   reveal: () => Promise<void>
+  /** Opens a note — and its folder in the note list, so it shows there (like VS Code's "Reveal in Explorer"). */
   open: (path: string, mode?: 'edit' | 'preview') => Promise<void>
+  toggleFolder: (dir: string) => void
+  /** Every folder closed, like VS Code's "Collapse All". */
+  collapseAll: () => void
   /** Follow a link by title: open the note, or create it (Obsidian behavior). */
   openOrCreate: (title: string) => Promise<void>
   setDraft: (body: string) => void
@@ -200,6 +206,11 @@ export const useMemory = create<MemoryState>((set, get) => {
     return { path: note.path, draft, modifiedAt: saved.modifiedAt }
   }
 
+  /** A folder open in the note list (the root, '', is no folder). */
+  const reveal = (dir: string) => {
+    if (dir && !get().openFolders.includes(dir)) set((s) => ({ openFolders: [...s.openFolders, dir] }))
+  }
+
   /** The draft is on disk (so something may replace it) — else the note comes up, with what stopped it and the way out. */
   const saved = async () => {
     if (await get().save()) return true
@@ -218,6 +229,7 @@ export const useMemory = create<MemoryState>((set, get) => {
     conflict: false,
     saveFailed: false,
     creating: null,
+    openFolders: [],
     query: '',
     hits: [],
     loading: false,
@@ -233,7 +245,8 @@ export const useMemory = create<MemoryState>((set, get) => {
         else if (notes.length) {
           const first = notes.find((n) => /^willkommen\.md$/i.test(n.path)) ?? notes[0]
           await get().open(first.path)
-          set({ view: 'graph' })
+          // The note opened by itself at the start: the folders stay closed until the user opens one.
+          set({ view: 'graph', openFolders: [] })
         }
       } catch (err) {
         fail(err)
@@ -302,10 +315,15 @@ export const useMemory = create<MemoryState>((set, get) => {
         const note = await ipc('memory:read', { path })
         if (seq !== openSeq) return
         set({ note, draft: note.body, view: 'note', mode: mode ?? get().mode, error: undefined, conflict: false, saveFailed: false })
+        reveal(note.path.includes('/') ? note.path.slice(0, note.path.lastIndexOf('/')) : '')
       } catch (err) {
         fail(err)
       }
     },
+
+    toggleFolder: (dir) => set((s) => ({ openFolders: s.openFolders.includes(dir) ? s.openFolders.filter((d) => d !== dir) : [...s.openFolders, dir] })),
+
+    collapseAll: () => set({ openFolders: [] }),
 
     openOrCreate: async (title) => {
       const match = findNote(title, get().notes)
@@ -367,7 +385,11 @@ export const useMemory = create<MemoryState>((set, get) => {
       set({ draft: note.body, conflict: false, saveFailed: false, error: undefined })
     },
 
-    startCreate: (kind, parent = '', template) => set({ creating: { kind, parent, ...(template ? { template } : {}) } }),
+    startCreate: (kind, parent = '', template) => {
+      // Inside a closed folder: it opens, so the name is typed where the note will be.
+      reveal(parent)
+      set({ creating: { kind, parent, ...(template ? { template } : {}) } })
+    },
     cancelCreate: () => set({ creating: null }),
 
     submitCreate: async (name) => {
