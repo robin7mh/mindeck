@@ -39,7 +39,7 @@ Repository → Settings → Secrets and variables → Actions.
 
 **Missing signing secrets stop a release** (a tag): the updater would hand the unsigned installers to every user. A manual run (*Run workflow*) still builds without them and says so with a warning:
 
-- no `CSC_LINK`: the macOS app is unsigned and not notarized — Gatekeeper blocks it ("damaged / can't be opened") on every other Mac.
+- no `CSC_LINK`: the macOS app is only signed ad hoc and not notarized — Gatekeeper blocks it ("damaged / can't be opened") on every other Mac.
 - `CSC_LINK` but incomplete `APPLE_*`: signed, not notarized — Gatekeeper still warns.
 - no Windows signing: the installer works, SmartScreen warns ("Windows protected your PC") until it gains reputation.
 
@@ -74,9 +74,13 @@ A manual run (Actions → Release → *Run workflow*) builds everything as workf
 ## Local builds
 
 ```bash
-npm run dist:mac      # on a Mac; unsigned: CSC_IDENTITY_AUTO_DISCOVERY=false npm run dist:mac -- -c.mac.identity=null
-npm run dist:win      # on Windows
-npm run dist:linux    # on Linux, for the machine's architecture
+npm run dist:mac:local  # on a Mac: release/Mindeck-mac-arm64.dmg for this Mac, Mindeck Cloud built in
+npm run dist:win        # on Windows
+npm run dist:linux      # on Linux, for the machine's architecture
 ```
+
+`dist:mac:local` (`scripts/dist-mac-local.sh`) fetches the cloud's entitlement key itself and signs with a certificate from the keychain when there is one: Developer ID Application, else the free Apple Development one Xcode makes. The app then keeps one identity from build to build, and the keychain's *Always Allow* for its safe storage holds. Without a certificate it signs ad hoc, and macOS asks for the keychain password again after each build. The build isn't notarized, so Gatekeeper blocks it on other Macs.
+
+Never `-c.mac.identity=null`: electron-builder flips the fuses inside Electron's framework binary, which breaks its signature. macOS then kills the unsigned app at launch (`SIGKILL (Code Signature Invalid)`). Ad hoc also needs the hardened runtime off, because its library validation wants a Team ID.
 
 Set `MINDECK_CLOUD_URL` (e.g. `http://localhost:8080`) for a build against a local cloud.
