@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path'
 import type { IpcResult } from '@shared/ipc/contract'
 import type { BrowserState } from '@shared/types/browser'
 import { expect, test } from './fixtures'
-import { localSite } from './helpers'
+import { localSite, openSettings } from './helpers'
 
 test('boots into the Command Center without any database; the activity log is a file', async ({ page, home }) => {
   await expect(page.getByText('Command Center').first()).toBeVisible()
@@ -41,18 +41,20 @@ test('navigates every module', async ({ page }) => {
   await nav('System').click()
   await expect(page.getByText('Top processes')).toBeVisible()
   await nav('Settings').click()
-  await expect(page.getByText('Remote access · web & mobile')).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'General & appearance' })).toBeVisible()
   await nav('Core').click()
   await expect(page.getByLabel('Open Projects')).toBeVisible()
 })
 
 test('settings: the embedded API server starts on demand and answers', async ({ page }) => {
-  await page.getByTitle('Settings', { exact: true }).click()
-  await expect(page.getByText('API server off')).toBeVisible()
+  await openSettings(page, 'Phone & remote access')
+  await expect(page.getByText('Remote access is off')).toBeVisible()
+  await page.getByText('Technical details').click()
+  await expect(page.getByText('API server off', { exact: true })).toBeVisible()
   await page.getByLabel('Port').fill('7499')
   await page.getByLabel('Port').blur()
   await page.getByLabel('Run the API server').check()
-  await expect(page.getByText('API server running')).toBeVisible()
+  await expect(page.getByText('API server running', { exact: true })).toBeVisible()
   const res = await fetch('http://127.0.0.1:7499/api/health')
   expect(await res.json()).toMatchObject({ ok: true, name: 'Mindeck', mode: 'desktop' })
   await page.getByRole('button', { name: 'Pair a device' }).click()
@@ -60,7 +62,7 @@ test('settings: the embedded API server starts on demand and answers', async ({ 
   await expect(page.getByText(/Only this computer can connect right now/)).toBeVisible()
   await expect(page.getByLabel('Pairing QR code')).toHaveCount(0)
   await page.getByLabel('Run the API server').uncheck()
-  await expect(page.getByText('API server off')).toBeVisible()
+  await expect(page.getByText('API server off', { exact: true })).toBeVisible()
 })
 
 test('the terminal runs a real shell, keeps it across modules and splits panes', async ({ page }) => {

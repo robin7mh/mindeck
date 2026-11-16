@@ -1,12 +1,18 @@
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { choose, fail, installBridge, installRemote, settle } from './bridge'
 import { DEFAULT_TERMINAL_SETTINGS, type TerminalSettings } from '@shared/types/terminal'
-import { TerminalCard } from '@/features/settings/components/TerminalCard'
+import { TerminalSection } from '@/features/settings/components/sections/TerminalSection'
+import { SettingsView } from '@/features/settings/components/SettingsView'
+import { useSettings } from '@/features/settings/store'
 import { useTerminalSettings } from '@/features/terminal/settings'
 
 const initial = useTerminalSettings.getState()
-beforeEach(() => useTerminalSettings.setState(initial, true))
+const initialSettings = useSettings.getState()
+beforeEach(() => {
+  useTerminalSettings.setState(initial, true)
+  useSettings.setState(initialSettings, true)
+})
 
 /** A core that keeps what it is told (like the real settings file). */
 function core(start: Partial<TerminalSettings> = {}) {
@@ -25,8 +31,14 @@ const server = { id: 'custom-s', name: 'Server', command: 'ssh', args: ['host'],
 describe('Settings → Terminal', () => {
   it('font, size, line height, cursor, scrollback and the switches', async () => {
     const { configure } = core()
-    render(<TerminalCard />)
+    render(<TerminalSection />)
     await act(settle)
+    // Line height, scrollback, the reattach buffer and GPU rendering are folded away under "Advanced".
+    const advanced = screen.getByText('Advanced').closest('details')!
+    expect(advanced).not.toHaveAttribute('open')
+    for (const label of ['Line height', 'Scrollback (lines)', 'Kept for reattaching (KB)']) expect(advanced).toContainElement(screen.getByLabelText(label))
+    expect(advanced).toContainElement(screen.getByRole('switch', { name: 'GPU rendering' }))
+    expect(advanced).not.toContainElement(screen.getByLabelText('Size'))
     const font = screen.getByLabelText('Font')
     fireEvent.change(font, { target: { value: ' Fira Code ' } })
     fireEvent.keyDown(font, { key: 'Enter' })
@@ -59,8 +71,17 @@ describe('Settings → Terminal', () => {
     fireEvent.blur(screen.getByLabelText('Kept for reattaching (KB)'))
     expect(configure).toHaveBeenLastCalledWith({ bufferKb: 64 })
 
-    choose('Cursor', 'Block')
+    const cursor = screen.getByRole('radiogroup', { name: 'Cursor' })
+    expect(within(cursor).getAllByRole('radio').map((r) => r.textContent)).toEqual(['Bar', 'Block', 'Underline'])
+    expect(within(cursor).getByRole('radio', { name: 'Bar' })).toHaveAttribute('aria-checked', 'true')
+    const cursorCalls = configure.mock.calls.length
+    fireEvent.click(within(cursor).getByRole('radio', { name: 'Bar' })) // already so: nothing to save
+    expect(configure.mock.calls.length).toBe(cursorCalls)
+    fireEvent.click(within(cursor).getByRole('radio', { name: 'Block' }))
     expect(configure).toHaveBeenLastCalledWith({ cursorStyle: 'block' })
+    await act(settle)
+    expect(within(cursor).getByRole('radio', { name: 'Block' })).toHaveAttribute('aria-checked', 'true')
+    expect(within(cursor).getByRole('radio', { name: 'Bar' })).toHaveAttribute('aria-checked', 'false')
     for (const [name, key, value] of [
       ['Blinking cursor', 'cursorBlink', false],
       ['Copy on select', 'copyOnSelect', true],
@@ -77,11 +98,15 @@ describe('Settings → Terminal', () => {
 
   it('profiles: add, edit, remove (the default goes with it)', async () => {
     const { configure, get } = core({ profiles: [server], defaultProfile: 'custom-s' })
-    render(<TerminalCard />)
+    render(<TerminalSection />)
     await act(settle)
     expect(screen.getByText('ssh host')).toBeInTheDocument()
+    expect(screen.getByRole('combobox', { name: 'Default profile' })).toHaveTextContent('Server')
 
     fireEvent.click(screen.getByText('Add profile'))
+    // A new profile's form comes after the profiles there are, in the Shell group.
+    expect(screen.getByText('ssh host').compareDocumentPosition(screen.getByLabelText('Name')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(screen.getByRole('heading', { name: 'Shell' }).closest('section')).toContainElement(screen.getByLabelText('Name'))
     const save = () => screen.getByRole('button', { name: 'Save' })
     expect(save()).toBeDisabled()
     expect(screen.getByText('Add profile').closest('button')).toBeDisabled() // one at a time
@@ -99,7 +124,15 @@ describe('Settings → Terminal', () => {
     expect(added).toMatchObject({ name: 'Node', command: 'node', args: ['--inspect', '-i'], env: { NODE_ENV: 'dev', B: 'a=b' }, cwd: '/srv' })
     expect(added.id).toMatch(/^custom-/)
 
+    expect(screen.getByText('node --inspect -i')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Name')).toBeNull() // saved: the form is gone
+
     fireEvent.click(screen.getByLabelText('Edit Server'))
+    // The form takes the profile's place: before the other one, its row gone meanwhile.
+    expect(screen.queryByText('ssh host')).toBeNull()
+    expect(screen.getByLabelText('Name')).toHaveValue('Server')
+    expect(screen.getByLabelText('Name').compareDocumentPosition(screen.getByText('node --inspect -i')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(screen.getByText('Add profile').closest('button')).toBeDisabled()
     expect(screen.getByLabelText('Environment (NAME=value, one per line)')).toHaveValue('A=1')
     fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Prod' } })
     fireEvent.click(save())
@@ -118,25 +151,42 @@ describe('Settings → Terminal', () => {
     expect(configure).toHaveBeenLastCalledWith({ profiles: [], defaultProfile: '' })
   })
 
-  it('no more than the limit of profiles; errors show; the web UI has no such card', async () => {
+  it('no more than the limit of profiles; errors show', async () => {
     core({ profiles: Array.from({ length: 20 }, (_, i) => ({ ...server, id: `custom-${i}`, name: `P${i}` })) })
-    const { unmount } = render(<TerminalCard />)
+    const { unmount } = render(<TerminalSection />)
     await act(settle)
     expect(screen.getByText('Add profile').closest('button')).toBeDisabled()
     unmount()
 
     installBridge({ 'terminal:configure': () => fail('denied') })
-    render(<TerminalCard />)
+    render(<TerminalSection />)
     await act(settle)
     fireEvent.click(screen.getByRole('switch', { name: 'GPU rendering' }))
     await act(settle)
     expect(screen.getByText('denied')).toBeInTheDocument()
   })
 
-  it('in a browser (web UI) it isn’t shown', async () => {
+  it('in a browser (web UI) the settings don’t offer it — not even when it was the open section', async () => {
     installRemote()
-    const { container } = render(<TerminalCard />)
+    useSettings.setState({ section: 'terminal' })
+    const { unmount } = render(<SettingsView />)
     await act(settle)
-    expect(container).toBeEmptyDOMElement()
+    const nav = screen.getByRole('navigation', { name: 'Settings sections' })
+    expect(within(nav).getByRole('button', { name: 'Editor' })).toBeInTheDocument()
+    expect(within(nav).queryByRole('button', { name: 'Terminal' })).toBeNull()
+    expect(screen.getByRole('heading', { name: 'General & appearance' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Terminal' })).toBeNull()
+    expect(screen.queryByRole('switch', { name: 'Shell integration' })).toBeNull()
+    unmount()
+
+    // The desktop window has it, and opens it.
+    core()
+    useSettings.setState({ section: 'general' })
+    render(<SettingsView />)
+    await act(settle)
+    fireEvent.click(within(screen.getByRole('navigation', { name: 'Settings sections' })).getByRole('button', { name: 'Terminal' }))
+    await act(settle)
+    expect(screen.getByRole('heading', { name: 'Terminal' })).toBeInTheDocument()
+    expect(screen.getByRole('switch', { name: 'Shell integration' })).toBeChecked()
   })
 })

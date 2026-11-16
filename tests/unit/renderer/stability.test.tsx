@@ -1,9 +1,10 @@
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import type { ErrorInfo } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { installBridge, settle, choose } from './bridge'
 import { AppBoundary, installErrorReporting, ModuleBoundary, reportError } from '@/components/shell/ErrorBoundary'
-import { DesktopCard } from '@/features/settings/components/DesktopCard'
+import { AboutSection } from '@/features/settings/components/sections/AboutSection'
+import { GeneralSection } from '@/features/settings/components/sections/GeneralSection'
 import { useLocale } from '@/lib/i18n'
 import type { DesktopStatus } from '@shared/types/desktop'
 
@@ -168,7 +169,7 @@ describe('error reporting', () => {
   })
 })
 
-describe('Settings → Desktop app', () => {
+describe('Settings → the desktop app (General, About)', () => {
   const status = (over: Partial<DesktopStatus> = {}): DesktopStatus => ({
     platform: 'linux',
     logsDir: '/home/me/Mindeck/logs',
@@ -176,19 +177,26 @@ describe('Settings → Desktop app', () => {
     closeBehavior: 'ask',
     ...over
   })
+  const close = () => screen.getByRole('combobox', { name: /When the window closes/ })
 
   it('Linux without a keyring: warns about plain-text secrets; the close behavior is a choice', async () => {
     let current = status({ secretsEncrypted: false })
     const configure = vi.fn((p: { closeBehavior: DesktopStatus['closeBehavior'] }) => (current = { ...current, ...p }))
     const bridge = installBridge({ 'desktop:status': () => current, 'desktop:configure': configure as never, 'desktop:diagnostics': () => 'Mindeck 1.0' }, 'linux')
-    render(<DesktopCard />)
+    const { unmount } = render(<GeneralSection />)
     expect(await screen.findByText('Secrets are stored without encryption')).toBeInTheDocument()
-    expect(screen.getByRole('combobox', { name: /When the window closes/ })).toHaveTextContent('Ask every time')
+    expect(screen.getByRole('alert')).toHaveTextContent(/Secrets are stored without encryption.*No keyring/)
+    expect(close()).toHaveTextContent('Ask every time')
+    expect(screen.queryByText('Always')).not.toBeInTheDocument()
     choose('When the window closes while agents or terminals run', 'Keep running in the background')
     await settle()
     expect(configure).toHaveBeenCalledWith({ closeBehavior: 'background' })
-    expect(screen.getByRole('combobox', { name: /When the window closes/ })).toHaveTextContent('Keep running in the background')
+    expect(close()).toHaveTextContent('Keep running in the background')
+    expect(screen.queryByRole('button', { name: /Open logs folder/ })).not.toBeInTheDocument() // under About
+    unmount()
 
+    render(<AboutSection />)
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument() // the warning is under General
     fireEvent.click(screen.getByRole('button', { name: /Open logs folder/ }))
     expect(bridge.invoke).toHaveBeenCalledWith('desktop:openLogs', undefined)
     await settle()
@@ -200,36 +208,73 @@ describe('Settings → Desktop app', () => {
   })
 
   it('macOS: explains the background instead; a logs folder no file manager opens is named; other failures stay quiet', async () => {
-    installBridge({
+    let opens = 0
+    const bridge = installBridge({
       'desktop:status': () => status({ platform: 'darwin' }),
-      'desktop:openLogs': () => Promise.reject(new Error('no')),
+      'desktop:openLogs': () => (opens++ ? undefined : Promise.reject(new Error('no'))),
       'desktop:diagnostics': () => Promise.reject(new Error('no')),
       'desktop:configure': () => Promise.reject(new Error('no'))
     })
-    render(<DesktopCard />)
-    expect(await screen.findByText(/On macOS, closing the window keeps Mindeck running/)).toBeInTheDocument()
+    const { unmount } = render(<GeneralSection />)
+    const mac = await screen.findByText(/On macOS, closing the window keeps Mindeck running/)
+    expect(mac.parentElement!.parentElement).toHaveTextContent('Always')
+    expect(screen.queryByRole('combobox', { name: /When the window closes/ })).not.toBeInTheDocument()
     expect(screen.queryByText('Secrets are stored without encryption')).not.toBeInTheDocument()
+    unmount()
+
+    render(<AboutSection />)
     fireEvent.click(screen.getByRole('button', { name: /Open logs folder/ }))
     fireEvent.click(screen.getByRole('button', { name: /Copy diagnostics/ }))
     await settle()
     expect(screen.getByRole('button', { name: /Copy diagnostics/ })).toBeInTheDocument()
+    expect(writeText).not.toHaveBeenCalled()
+    expect(bridge.invoke).toHaveBeenCalledWith('desktop:status', undefined) // where the logs are, asked only now
     expect(screen.getByRole('status')).toHaveTextContent('No file manager opened the folder — the logs are in /home/me/Mindeck/logs')
+    fireEvent.click(screen.getByRole('button', { name: /Open logs folder/ }))
+    await settle()
+    expect(screen.queryByRole('status')).not.toBeInTheDocument() // opened this time: the note goes
   })
 
   it('a failing configure keeps the old choice; nothing shows outside the desktop app or without an answer', async () => {
     installBridge({ 'desktop:status': () => status(), 'desktop:configure': () => Promise.reject(new Error('no')) }, 'win32')
-    const { unmount } = render(<DesktopCard />)
+    const { unmount } = render(<GeneralSection />)
     await screen.findByRole('combobox', { name: /When the window closes/ })
     choose('When the window closes while agents or terminals run', 'Quit Mindeck')
     await settle()
-    expect(screen.getByRole('combobox', { name: /When the window closes/ })).toHaveTextContent('Ask every time')
+    expect(close()).toHaveTextContent('Ask every time')
     unmount()
-    delete (window as { mindeck?: unknown }).mindeck
-    const { container } = render(<DesktopCard />)
-    expect(container).toBeEmptyDOMElement()
-    installBridge({ 'desktop:status': () => Promise.reject(new Error('no')) })
-    const second = render(<DesktopCard />)
+
+    // A logs folder that can't be opened, and no status to name it: quiet.
+    installBridge({ 'desktop:openLogs': () => Promise.reject(new Error('no')), 'desktop:status': () => Promise.reject(new Error('no')) })
+    const about = render(<AboutSection />)
+    fireEvent.click(screen.getByRole('button', { name: /Open logs folder/ }))
     await settle()
-    expect(second.container).toBeEmptyDOMElement()
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+    about.unmount()
+
+    delete (window as { mindeck?: unknown }).mindeck
+    const web = render(
+      <>
+        <GeneralSection />
+        <AboutSection />
+      </>
+    )
+    await settle()
+    expect(screen.getByRole('heading', { name: 'General & appearance' })).toBeInTheDocument() // the section itself is there
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.queryByRole('combobox', { name: /When the window closes/ })).not.toBeInTheDocument()
+    expect(screen.queryByText(/On macOS, closing the window/)).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'App behaviour' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Open logs folder/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Copy diagnostics/ })).not.toBeInTheDocument()
+    web.unmount()
+
+    installBridge({ 'desktop:status': () => Promise.reject(new Error('no')) })
+    render(<GeneralSection />)
+    await settle()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.queryByRole('combobox', { name: /When the window closes/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'App behaviour' })).not.toBeInTheDocument()
+    expect(within(screen.getByRole('heading', { name: 'Appearance' }).closest('section')!).getByRole('radiogroup', { name: 'Mode' })).toBeInTheDocument()
   })
 })

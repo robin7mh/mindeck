@@ -2056,7 +2056,134 @@ agents: {
     desktopApp: 'Desktop app',
     server: 'Server',
     desktopWindow: 'Desktop window',
-    pairedBrowser: 'Browser (paired)'
+    pairedBrowser: 'Browser (paired)',
+
+    // The settings' navigation and sections.
+    saved: 'Changes are saved right away.',
+    navLabel: 'Settings sections',
+    navGroups: { app: 'App', work: 'Work', data: 'Data & devices', help: 'Help' },
+    badgeSignIn: 'Sign in',
+    badgeOn: 'On',
+    sections: {
+      general: {
+        title: 'General & appearance',
+        intro: 'Language and how Mindeck looks on this device.'
+      },
+      ai: {
+        title: 'AI & agents',
+        intro: 'The built-in assistant and your own coding agents.'
+      },
+      editor: {
+        title: 'Editor',
+        intro: 'How the editor looks and what happens on save.'
+      },
+      languages: {
+        title: 'Languages & debuggers',
+        intro: 'Completion, errors and debugging per programming language. Runs on this computer, like in VS Code.'
+      },
+      terminal: {
+        title: 'Terminal',
+        intro: 'Look, behaviour and which shell starts by default.'
+      },
+      browser: {
+        title: 'Browser',
+        intro: 'The built-in browser for docs, the Live Server and agents.'
+      },
+      remote: {
+        title: 'Phone & remote access',
+        intro: 'Use Mindeck from your phone or another computer.'
+      },
+      memory: {
+        title: 'Memory',
+        intro: 'Where your notes and the agents’ knowledge are kept.'
+      },
+      migrate: {
+        title: 'Move over from VS Code',
+        intro: 'Mindeck takes over your editor settings, keybindings and snippets. VS Code itself stays untouched, and so does Mindeck’s design.'
+      },
+      about: {
+        title: 'About & diagnostics',
+        intro: 'The version, and help when something doesn’t work.'
+      }
+    },
+    groups: {
+      language: 'Language',
+      appearance: 'Appearance',
+      app: 'App behaviour',
+      assistant: 'Mindeck Assistant',
+      agents: 'Coding agents',
+      permissions: 'Permissions',
+      chat: 'Chat & notifications',
+      text: 'Text',
+      onSave: 'On save',
+      display: 'Display & controls',
+      ready: (n: number) => `Ready · ${n}`,
+      installable: (n: number) => `One click to install · ${n}`,
+      needsFirst: (n: number) => `Needs the language itself first · ${n}`,
+      shell: 'Shell',
+      look: 'Look',
+      behaviour: 'Behaviour',
+      searchTabs: 'Search & tabs',
+      privacy: 'Privacy & security',
+      downloads: 'Downloads & data',
+      reach: 'Reachable',
+      devicePowers: 'What paired devices may do',
+      location: 'Location',
+      reset: 'Reset'
+    },
+    advanced: 'Advanced',
+    always: 'Always',
+    interfaceLanguage: 'Interface language',
+    defaultLook: 'Default look',
+    startSetup: 'Start setup',
+    notSignedIn: 'Not signed in yet.',
+    signIn: 'Sign in',
+    connection: 'Connection',
+    efforts: { low: 'Fast', medium: 'Medium', high: 'High', xhigh: 'Very high', max: 'Max' } as Record<'low' | 'medium' | 'high' | 'xhigh' | 'max', string>,
+    ownKeyFold: 'For heavy use: your own API key',
+    apiKey: 'Anthropic API key',
+    needsKey: 'needs an API key',
+    agentReady: 'Ready',
+    agentMissing: 'Not installed',
+    agentNotReady: 'Not set up',
+    standingGrants: 'Standing approvals',
+    none: 'None',
+    indent: 'Indentation',
+    indentSpaces: (n: number) => `${n} spaces`,
+    indentTab: 'Tab',
+    toolReady: 'Ready',
+    partly: (tool: string, need: string) => `Partly — ${tool} ${need}`,
+    installFirst: (what: string) => `Install ${what} first`,
+    guide: 'Guide',
+    tabBar: 'Tab bar',
+    tabsTop: 'Top',
+    tabsSide: 'Side',
+    recommended: 'recommended',
+    caution: 'Caution',
+    importTitle: 'Import from another browser',
+    importHint: 'Bookmarks, history and the search engine from Chrome, Safari or Firefox.',
+    importButton: 'Import…',
+    history: 'Browsing history',
+    reachTitle: { off: 'Remote access is off', lan: 'Reachable on your home network', any: 'Reachable from anywhere' } as Record<'off' | 'lan' | 'any', string>,
+    reachDesc: {
+      off: 'Only this computer (127.0.0.1) — paired devices can’t connect.',
+      lan: 'Phones on the same Wi-Fi can connect. Pairing still protects it.',
+      any: 'Paired devices also connect over mobile data — through Mindeck Cloud, without an open port. The cloud sees no contents.'
+    } as Record<'off' | 'lan' | 'any', string>,
+    reachQuestion: 'Where may devices connect from?',
+    reachOptions: { off: 'Off', lan: 'Home network', any: 'Anywhere' } as Record<'off' | 'lan' | 'any', string>,
+    devicesPaired: (n: number) => (n === 1 ? '1 device paired' : `${n} devices paired`),
+    technical: 'Technical details',
+    addresses: 'Addresses',
+    copy: 'Copy',
+    copied: 'Copied',
+    vault: 'Vault',
+    revealFinder: 'Show in Finder',
+    revealFolder: 'Open folder',
+    logs: 'Logs',
+    logsHint: 'Logs and crash reports stay on this computer — nothing is sent anywhere.',
+    diagnostics: 'Diagnostics for support',
+    diagnosticsHint: 'Version, system and the latest errors — no keys, tokens or file contents.'
   }
 }
 

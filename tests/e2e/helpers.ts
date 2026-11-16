@@ -1,4 +1,4 @@
-import type { ElectronApplication } from '@playwright/test'
+import type { ElectronApplication, Page } from '@playwright/test'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
 
@@ -67,4 +67,10 @@ export async function pressInMain(app: ElectronApplication, keyCode: string, mod
     },
     { keyCode, mods }
   )
+}
+
+/** Settings → one of its sections, by its name in the settings' navigation. */
+export async function openSettings(page: Page, section: string): Promise<void> {
+  await page.getByTitle('Settings', { exact: true }).click()
+  await page.getByRole('navigation', { name: 'Settings sections' }).getByRole('button', { name: new RegExp(`^${section}`) }).click()
 }
