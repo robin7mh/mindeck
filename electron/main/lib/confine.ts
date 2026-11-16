@@ -1,21 +1,78 @@
-import { existsSync } from 'node:fs'
-import { realpath } from 'node:fs/promises'
-import { dirname, resolve, sep } from 'node:path'
+import { existsSync, type Stats } from 'node:fs'
+import { lstat, readlink, realpath } from 'node:fs/promises'
+import { dirname, isAbsolute, join, parse, relative, resolve, sep } from 'node:path'
+
+/** Links followed at most (the OS gives up after 40 too: ELOOP). */
+const MAX_LINKS = 40
 
 /**
  * Resolve `rel` inside `root`, following symlinks; refuses anything outside
  * (`outside-project`). The deepest existing ancestor decides, so the target
  * itself may not exist yet. Shared by the agent's file tools and the editor.
+ * A path that is outside as written is refused before the disk is asked:
+ * on Windows, merely looking at `\\host\share` sends the user's credentials there.
+ *
+ * A dangling link counts as what it points to: writing to it creates its
+ * target, so `notes.md -> ../../.config/autostart/x.desktop` is outside even
+ * while that file does not exist (links to links are followed too).
  */
 export async function confine(root: string, rel: string): Promise<string> {
   const rootReal = await realpath(root)
   const target = resolve(rootReal, rel)
-  let probe = target
-  while (!existsSync(probe)) probe = dirname(probe)
-  const real = await realpath(probe)
   const inside = (p: string) => p === rootReal || p.startsWith(rootReal + sep)
-  if (!inside(target) || !inside(real)) {
-    throw Object.assign(new Error('Path is outside the project'), { code: 'outside-project' })
-  }
+  const outside = () => Object.assign(new Error('Path is outside the project'), { code: 'outside-project' })
+  if (!inside(target)) throw outside()
+  const real = await landsAt(rootReal, target)
+  if (!real || !inside(real)) throw outside()
   return target
+}
+
+/**
+ * Where `target` (absolute, under the real folder `rootReal`) really ends up:
+ * what exists is where it really is; anything else is where a write would land.
+ * Null when that can't be told: a link loop, a link to another machine.
+ */
+export async function landsAt(rootReal: string, target: string): Promise<string | null> {
+  const real = await realpath(target).catch(() => null)
+  if (real) return real
+  const landing = await follow(rootReal, relative(rootReal, target), { links: 0 }).catch(() => null)
+  if (!landing) return null
+  let probe = landing
+  while (!existsSync(probe)) {
+    // dirname() of a root is the root itself: a link to a drive that doesn't exist (Windows `Z:\…`) must not loop forever.
+    if (dirname(probe) === probe) return null
+    probe = dirname(probe)
+  }
+  return join(await realpath(probe), relative(probe, landing))
+}
+
+/**
+ * Walks `path` from the real folder `base` the way the OS does when it
+ * creates a file: links resolve where they are (dangling ones too, `..`
+ * inside them from the folder they lead to), and the first missing name ends
+ * the walk — the rest is only ever created as written.
+ */
+async function follow(base: string, path: string, seen: { links: number }): Promise<string> {
+  let at = base
+  let exists = true
+  for (const name of path.split(/[\\/]+/)) {
+    if (!name || name === '.') continue
+    if (name === '..') {
+      at = dirname(at)
+      continue
+    }
+    const next = join(at, name)
+    const info: Stats | null = exists ? await lstat(next).catch(() => null) : null
+    if (!info?.isSymbolicLink()) {
+      exists &&= !!info
+      at = next
+      continue
+    }
+    const link = await readlink(next)
+    // Too many links (a loop) — or one to another machine (`\\host\share`: asking it sends the user's credentials).
+    if (++seen.links > MAX_LINKS || /^[\\/]{2}/.test(link)) throw new Error('Unsafe link')
+    at = await follow(isAbsolute(link) ? parse(link).root : at, isAbsolute(link) ? relative(parse(link).root, link) : link, seen)
+    exists = existsSync(at)
+  }
+  return at
 }

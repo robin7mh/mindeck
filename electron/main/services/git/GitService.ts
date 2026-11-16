@@ -1,30 +1,43 @@
 import { execFile, spawn } from 'node:child_process'
-import { readFile } from 'node:fs/promises'
+import { readFile, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import type { FileChange } from '@shared/types/agents'
+import { gitGuard, gitProgram } from '../../lib/git'
+
+/** Larger new files show without a line count. */
+const MAX_COUNTED_BYTES = 4 * 1024 * 1024
 
 function coded(code: string, message: string): Error {
   return Object.assign(new Error(message), { code })
 }
 
-/** Run git with array args (never a shell string); optional stdin. Rejects with stderr on failure. */
-function git(cwd: string, args: string[], input?: string): Promise<string> {
+/**
+ * Run git with array args (never a shell string); optional stdin. Rejects with stderr on failure.
+ * Its output as bytes: a chunk may end inside a character, and a patch may hold text in any encoding.
+ */
+async function gitBytes(cwd: string, guard: Promise<string[]>, args: string[], input?: Buffer): Promise<Buffer> {
+  const prefix = await guard
   return new Promise((resolve, reject) => {
-    const child = spawn('git', args, { cwd, windowsHide: true })
-    let out = ''
+    const child = spawn(gitProgram(), [...prefix, ...args], { cwd, windowsHide: true })
+    const out: Buffer[] = []
     let err = ''
-    child.stdout.on('data', (d) => (out += d))
+    child.stdout.on('data', (d: Buffer) => out.push(d))
     child.stderr.on('data', (d) => (err += d))
     child.on('error', reject)
-    child.on('close', (code) => (code === 0 ? resolve(out) : reject(coded('git', err.trim() || `git ${args[0]} failed (${code})`))))
+    child.on('close', (code) => (code === 0 ? resolve(Buffer.concat(out)) : reject(coded('git', err.trim() || `git ${args[0]} failed (${code})`))))
+    // git may exit before reading all of stdin (a patch it rejects): EPIPE, unhandled, would crash the app.
+    child.stdin.on('error', () => {})
     child.stdin.end(input)
   })
 }
 
+/** gitBytes, as text. */
+const git = async (cwd: string, guard: Promise<string[]>, args: string[]): Promise<string> => (await gitBytes(cwd, guard, args)).toString()
+
 /** A network call that only checks something: never asks for credentials, gives up after 15 s. */
-const quietGit = (cwd: string, args: string[]) =>
-  promisify(execFile)('git', args, { cwd, timeout: 15_000, windowsHide: true, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } })
+const quietGit = async (cwd: string, guard: Promise<string[]>, args: string[]) =>
+  promisify(execFile)(gitProgram(), [...(await guard), ...args], { cwd, timeout: 15_000, windowsHide: true, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } })
 
 const lines = (s: string) => s.split('\n').filter(Boolean)
 
@@ -57,8 +70,15 @@ export interface GitBaseline {
  * which the user triggers explicitly ("Übernehmen").
  */
 export class GitService {
+  /** `trusted`: whether a folder belongs to a trusted project (WorkspaceTrust) — restricted git when not. */
+  constructor(private readonly opts: { trusted?: (dir: string) => boolean } = {}) {}
+
+  /** The untrusted overrides for git in `cwd`, when it needs them. */
+  private guard(cwd: string): Promise<string[]> {
+    return gitGuard(cwd, this.opts.trusted?.(cwd) ?? false)
+  }
   async isRepo(cwd: string): Promise<boolean> {
-    return git(cwd, ['rev-parse', '--is-inside-work-tree']).then(
+    return git(cwd, this.guard(cwd), ['rev-parse', '--is-inside-work-tree']).then(
       (out) => out.trim() === 'true',
       () => false
     )
@@ -66,12 +86,12 @@ export class GitService {
 
   /** The repo's page on GitHub (or GitLab, …) from `origin`; undefined without one. */
   async webUrl(cwd: string): Promise<string | undefined> {
-    return git(cwd, ['remote', 'get-url', 'origin']).then(remoteWebUrl, () => undefined)
+    return git(cwd, this.guard(cwd), ['remote', 'get-url', 'origin']).then(remoteWebUrl, () => undefined)
   }
 
   /** Whether `branch` is on origin (as of the last push or fetch). */
   async pushed(cwd: string, branch: string): Promise<boolean> {
-    return git(cwd, ['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${branch}`]).then(
+    return git(cwd, this.guard(cwd), ['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${branch}`]).then(
       () => true,
       () => false
     )
@@ -84,12 +104,12 @@ export class GitService {
    */
   async landed(cwd: string, branch: string, base: string): Promise<boolean> {
     try {
-      const main = await git(cwd, ['symbolic-ref', '--short', 'refs/remotes/origin/HEAD']).then(
+      const main = await git(cwd, this.guard(cwd), ['symbolic-ref', '--short', 'refs/remotes/origin/HEAD']).then(
         (out) => out.trim(),
-        () => git(cwd, ['rev-parse', '--verify', '--quiet', 'refs/remotes/origin/main']).then(() => 'origin/main', () => 'origin/master')
+        () => git(cwd, this.guard(cwd), ['rev-parse', '--verify', '--quiet', 'refs/remotes/origin/main']).then(() => 'origin/main', () => 'origin/master')
       )
-      await quietGit(cwd, ['fetch', '--quiet', 'origin', main.slice('origin/'.length)]).catch(() => {})
-      const count = async (range: string) => Number((await git(cwd, ['rev-list', '--count', range])).trim())
+      await quietGit(cwd, this.guard(cwd), ['fetch', '--quiet', 'origin', main.slice('origin/'.length)]).catch(() => {})
+      const count = async (range: string) => Number((await git(cwd, this.guard(cwd), ['rev-list', '--count', range])).trim())
       return (await count(`${base}..${branch}`)) > 0 && (await count(`${main}..${branch}`)) === 0
     } catch {
       return false
@@ -98,7 +118,9 @@ export class GitService {
 
   /** How many files in a working folder are changed but not committed. */
   async uncommitted(cwd: string, exclude: string[] = []): Promise<number> {
-    return lines(await git(cwd, ['status', '--porcelain', ...except(exclude)])).length
+    // Restricted: submodules (their own config unchecked) aren't looked into.
+    const submodules = this.opts.trusted?.(cwd) ? [] : ['--ignore-submodules=all']
+    return lines(await git(cwd, this.guard(cwd), ['status', '--porcelain', ...submodules, ...except(exclude)])).length
   }
 
   /**
@@ -108,9 +130,9 @@ export class GitService {
    */
   async baseline(cwd: string): Promise<GitBaseline | null> {
     try {
-      const stash = (await git(cwd, ['stash', 'create'])).trim()
-      const base = stash || (await git(cwd, ['rev-parse', 'HEAD'])).trim()
-      return { base, untracked: lines(await git(cwd, ['ls-files', '--others', '--exclude-standard'])) }
+      const stash = (await git(cwd, this.guard(cwd), ['stash', 'create'])).trim()
+      const base = stash || (await git(cwd, this.guard(cwd), ['rev-parse', 'HEAD'])).trim()
+      return { base, untracked: lines(await git(cwd, this.guard(cwd), ['ls-files', '--others', '--exclude-standard'])) }
     } catch {
       return null
     }
@@ -119,9 +141,10 @@ export class GitService {
   /** Files changed since the baseline (tracked diff + files that became untracked since). */
   async changes(cwd: string, from: GitBaseline, exclude: string[] = []): Promise<FileChange[]> {
     const [numstat, names, untracked] = await Promise.all([
-      git(cwd, ['diff', '--no-renames', '--numstat', from.base, ...except(exclude)]),
-      git(cwd, ['diff', '--no-renames', '--name-status', from.base, ...except(exclude)]),
-      git(cwd, ['ls-files', '--others', '--exclude-standard', ...except(exclude)])
+      // --relative: from this folder, like the untracked files and `fileAt` (only a subfolder project sees a difference).
+      git(cwd, this.guard(cwd), ['diff', '--no-renames', '--relative', '--numstat', from.base, ...except(exclude)]),
+      git(cwd, this.guard(cwd), ['diff', '--no-renames', '--relative', '--name-status', from.base, ...except(exclude)]),
+      git(cwd, this.guard(cwd), ['ls-files', '--others', '--exclude-standard', ...except(exclude)])
     ])
     const status = new Map(lines(names).map((l) => [l.slice(l.indexOf('\t') + 1), l[0]]))
     const changes: FileChange[] = lines(numstat).map((l) => {
@@ -137,7 +160,9 @@ export class GitService {
     const before = new Set(from.untracked)
     for (const path of lines(untracked)) {
       if (before.has(path)) continue
-      const text = await readFile(join(cwd, path), 'utf8').catch(() => '')
+      // Lines are counted for text of a sensible size — never a multi-GB dump read into memory.
+      const size = (await stat(join(cwd, path)).catch(() => null))?.size ?? 0
+      const text = size <= MAX_COUNTED_BYTES ? await readFile(join(cwd, path), 'utf8').catch(() => '') : '\0'
       changes.push({ path, status: 'added', added: text.includes('\0') ? 0 : lines(text).length, removed: 0 })
     }
     return changes.sort((a, b) => a.path.localeCompare(b.path))
@@ -145,18 +170,19 @@ export class GitService {
 
   /** A file's content at the baseline ('' if it did not exist then). */
   async fileAt(cwd: string, base: string, path: string): Promise<string> {
-    return git(cwd, ['show', `${base}:${path}`]).catch(() => '')
+    // From the session's folder, not the repository's root: in a shared subfolder `other/x` is no way out of it.
+    return git(cwd, this.guard(cwd), ['show', `${base}:./${path}`]).catch(() => '')
   }
 
   /** A new worktree on a new branch from HEAD, for an agent working in parallel. */
   async addWorktree(repo: string, dir: string, branch: string): Promise<void> {
-    await git(repo, ['worktree', 'add', '-b', branch, dir, 'HEAD'])
+    await git(repo, this.guard(repo), ['worktree', 'add', '-b', branch, dir, 'HEAD'])
   }
 
   /** Remove a worktree and its branch (best effort for the branch). */
   async removeWorktree(repo: string, dir: string, branch: string): Promise<void> {
-    await git(repo, ['worktree', 'remove', '--force', dir])
-    await git(repo, ['branch', '-D', branch]).catch(() => '')
+    await git(repo, this.guard(repo), ['worktree', 'remove', '--force', dir])
+    await git(repo, this.guard(repo), ['branch', '-D', branch]).catch(() => '')
   }
 
   /**
@@ -165,12 +191,12 @@ export class GitService {
    * when they don't apply cleanly; the worktree stays as it is.
    */
   async applyTo(repo: string, worktree: string, base: string, exclude: string[] = []): Promise<number> {
-    await git(worktree, ['add', '-A', ...except(exclude)])
-    const patch = await git(worktree, ['diff', '--binary', '--cached', base])
-    if (!patch.trim()) return 0
-    await git(repo, ['apply', '--whitespace=nowarn', '-'], patch).catch((err: Error) => {
+    await git(worktree, this.guard(worktree), ['add', '-A', ...except(exclude)])
+    const patch = await gitBytes(worktree, this.guard(worktree), ['diff', '--binary', '--cached', base])
+    if (!patch.length) return 0
+    await gitBytes(repo, this.guard(repo), ['apply', '--whitespace=nowarn', '-'], patch).catch((err: Error) => {
       throw coded('conflict', `The changes don't apply cleanly to the project: ${err.message}`)
     })
-    return lines(await git(worktree, ['diff', '--cached', '--name-only', base])).length
+    return lines(await git(worktree, this.guard(worktree), ['diff', '--cached', '--name-only', base])).length
   }
 }

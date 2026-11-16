@@ -1,19 +1,32 @@
 import { existsSync } from 'node:fs'
 import { mkdir, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { tmpdir } from 'node:os'
+import { basename, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import type { ApprovalDecision, ChatMessage, PermissionRequest, ToolCallPart } from '@shared/types/ai'
-import { ClientSideConnection, PROTOCOL_VERSION, type RequestPermissionRequest, type RequestPermissionResponse } from '@agentclientprotocol/sdk'
+import type { ApprovalDecision, ChatMessage, MessageAttachment, PermissionRequest } from '@shared/types/ai'
+import {
+  ClientSideConnection,
+  PROTOCOL_VERSION,
+  type ContentBlock,
+  type PromptCapabilities,
+  type RequestPermissionRequest,
+  type RequestPermissionResponse,
+  type SessionUpdate,
+  type ToolKind
+} from '@agentclientprotocol/sdk'
 import type {
   AgentAvailability,
+  AgentInput,
   AgentKind,
   AgentSession,
   AgentSessionDetail,
   CreateSessionRequest,
   FileChange,
   FileDiff,
-  SessionBranch
+  SessionBranch,
+  SessionConfigure
 } from '@shared/types/agents'
+import type { PushNotice } from '@shared/types/cloud'
 import type { IpcEvents } from '@shared/ipc/contract'
 import type { TerminalInfo } from '@shared/types/terminal'
 import type { EventBus } from '../events/EventBus'
@@ -21,17 +34,42 @@ import type { GitBaseline, GitService } from '../git/GitService'
 import type { LocalAgentServer } from './LocalAgentServer'
 import type { McpSessionContext } from './mcp'
 import { confine } from '../../lib/confine'
-import { claudeArgs, claudeEnv } from './claudeLaunch'
+import { writeAtomic } from '../../lib/writeAtomic'
+import { readJson, readJsonFile } from '../../lib/jsonFile'
+import { CLAUDE_MODELS, CLAUDE_MODES } from '@shared/types/claude'
+import { CLAUDE_COMMANDS, claudeArgs, claudeEnv, hookSettings, mcpConfig } from './claudeLaunch'
 import { detectAgents, loginShellProbe, type Probe } from './detect'
-import { applyHook, toolRisk, toolSummary, toolTitle, type Applied, type HookEvent } from './transcript'
+import { applyHook, approvalRisk, conversationOnly, landings, staysInside, toolPaths, toolOf, toolSummary, toolTitle, type Applied, type HookEvent } from './transcript'
 import { journalBody, journalTitle } from './journal'
-import { ACP_AGENTS, applyAcpUpdate, findAcpTool, kindRisk, openTurn, pickOption, type AcpKind, type AcpProcess } from './acp'
+import { markPlan, PLAN_TOOL } from './planTool'
+import {
+  ACP_AGENTS,
+  acpApprovalRisk,
+  acpCommands,
+  acpStaysInside,
+  applyAcpUpdate,
+  findAcpTool,
+  grantKey,
+  KIND_TITLES,
+  openTurn,
+  pickOption,
+  sessionControls,
+  type AcpControls,
+  type AcpKind,
+  type AcpProcess,
+  type SessionSetup
+} from './acp'
+import { acpPrompt, attachments, checkInput, claudePrompt, resolveRefs, saveImages } from './input'
 import { shellCommand, shellEnv, shellQuote } from '../terminal/TerminalService'
 
 const AGENT_NAMES: Record<AgentKind, string> = { 'claude-code': 'Claude Code', codex: 'Codex', gemini: 'Gemini CLI' }
 /** Left out of an isolated session's diff: the link to the project's dependencies. */
 const LINKED = ['node_modules']
 const JOURNAL_DELAY_MS = 1500
+/** Streamed text comes a chunk per token: it reaches the clients at most this often (each push carries the whole message)… */
+const STREAM_PUSH_MS = 50
+/** …and the disk at most this often (each save the whole transcript) — all of it on the main thread. */
+const STREAM_SAVE_MS = 1000
 const MAX_NOTES = 30
 
 function coded(code: string, message: string): Error {
@@ -52,6 +90,14 @@ interface AcpLink {
   ready: Promise<string>
   /** Ends pending approvals when the agent goes away. */
   abort: AbortController
+  /** What the agent takes in a prompt (images, embedded context) — known after the handshake. */
+  caps: PromptCapabilities
+  /** How its model and mode are switched. */
+  controls: AcpControls
+  /** Its session setup (models, modes), applied once the handshake is through. */
+  setup?: SessionSetup
+  /** Each tool call's kind: a permission request may leave it out. */
+  kinds: Map<string, ToolKind>
 }
 
 interface Live extends Record_ {
@@ -62,6 +108,10 @@ interface Live extends Record_ {
   shellId?: string
   /** Counts the agent's starts: only the current process's exit ends the session — not a late one from before a resume. */
   run?: number
+  /** The next batch of streamed text on its way to the clients… */
+  streamPush?: NodeJS.Timeout
+  /** …and to the disk. */
+  streamSave?: NodeJS.Timeout
 }
 
 export interface AgentSessionDeps {
@@ -69,6 +119,8 @@ export interface AgentSessionDeps {
   dir: string
   /** ~/Mindeck/worktrees — isolated sessions' working folders. */
   worktreesDir: string
+  /** ~/Mindeck/chats — the working folders of sessions without a project, an empty one each. */
+  chatsDir: string
   terminal: {
     spawnProgram(req: {
       title: string
@@ -87,7 +139,7 @@ export interface AgentSessionDeps {
   server: Pick<LocalAgentServer, 'register' | 'unregister' | 'url'>
   permissions: {
     ask(input: Omit<PermissionRequest, 'id' | 'createdAt'>, signal: AbortSignal): { id: string; decision: Promise<ApprovalDecision> }
-    isGranted(agentId: string, toolName: string): Promise<boolean>
+    isGranted(agentId: string, toolName: string, projectId?: string): Promise<boolean>
   }
   events: Pick<EventBus, 'emit'>
   projects: (id: string) => { name: string; path: string } | undefined
@@ -104,10 +156,24 @@ export interface AgentSessionDeps {
   claudeBin?: string
   /** Opens a folder in VS Code (desktop only). */
   openFolder?: (path: string) => Promise<void>
+  /** A push to the user's phone (Mindeck Cloud; the host decides if it goes out). */
+  push?: (notice: PushNotice) => void
+  /** The memory vault's folder, for `@` references to notes. */
+  vaultRoot?: () => Promise<string | undefined>
+  /** Where Claude Code sessions keep pasted images (default: the system's temp folder). */
+  tempDir?: string
 }
 
 const MAX_TITLE = 80
+/** What a desktop notification says when the agent needs the user. */
+const ATTENTION = { approval: 'Waiting for your approval', waiting: 'Waiting for your answer', done: 'Done — your turn', error: 'Stopped with an error' }
+/** What a Claude Code session offers in the composer: models, permission modes, commands, images (as files). */
+const CLAUDE_EXTRAS = { models: CLAUDE_MODELS, modes: CLAUDE_MODES, commands: CLAUDE_COMMANDS, images: true }
 const slug = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'project'
+/** The session's project for grants, events and scopes — none (undefined) for a session without one ('' in the session). */
+const scopeOf = (session: AgentSession): string | undefined => session.projectId || undefined
+/** " · <project>" for a push — nothing without one. */
+const where = (session: AgentSession) => (session.projectName ? ` · ${session.projectName}` : '')
 
 /**
  * The agent cockpit's core: runs Claude Code (the user's own, unmodified CLI,
@@ -130,16 +196,14 @@ export class AgentSessionService {
   /** Sessions from earlier runs: their processes are gone — they can be resumed. */
   async init(): Promise<void> {
     await mkdir(this.deps.dir, { recursive: true })
-    const raw = await readFile(join(this.deps.dir, 'sessions.json'), 'utf8').catch(() => '')
-    let records: Record_[] = []
-    try {
-      records = raw ? (JSON.parse(raw) as { sessions: Record_[] }).sessions : []
-    } catch {
-      /* unreadable list: start empty, the transcripts stay on disk */
-    }
+    // Launch files of an earlier run hold tokens that died with it.
+    await rm(join(this.deps.dir, 'launch'), { recursive: true, force: true })
+    // An unreadable list starts empty (it is set aside; the transcripts stay on disk).
+    const list = await readJson<{ sessions?: Record_[] }>(join(this.deps.dir, 'sessions.json'))
+    const records = (Array.isArray(list?.sessions) ? list.sessions : []).filter((r) => typeof r?.session?.id === 'string')
     const repos = new Map<string, Promise<string | undefined>>()
     for (const r of records) {
-      const messages = JSON.parse(await readFile(this.file(r.session.id), 'utf8').catch(() => '[]')) as ChatMessage[]
+      const messages = await this.transcript(r.session.id)
       const wasRunning = r.session.status !== 'ended' && r.session.status !== 'error'
       if (!repos.has(r.projectPath)) repos.set(r.projectPath, this.deps.git.webUrl(r.projectPath))
       const session: AgentSession = {
@@ -147,6 +211,7 @@ export class AgentSessionService {
         // Sessions from before titles defaulted to the agent's name.
         title: r.session.title === 'New chat' ? AGENT_NAMES[r.session.kind] : r.session.title,
         repoUrl: r.session.repoUrl ?? (await repos.get(r.projectPath)),
+        ...(r.session.kind === 'claude-code' ? CLAUDE_EXTRAS : {}),
         live: false,
         terminalId: undefined,
         status: wasRunning ? 'ended' : r.session.status
@@ -163,21 +228,39 @@ export class AgentSessionService {
     return [...this.live.values()].map((l) => l.session).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
   }
 
+  /** The project a session works in (undefined: no such session). */
+  projectOf(id: string): string | undefined {
+    const session = this.live.get(id)?.session
+    return session && scopeOf(session)
+  }
+
+  /** The folder a session works in (a worktree when isolated; undefined: no such session). */
+  folderOf(id: string): string | undefined {
+    return this.live.get(id)?.session.cwd
+  }
+
   get(id: string): AgentSessionDetail {
     const l = this.require(id)
     return { ...l.session, messages: l.messages }
   }
 
   async create(req: CreateSessionRequest): Promise<AgentSession> {
-    const project = this.deps.projects(req.projectId)
-    if (!project) throw coded('not-found', 'Project not found')
+    const project = req.projectId ? this.deps.projects(req.projectId) : undefined
+    if (req.projectId && !project) throw coded('not-found', 'Project not found')
+    if (req.isolated && !project) throw coded('bad-input', 'An own working folder needs a project')
+    if (req.kind === 'claude-code') {
+      if (req.model && !CLAUDE_MODELS.some((m) => m.id === req.model)) throw coded('bad-input', `Unknown model: ${req.model}`)
+      if (req.mode && !CLAUDE_MODES.some((m) => m.id === req.mode)) throw coded('bad-input', `Unknown mode: ${req.mode}`)
+    }
     const id = randomUUID()
     const title = req.title?.trim().slice(0, MAX_TITLE) || AGENT_NAMES[req.kind]
 
-    let cwd = project.path
+    // Without a project: an empty folder of its own to work in (~/Mindeck/chats) — not the user's home.
+    let cwd = project ? project.path : join(this.deps.chatsDir, `${new Date().toISOString().slice(0, 10)}-${id.slice(0, 8)}`)
+    if (!project) await mkdir(cwd, { recursive: true })
     let worktree: string | undefined
     let branch: string | undefined
-    if (req.isolated) {
+    if (req.isolated && project) {
       if (!(await this.deps.git.isRepo(project.path))) throw coded('not-a-repo', 'An own working folder needs a git repository')
       worktree = join(this.deps.worktreesDir, `${slug(project.name)}-${id.slice(0, 8)}`)
       branch = `mindeck/${id.slice(0, 8)}`
@@ -193,44 +276,89 @@ export class AgentSessionService {
     const session: AgentSession = {
       id,
       kind: req.kind,
-      projectId: req.projectId,
-      projectName: project.name,
+      projectId: req.projectId ?? '',
+      projectName: project?.name ?? '',
       title,
       cwd,
       isolated: !!req.isolated,
       worktree,
       branch,
-      repoUrl: await this.deps.git.webUrl(project.path),
+      repoUrl: project ? await this.deps.git.webUrl(project.path) : undefined,
       status: 'starting',
       live: false,
       plan: [],
       notes: [],
+      // ACP agents: a wish, taken when the agent offers it.
+      ...(req.model ? { model: req.model } : {}),
+      ...(req.mode ? { mode: req.mode } : {}),
+      ...(req.kind === 'claude-code' ? CLAUDE_EXTRAS : {}),
       createdAt: now,
       updatedAt: now
     }
-    const l: Live = { session, baseline: await this.deps.git.baseline(cwd), projectPath: project.path, messages: [] }
+    const l: Live = { session, baseline: await this.deps.git.baseline(cwd), projectPath: project?.path ?? cwd, messages: [] }
     this.live.set(id, l)
     if (req.kind === 'claude-code') await this.launch(l, { prompt: req.prompt })
     else this.launchAcp(l, req.prompt)
     this.deps.events.emit('session.started', {
       actor: { kind: 'agent', id: req.kind },
-      projectId: session.projectId,
+      projectId: scopeOf(session),
       conversationId: id,
       payload: { title, agent: AGENT_NAMES[req.kind], isolated: session.isolated }
     })
     return l.session
   }
 
-  /** Send a message: ACP agents get a prompt; Claude Code gets it typed (several lines as a paste, then Enter). */
-  send(id: string, text: string): void {
+  /**
+   * Send a message with what the user referenced and pasted: ACP agents get a
+   * prompt of content blocks; Claude Code gets it typed, with `@` mentions
+   * (images saved as files first) — several lines as a paste, then Enter.
+   */
+  async send(id: string, text: string, extra: Omit<AgentInput, 'text'> = {}): Promise<void> {
     const l = this.require(id)
-    if (l.acp && l.session.live) return void this.acpSend(l, l.acp, text)
-    const terminalId = this.running(id)
+    const images = extra.images ?? []
+    checkInput(extra.refs ?? [], images)
+    if (!text.trim() && !extra.refs?.length && !images.length) throw coded('bad-input', 'An empty message')
+    const acp = l.session.live ? l.acp : undefined
+    if (!acp) this.running(id)
+    const refs = await resolveRefs(extra.refs ?? [], l.session.cwd, this.deps.vaultRoot ?? (async () => undefined))
+    if (acp) {
+      await acp.ready
+      const prompt = await acpPrompt(text, refs, images, acp.caps)
+      return void this.acpSend(l, acp, text, prompt, attachments(refs, images))
+    }
+    const line = claudePrompt(text, refs, await saveImages(this.imageDir(id), images))
+    this.type(l, line)
+  }
+
+  /** Types into Claude Code's prompt: several lines as a paste, then Enter (separately, so the TUI sees the paste end first). */
+  private type(l: Live, text: string): void {
+    const terminalId = this.running(l.session.id)
     this.deps.terminal.write(terminalId, text.includes('\n') ? `\x1b[200~${text}\x1b[201~` : text)
-    // Enter separately, so the TUI sees the paste end before the submit.
     setTimeout(() => {
-      if (this.live.get(id)?.session.terminalId === terminalId) this.deps.terminal.write(terminalId, '\r')
+      if (this.live.get(l.session.id)?.session.terminalId === terminalId) this.deps.terminal.write(terminalId, '\r')
     }, 60)
+  }
+
+  /**
+   * Switch the model or mode. ACP agents switch right away (a config option,
+   * or their mode/model method); Claude Code gets `/model` typed, its
+   * permission mode applies from its next start. Not running: kept for the next start.
+   */
+  async configure(id: string, patch: SessionConfigure): Promise<AgentSession> {
+    const l = this.require(id)
+    for (const key of ['model', 'mode'] as const) {
+      const value = patch[key]
+      if (value === undefined || value === l.session[key]) continue
+      const options = key === 'model' ? l.session.models : l.session.modes
+      if (options && !options.some((o) => o.id === value)) throw coded('bad-input', `Unknown ${key}: ${value}`)
+      const acp = l.session.live ? l.acp : undefined
+      if (acp) await this.acpControl(l, acp, key, value)
+      else {
+        if (key === 'model' && l.session.kind === 'claude-code' && l.session.live) this.type(l, `/model ${value}`)
+        this.update(l, { [key]: value })
+      }
+    }
+    return l.session
   }
 
   /** The agent stops what it is doing and waits (Esc for Claude Code, session/cancel for ACP). */
@@ -266,7 +394,7 @@ export class AgentSessionService {
       title: l.session.title,
       cwd: l.session.cwd,
       command: shellCommand(),
-      projectId: l.session.projectId,
+      projectId: scopeOf(l.session),
       onExit: () => {
         if (l.shellId === info.id) l.shellId = undefined
       }
@@ -298,10 +426,15 @@ export class AgentSessionService {
     this.stop(id)
     this.deps.server.unregister(id)
     clearTimeout(l.journalTimer)
+    clearTimeout(l.streamPush)
+    clearTimeout(l.streamSave)
     if (l.session.worktree && l.session.branch) await this.deps.git.removeWorktree(l.projectPath, l.session.worktree, l.session.branch).catch(() => {})
+    await rm(this.imageDir(id), { recursive: true, force: true })
+    await rm(this.launchDir(id), { recursive: true, force: true })
     this.live.delete(id)
     // In the write queue: a save still in flight must not bring the file back.
-    this.writes = this.writes.then(() => rm(this.file(id), { force: true }))
+    // Never rejects: a rejected queue would skip every later save.
+    this.writes = this.writes.then(() => rm(this.file(id), { force: true })).catch(() => {})
     await this.persist()
     this.deps.publish('agents:changed', { removed: id })
   }
@@ -376,15 +509,47 @@ export class AgentSessionService {
     if (!l || typeof body !== 'object' || body === null) return undefined
     const e = body as HookEvent
     if (e.hook_event_name === 'PermissionRequest') return this.approve(l, e, signal)
-    this.applied(l, applyHook(this.state(l), e))
-    if (e.hook_event_name === 'SessionEnd') this.deps.server.unregister(id)
-    return undefined
+    const applied = applyHook(this.state(l), e)
+    this.applied(l, applied)
+    // The plan approved, Claude Code left plan mode (for the mode it says): the session shows that one.
+    const mode = e.permission_mode
+    if (e.hook_event_name === 'PostToolUse' && e.tool_name === 'ExitPlanMode' && mode !== l.session.mode && CLAUDE_MODES.some((m) => m.id === mode)) this.update(l, { mode })
+    if (e.hook_event_name === 'SessionEnd' && !conversationOnly(e)) this.deps.server.unregister(id)
+    return applied.reply
   }
 
-  /** An MCP message from the session's agent: Mindeck's memory, scoped to its project. */
-  handleMcp(id: string, body: unknown): Promise<unknown> {
+  /**
+   * An MCP message from the session's agent: Mindeck's memory, scoped to its
+   * project — and for Claude Code also `plan_update`, its progress on the plan.
+   */
+  async handleMcp(id: string, body: unknown): Promise<unknown> {
     const l = this.require(id)
-    return this.deps.mcp({ projectId: l.session.projectId, onCall: (tool, input) => this.usedNote(l, tool, input) }, body)
+    const msg = (typeof body === 'object' && body !== null ? body : {}) as { jsonrpc?: unknown; id?: string | number | null; method?: unknown; params?: { name?: unknown; arguments?: unknown } }
+    const ours = l.session.kind === 'claude-code' && msg.jsonrpc === '2.0' && msg.id !== undefined
+    if (ours && msg.method === 'tools/call' && msg.params?.name === PLAN_TOOL.name) {
+      return { jsonrpc: '2.0', id: msg.id, result: this.markPlan(l, (msg.params.arguments ?? {}) as Record<string, unknown>) }
+    }
+    const answer = (await this.deps.mcp(
+      {
+        sessionId: id,
+        agentId: l.session.kind,
+        projectId: scopeOf(l.session),
+        agent: AGENT_NAMES[l.session.kind],
+        cwd: l.session.cwd,
+        onCall: (tool, input) => this.usedNote(l, tool, input)
+      },
+      body
+    )) as { result?: { tools?: unknown[] } } | undefined
+    if (ours && msg.method === 'tools/list') answer?.result?.tools?.push(PLAN_TOOL)
+    return answer
+  }
+
+  /** `plan_update`: the steps it names, done or being worked on — the plan is being carried out. */
+  private markPlan(l: Live, args: Record<string, unknown>) {
+    const marked = markPlan(l.session.plan, args)
+    if ('error' in marked) return { content: [{ type: 'text', text: marked.error }], isError: true }
+    this.update(l, { plan: marked.plan, planStatus: 'active' })
+    return { content: [{ type: 'text', text: marked.text }] }
   }
 
   /** App quit: stop every agent (their sessions can be resumed next time). */
@@ -395,6 +560,9 @@ export class AgentSessionService {
       else if (l.session.terminalId) this.deps.terminal.kill(l.session.terminalId)
       if (l.shellId) this.deps.terminal.kill(l.shellId)
       clearTimeout(l.journalTimer)
+      clearTimeout(l.streamPush)
+      if (l.streamSave) void this.persist(l)
+      clearTimeout(l.streamSave)
     }
     await this.writes
   }
@@ -407,6 +575,7 @@ export class AgentSessionService {
     const token = this.deps.server.register(session.id)
     const hookUrl = this.deps.server.url('hooks', session.id)
     try {
+      const files = await this.launchFiles(session.id, run, hookUrl, token)
       const info = await this.deps.terminal.spawnProgram({
         title: session.title,
         cwd: session.cwd,
@@ -415,25 +584,50 @@ export class AgentSessionService {
           args: claudeArgs({
             sessionId: session.id,
             title: session.title,
-            hookUrl,
-            mcpUrl: this.deps.server.url('mcp', session.id),
-            token,
+            ...files,
             resume: opts.resume,
-            prompt: opts.prompt
+            prompt: opts.prompt,
+            model: session.model,
+            mode: session.mode
           })
         },
         env: claudeEnv(hookUrl, token),
-        projectId: session.projectId,
+        projectId: scopeOf(session),
         cols: 120,
         rows: 36,
-        onExit: (code) => l.run === run && this.exited(session.id, code)
+        onExit: (code) => {
+          // The token in them is dead now: so are this run's files.
+          void rm(this.launchDir(session.id, run), { recursive: true, force: true }).catch(() => {})
+          if (l.run === run) this.exited(session.id, code)
+        }
       })
       this.update(l, { terminalId: info.id, live: true, status: 'starting', error: undefined })
     } catch (err) {
       this.deps.server.unregister(session.id)
       this.update(l, { status: 'error', error: (err as Error).message })
+      this.pushError(l)
       throw err
     }
+  }
+
+  /**
+   * Claude Code's hooks and memory server for this run, as files only the
+   * user can read (0600 in a 0700 folder): they carry the session's token,
+   * which must not show on the command line.
+   */
+  private async launchFiles(id: string, run: number, hookUrl: string, token: string): Promise<{ settingsFile: string; mcpFile: string }> {
+    const dir = this.launchDir(id, run)
+    await mkdir(dir, { recursive: true, mode: 0o700 })
+    const settingsFile = join(dir, 'settings.json')
+    const mcpFile = join(dir, 'mcp.json')
+    await writeAtomic(settingsFile, JSON.stringify(hookSettings(hookUrl, token)), 0o600)
+    await writeAtomic(mcpFile, JSON.stringify(mcpConfig(this.deps.server.url('mcp', id), token)), 0o600)
+    return { settingsFile, mcpFile }
+  }
+
+  /** A session's launch files — one folder per run, so a quick restart never loses its files to the last run's cleanup. */
+  private launchDir(id: string, run?: number): string {
+    return join(this.deps.dir, 'launch', id, ...(run === undefined ? [] : [String(run)]))
   }
 
   private exited(id: string, code: number): void {
@@ -442,6 +636,12 @@ export class AgentSessionService {
     this.deps.server.unregister(id)
     l.acp?.abort.abort()
     l.acp = undefined
+    // A turn the agent never finished (it crashed or was stopped) no longer shows as running.
+    const last = l.messages[l.messages.length - 1]
+    if (last?.role === 'assistant' && last.status === 'streaming') {
+      last.status = 'done'
+      this.deps.publish('agents:message', { sessionId: id, message: last })
+    }
     const failed = code !== 0 && l.session.status === 'starting'
     const name = AGENT_NAMES[l.session.kind]
     this.update(l, {
@@ -450,7 +650,8 @@ export class AgentSessionService {
       status: failed ? 'error' : 'ended',
       error: failed ? `${name} stopped right away (exit code ${code}). Is it installed and signed in?` : l.session.error
     })
-    this.deps.events.emit('session.ended', { actor: { kind: 'agent', id: l.session.kind }, projectId: l.session.projectId, conversationId: id, payload: { code } })
+    if (failed) this.pushError(l)
+    this.deps.events.emit('session.ended', { actor: { kind: 'agent', id: l.session.kind }, projectId: scopeOf(l.session), conversationId: id, payload: { code } })
     this.scheduleJournal(l, 0)
   }
 
@@ -465,86 +666,167 @@ export class AgentSessionService {
     const run = (l.run = (l.run ?? 0) + 1)
     const token = this.deps.server.register(session.id)
     const proc = this.deps.spawnAcp(ACP_AGENTS[kind], session.cwd, shellEnv())
-    const link: AcpLink = { proc, abort: new AbortController() } as AcpLink
+    const link: AcpLink = { proc, abort: new AbortController(), caps: {}, controls: {}, kinds: new Map() } as AcpLink
     link.conn = new ClientSideConnection(
       () => ({
         requestPermission: (params) => this.acpPermission(l, link, params),
-        sessionUpdate: ({ update }) => this.applied(l, applyAcpUpdate(this.state(l), update))
+        sessionUpdate: ({ update }) => this.acpUpdate(l, link, update)
       }),
       proc.stream
     )
     link.ready = (async () => {
       const init = await link.conn.initialize({ protocolVersion: PROTOCOL_VERSION, clientCapabilities: {} })
+      link.caps = init.agentCapabilities?.promptCapabilities ?? {}
       const mcpServers = init.agentCapabilities?.mcpCapabilities?.http
         ? [{ type: 'http' as const, name: 'mindeck', url: this.deps.server.url('mcp', session.id), headers: [{ name: 'Authorization', value: `Bearer ${token}` }] }]
         : []
-      return (await link.conn.newSession({ cwd: session.cwd, mcpServers })).sessionId
+      const res = await link.conn.newSession({ cwd: session.cwd, mcpServers })
+      link.setup = res as SessionSetup
+      return res.sessionId
     })()
     l.acp = link
     proc.onExit((code) => l.run === run && this.exited(session.id, code))
-    this.update(l, { live: true, status: 'starting', terminalId: undefined, error: undefined })
+    // What the agent offered last time is unknown until it answers again.
+    const wanted = { model: session.model, mode: session.mode }
+    this.update(l, { live: true, status: 'starting', terminalId: undefined, error: undefined, models: undefined, modes: undefined, commands: undefined, images: undefined })
     link.ready.then(
       () => {
         if (l.acp !== link) return
-        this.update(l, { status: 'idle' })
-        if (prompt) this.acpSend(l, link, prompt)
+        this.acpSetup(l, link, link.setup!)
+        this.update(l, { status: 'idle', images: !!link.caps.image })
+        // The user's choice from before (a resume, or the new session's request) — when the agent still offers it.
+        for (const key of ['model', 'mode'] as const) {
+          const want = wanted[key]
+          const offered = key === 'model' ? l.session.models : l.session.modes
+          if (want && want !== l.session[key] && offered?.some((o) => o.id === want)) {
+            void this.acpControl(l, link, key, want).catch((err: Error) => console.warn(`[agents] ${key} not switched:`, err.message))
+          }
+        }
+        if (prompt) this.acpSend(l, link, prompt, [{ type: 'text', text: prompt }])
       },
       (err: Error) => {
         if (l.acp !== link) return
         this.update(l, { status: 'error', error: `${ACP_AGENTS[kind].name} could not start: ${err.message}` })
+        this.pushError(l)
         proc.kill()
       }
     )
   }
 
+  /** A `session/update`: the session's commands, mode and options, or the chat (text, tools, plan). */
+  private acpUpdate(l: Live, link: AcpLink, update: SessionUpdate): void {
+    if (l.acp !== link) return
+    switch (update.sessionUpdate) {
+      case 'agent_message_chunk':
+        return this.streamed(l, applyAcpUpdate(this.state(l), update).changed)
+      case 'available_commands_update':
+        return this.update(l, { commands: acpCommands(update.availableCommands) })
+      case 'current_mode_update':
+        return this.update(l, { mode: update.currentModeId })
+      case 'config_option_update':
+        return this.acpSetup(l, link, { configOptions: update.configOptions })
+      case 'tool_call':
+        if (update.kind) link.kinds.set(update.toolCallId, update.kind)
+    }
+    this.applied(l, applyAcpUpdate(this.state(l), update))
+  }
+
+  /** Text as it streams: pushed and saved in batches (the end of a turn goes out at once). */
+  private streamed(l: Live, [message]: ChatMessage[]): void {
+    if (!message) return
+    l.streamPush ??= setTimeout(() => {
+      l.streamPush = undefined
+      this.deps.publish('agents:message', { sessionId: l.session.id, message })
+      this.announce(l, {})
+    }, STREAM_PUSH_MS)
+    l.streamSave ??= setTimeout(() => {
+      l.streamSave = undefined
+      void this.persist(l)
+    }, STREAM_SAVE_MS)
+  }
+
+  /** Models and modes the agent offers, and how to switch them. */
+  private acpSetup(l: Live, link: AcpLink, setup: SessionSetup): void {
+    const { patch, controls } = sessionControls(setup)
+    Object.assign(link.controls, controls)
+    this.update(l, patch)
+  }
+
+  /** Switch an ACP agent's model or mode: through its config option, or the dedicated method. */
+  private async acpControl(l: Live, link: AcpLink, key: 'model' | 'mode', value: string): Promise<void> {
+    const via = link.controls[key]
+    if (!via) throw coded('unsupported', `${ACP_AGENTS[l.session.kind as AcpKind].name} has no ${key} to choose`)
+    const sessionId = await link.ready
+    if ('configId' in via) {
+      const res = await link.conn.setSessionConfigOption({ sessionId, configId: via.configId, value })
+      return this.acpSetup(l, link, { configOptions: res.configOptions })
+    }
+    if (key === 'model') await link.conn.extMethod('session/set_model', { sessionId, modelId: value })
+    else await link.conn.setSessionMode({ sessionId, modeId: value })
+    this.update(l, { [key]: value })
+  }
+
   /** One prompt turn with an ACP agent: the user's message, then streamed updates until it stops. */
-  private async acpSend(l: Live, link: AcpLink, text: string): Promise<void> {
+  private async acpSend(l: Live, link: AcpLink, text: string, prompt: ContentBlock[], attached?: MessageAttachment[]): Promise<void> {
     const user: ChatMessage = { id: randomUUID(), role: 'user', parts: [{ type: 'text', text }], createdAt: new Date().toISOString(), status: 'done' }
+    if (attached) user.attachments = attached
     l.messages.push(user)
     const turn = openTurn(this.state(l))
     this.applied(l, { changed: [user, turn] })
     this.update(l, { status: 'working' })
     try {
-      const { stopReason } = await link.conn.prompt({ sessionId: await link.ready, prompt: [{ type: 'text', text }] })
+      const { stopReason } = await link.conn.prompt({ sessionId: await link.ready, prompt })
       turn.status = stopReason === 'cancelled' ? 'cancelled' : 'done'
     } catch (err) {
       turn.status = 'error'
       turn.error = (err as Error).message
     }
-    if (l.acp !== link) return
+    // The agent went away meanwhile: the turn's end still reaches the UI (no spinner forever).
+    if (l.acp !== link) {
+      if (this.live.get(l.session.id) === l) this.applied(l, { changed: [turn] })
+      return
+    }
     this.update(l, { status: 'idle' })
-    this.applied(l, { changed: [turn], attention: 'done' })
+    this.applied(l, { changed: [turn], attention: turn.status === 'error' ? 'error' : 'done' })
   }
 
   /** An ACP agent asks permission: Mindeck's approval gate decides, the agent's option is picked. */
   private async acpPermission(l: Live, link: AcpLink, params: RequestPermissionRequest): Promise<RequestPermissionResponse> {
-    const kind = l.session.kind
+    const agent = l.session.kind
     const call = params.toolCall
-    const name = call.title ?? 'tool'
-    const risk = kindRisk(call.kind)
     const hit = findAcpTool(l, call.toolCallId)
+    const name = call.title ?? hit?.part.title ?? 'tool'
+    // Granted by kind: a title changes with every file or command.
+    const kind = call.kind ?? link.kinds.get(call.toolCallId)
+    const key = grantKey(kind)
+    const paths = (call.locations ?? []).map((loc) => loc.path)
+    const lands = await landings(paths, l.session.cwd)
+    const risk = acpApprovalRisk(kind, paths, l.session.cwd, lands)
+    // A grant holds in the session's folder: anywhere else it is asked every time.
+    const standing = risk !== 'execute' && acpStaysInside(kind, paths, l.session.cwd, lands)
     if (hit) hit.part.status = 'awaiting-approval'
     let decision: ApprovalDecision = 'once'
-    if (risk === 'execute' || !(await this.deps.permissions.isGranted(kind, name))) {
+    if (!standing || !(await this.deps.permissions.isGranted(agent, key, scopeOf(l.session)))) {
       const asked = this.deps.permissions.ask(
         {
           runId: l.session.id,
           conversationId: l.session.id,
-          agentId: kind,
-          agentName: AGENT_NAMES[kind],
-          toolName: name,
+          agentId: agent,
+          agentName: AGENT_NAMES[agent],
+          toolName: key,
           toolTitle: name,
           risk,
           summary: name,
           reason: '',
           input: call.rawInput ?? {},
-          allowAlways: risk !== 'execute'
+          allowAlways: standing,
+          projectId: scopeOf(l.session)
         },
         link.abort.signal
       )
       if (hit) hit.part.requestId = asked.id
       this.update(l, { status: 'approval' })
-      this.applied(l, { changed: hit ? [hit.message] : [], attention: 'approval' })
+      this.applied(l, { changed: hit ? [hit.message] : [], attention: 'approval' }, KIND_TITLES[key])
       decision = await asked.decision
     }
     if (hit) {
@@ -559,11 +841,17 @@ export class AgentSessionService {
   /** Claude Code asks permission for a tool: Mindeck's approval gate decides. */
   private async approve(l: Live, e: HookEvent, signal: AbortSignal): Promise<unknown> {
     const applied = applyHook(this.state(l), e)
+    const part = toolOf(this.state(l), e)
     const name = e.tool_name ?? 'tool'
-    const risk = toolRisk(name)
-    const part = this.tool(l, e.tool_use_id)
+    // Questions only its terminal can answer (they need the answers, not a yes): no decision — Claude Code asks there.
+    if (name === 'AskUserQuestion') return void this.applied(l, applied, toolTitle(name))
+    // Reading outside the project or fetching from the web: allowed like a change (a device needs remote shells).
+    const lands = await landings(toolPaths(name, e.tool_input), l.session.cwd)
+    const risk = approvalRisk(name, e.tool_input, l.session.cwd, lands)
+    // A grant holds in the session's folder: anywhere else it is asked every time.
+    const standing = risk !== 'execute' && staysInside(name, e.tool_input, l.session.cwd, lands)
     let decision: ApprovalDecision = 'once'
-    if (risk === 'execute' || !(await this.deps.permissions.isGranted('claude-code', name))) {
+    if (!standing || !(await this.deps.permissions.isGranted('claude-code', name, scopeOf(l.session)))) {
       const input = e.tool_input ?? {}
       const asked = this.deps.permissions.ask(
         {
@@ -577,13 +865,14 @@ export class AgentSessionService {
           summary: toolSummary(name, input),
           reason: '',
           input,
-          // Commands are asked every time; file and memory tools can be allowed for good.
-          allowAlways: risk !== 'execute'
+          // Commands are asked every time; file and memory tools can be allowed for good (in this project).
+          allowAlways: standing,
+          projectId: scopeOf(l.session)
         },
         signal
       )
       if (part) part.requestId = asked.id
-      this.applied(l, applied)
+      this.applied(l, applied, toolTitle(name))
       decision = await asked.decision
     }
     if (part) part.status = decision === 'deny' ? 'denied' : 'running'
@@ -592,21 +881,48 @@ export class AgentSessionService {
     return {
       hookSpecificOutput: {
         hookEventName: 'PermissionRequest',
-        decision: decision === 'deny' ? { behavior: 'deny', message: 'The user denied this in Mindeck.' } : { behavior: 'allow' }
+        // Leaving plan mode needs its input back with the yes (the plan) — a bare yes leaves Claude Code asking in its terminal.
+        decision:
+          decision === 'deny'
+            ? { behavior: 'deny', message: 'The user denied this in Mindeck.' }
+            : name === 'ExitPlanMode'
+              ? { behavior: 'allow', updatedInput: e.tool_input ?? {} }
+              : { behavior: 'allow' }
       }
     }
   }
 
-  /** Push what a hook changed: messages, the session itself, a notification, the journal. */
-  private applied(l: Live, applied: Applied): void {
+  /**
+   * Push what a hook changed: messages, the session itself, a notification
+   * (and a push to the phone — with the tool's kind, never its input), the journal.
+   */
+  private applied(l: Live, applied: Applied | { changed: ChatMessage[]; attention: 'error' }, tool?: string): void {
     for (const message of applied.changed) this.deps.publish('agents:message', { sessionId: l.session.id, message })
     this.update(l, {})
-    if (!applied.attention) return
-    const body =
-      applied.attention === 'approval' ? 'Waiting for your approval' : applied.attention === 'waiting' ? 'Waiting for your answer' : 'Done — your turn'
+    const { attention } = applied
+    if (!attention) return
+    this.deps.notify?.(this.heading(l), ATTENTION[attention], l.session.id)
+    if (attention === 'error') this.pushError(l)
+    else {
+      this.deps.push?.({
+        kind: attention === 'done' ? 'agent_done' : 'approval',
+        title: this.heading(l),
+        body: `${tool ? `${tool} · ` : ''}${ATTENTION[attention]}${where(l.session)}`,
+        sessionId: l.session.id
+      })
+    }
+    if (attention === 'done' || attention === 'error') this.scheduleJournal(l, JOURNAL_DELAY_MS)
+  }
+
+  /** The agent stopped with an error: a push says so (not what the error says — it can name paths). */
+  private pushError(l: Live): void {
+    this.deps.push?.({ kind: 'agent_error', title: this.heading(l), body: `Stopped with an error${where(l.session)}`, sessionId: l.session.id })
+  }
+
+  /** "Codex · Fix the login" — or just the agent's name while the session has no own title. */
+  private heading(l: Live): string {
     const name = AGENT_NAMES[l.session.kind]
-    this.deps.notify?.(l.session.title === name ? name : `${name} · ${l.session.title}`, body, l.session.id)
-    if (applied.attention === 'done') this.scheduleJournal(l, JOURNAL_DELAY_MS)
+    return l.session.title === name ? name : `${name} · ${l.session.title}`
   }
 
   private usedNote(l: Live, tool: string, input: Record<string, unknown>): void {
@@ -630,7 +946,7 @@ export class AgentSessionService {
     try {
       const body = journalBody(l.session, l.messages, await this.changes(l.session.id).catch(() => []))
       if (!body) return
-      const path = await this.deps.journal(`Agents/${l.session.projectName}`, journalTitle(l.session, l.messages), l.session.journal, body)
+      const path = await this.deps.journal(l.session.projectName ? `Agents/${l.session.projectName}` : 'Agents', journalTitle(l.session, l.messages), l.session.journal, body)
       if (path && path !== l.session.journal) this.update(l, { journal: path })
     } catch (err) {
       console.warn('[agents] journal not written:', (err as Error).message)
@@ -645,16 +961,21 @@ export class AgentSessionService {
   }
 
   private update(l: Live, patch: Partial<AgentSession>): void {
+    this.announce(l, patch)
+    void this.persist(l)
+  }
+
+  private announce(l: Live, patch: Partial<AgentSession>): void {
     l.session = { ...l.session, ...patch, updatedAt: new Date().toISOString() }
     this.deps.publish('agents:changed', { session: l.session })
-    void this.persist(l)
   }
 
   /** Atomic writes, one after another (hooks can come in bursts). */
   private persist(l?: Live): Promise<void> {
     this.writes = this.writes.then(async () => {
+      // Prompts, file contents and tool output: for the user's eyes only.
       const atomic = async (file: string, data: string) => {
-        await writeFile(`${file}.tmp`, data)
+        await writeFile(`${file}.tmp`, data, { mode: 0o600 })
         await rename(`${file}.tmp`, file)
       }
       try {
@@ -683,20 +1004,49 @@ export class AgentSessionService {
       },
       set plan(plan) {
         l.session = { ...l.session, plan }
+      },
+      get planStatus() {
+        return l.session.planStatus
+      },
+      set planStatus(planStatus) {
+        l.session = { ...l.session, planStatus }
+      },
+      get mode() {
+        return l.session.mode
       }
     }
   }
 
-  private tool(l: Live, id: string | undefined): ToolCallPart | undefined {
-    for (const m of l.messages) {
-      const part = m.parts.find((p): p is ToolCallPart => p.type === 'tool' && p.id === id)
-      if (part) return part
-    }
-    return undefined
-  }
-
   private file(id: string): string {
     return join(this.deps.dir, `${id}.json`)
+  }
+
+  /**
+   * A session's messages from an earlier run. A damaged transcript never stops
+   * the start: it is set aside (`<id>.corrupt-<time>.json`) and the session
+   * loads with a notice in place of its history.
+   */
+  private async transcript(id: string): Promise<ChatMessage[]> {
+    const read = await readJsonFile<ChatMessage[]>(this.file(id))
+    if (read.status === 'missing') return []
+    if (read.status === 'ok' && Array.isArray(read.value)) return read.value
+    const backup = read.status === 'damaged' && read.backup ? ` It was set aside as ${basename(read.backup)}.` : ''
+    return [
+      {
+        id: randomUUID(),
+        role: 'assistant',
+        parts: [],
+        createdAt: new Date().toISOString(),
+        status: 'error',
+        errorCode: 'transcript-damaged',
+        error: `The earlier messages of this session could not be read.${backup}`
+      }
+    ]
+  }
+
+  /** The session's own temp folder for pasted images. */
+  private imageDir(id: string): string {
+    return join(this.deps.tempDir ?? join(tmpdir(), 'mindeck-agents'), id)
   }
 
   private require(id: string): Live {

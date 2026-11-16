@@ -1,0 +1,122 @@
+import { describe, expect, it, vi } from 'vitest'
+import { RemoteActivity } from '../../../electron/main/server/RemoteActivity'
+import { IPC_CHANNELS } from '../../../src/shared/ipc/contract'
+import type { CallContext } from '../../../electron/ipc/router'
+
+const phone: CallContext = { transport: 'remote', deviceId: 'd1', role: 'admin' }
+
+function setup() {
+  const logged: [string, string, unknown][] = []
+  const names: Record<string, string> = { d1: 'iPhone', d2: 'iPad' }
+  let broken = false
+  const used = vi.fn()
+  const a = new RemoteActivity({
+    used,
+    devices: async () => {
+      if (broken) throw new Error('no devices file')
+      return Object.entries(names).map(([id, name]) => ({ id, name }))
+    },
+    log: (type, deviceId, payload) => logged.push([type, deviceId, payload])
+  })
+  return { a, logged, names, used, breakDevices: () => (broken = true) }
+}
+
+const flush = () => new Promise((r) => setTimeout(r, 0))
+
+describe('what counts as someone using a paired device (the trial clock)', () => {
+  it('what a person does, whatever it is — not what clients ask by themselves, on a timer or after a push', () => {
+    const { a, used } = setup()
+    for (const channel of ['terminal:write', 'agents:send', 'agents:create', 'ai:send', 'permission:respond', 'files:write', 'files:list', 'search:start', 'memory:write', 'scm:commit', 'finder:list', 'mongo:find'] as const) {
+      used.mockClear()
+      a.observe(channel, {}, {}, phone)
+      expect(used, channel).toHaveBeenCalledOnce()
+    }
+    used.mockClear()
+    // The editor's look at the disk and git, a session's changes, what follows a push or a reconnect, what an open tab keeps up to date.
+    for (const channel of ['files:stat', 'scm:status', 'scm:branches', 'scm:stashes', 'agents:changes', 'agents:branch', 'agents:list', 'agents:get', 'ai:conversations', 'ai:status', 'permission:pending', 'events:recent', 'memory:list', 'memory:status', 'lsp:diagnostics', 'terminal:attach', 'projects:list', 'system:snapshot'] as const) {
+      a.observe(channel, {}, {}, phone)
+    }
+    // An agent changing an open file: the editor reloads it by itself, with everything that follows.
+    for (const channel of ['files:read', 'lsp:change', 'lint:file', 'scm:blame', 'scm:original'] as const) a.observe(channel, {}, {}, phone)
+    // Monaco asks these itself of a visible editor: its outline and sticky scroll on every change, its light bulb when the cursor rests on a new error.
+    for (const channel of ['lsp:symbols', 'lsp:codeFixes'] as const) a.observe(channel, {}, {}, phone)
+    // Free of the license: no use of it.
+    for (const channel of ['cloud:status', 'cloud:refresh', 'app:info'] as const) a.observe(channel, {}, {}, phone)
+    // The desktop has its own signal.
+    a.observe('terminal:write', {}, {}, { transport: 'ipc' })
+    expect(used).not.toHaveBeenCalled()
+  })
+})
+
+describe('the language channels, each decided on purpose', () => {
+  // What Monaco asks of an open file with nobody there, and what takes a hand: a hover, typing, a click. A new channel fails here until it is decided.
+  const BY_ITSELF = ['lsp:change', 'lsp:close', 'lsp:codeFixes', 'lsp:diagnostics', 'lsp:open', 'lsp:symbols']
+  const BY_A_PERSON = ['lsp:completionDetails', 'lsp:completions', 'lsp:definition', 'lsp:hover', 'lsp:references', 'lsp:rename', 'lsp:signature']
+
+  it('all of them are one or the other', () => {
+    const channels = IPC_CHANNELS.filter((channel) => channel.startsWith('lsp:'))
+    expect([...channels].sort()).toEqual([...BY_ITSELF, ...BY_A_PERSON].sort())
+    const { a, used } = setup()
+    for (const channel of BY_ITSELF) a.observe(channel as never, {}, {}, phone)
+    expect(used).not.toHaveBeenCalled()
+    for (const channel of BY_A_PERSON) a.observe(channel as never, {}, {}, phone)
+    expect(used).toHaveBeenCalledTimes(BY_A_PERSON.length)
+  })
+})
+
+describe('what paired devices do with the files', () => {
+  it('logs downloads, uploads and every change — a batch with its first paths and its size', async () => {
+    const { a, logged } = setup()
+    const many = Array.from({ length: 25 }, (_, i) => `/home/ada/f${i}.txt`)
+    a.observe('finder:read', { path: '/home/ada/a.pdf' }, {}, phone)
+    a.observe('finder:read', { path: '/home/ada/a.pdf', offset: 4194304 }, {}, phone)
+    a.observe('finder:write', { path: '/home/ada/up.jpg', data: 'AAAA' }, { size: 3 }, phone)
+    a.observe('finder:write', { path: '/home/ada/up.jpg', data: 'AAAA', offset: 3 }, { size: 6 }, phone)
+    a.observe('finder:mkdir', { parent: '/home/ada', name: 'New' }, '/home/ada/New', phone)
+    a.observe('finder:rename', { path: '/home/ada/a.txt', name: 'b.txt' }, '/home/ada/b.txt', phone)
+    a.observe('finder:trash', { paths: many }, [], phone)
+    a.observe('finder:untrash', { items: [{ path: '/home/ada/.Trash/a', restore: '/home/ada/a' }] }, {}, phone)
+    a.observe('finder:move', { paths: ['/home/ada/a'], dest: '/home/ada/Archive' }, [], phone)
+    a.observe('finder:copy', { paths: ['/home/ada/a', '/home/ada/b'], dest: '/Volumes/USB' }, [], phone)
+    a.observe('finder:transfer', { id: 'x', paths: ['/home/ada/a'], dest: '/home/ada/B', mode: 'move' }, {}, phone)
+    a.observe('finder:restore', { moves: [{ from: '/a', to: '/b' }] }, undefined, phone)
+    a.observe('finder:compress', { paths: ['/home/ada/a'], id: 'z' }, '/home/ada/a.zip', phone)
+    a.observe('finder:extract', { path: '/home/ada/a.zip', id: 'z' }, '/home/ada/a', phone)
+    a.observe('finder:preview', { path: '/home/ada/a.png' }, {}, phone)
+    await flush()
+    expect(logged.map(([type, , p]) => [type, p])).toEqual([
+      ['device.files', { device: 'iPhone', action: 'download', path: '/home/ada/a.pdf' }],
+      ['device.files', { device: 'iPhone', action: 'upload', path: '/home/ada/up.jpg' }],
+      ['device.files', { device: 'iPhone', action: 'mkdir', path: '/home/ada/New' }],
+      ['device.files', { device: 'iPhone', action: 'rename', path: '/home/ada/a.txt', dest: '/home/ada/b.txt' }],
+      ['device.files', { device: 'iPhone', action: 'trash', paths: many.slice(0, 20), count: 25 }],
+      ['device.files', { device: 'iPhone', action: 'restore', paths: ['/home/ada/a'], count: 1 }],
+      ['device.files', { device: 'iPhone', action: 'move', paths: ['/home/ada/a'], count: 1, dest: '/home/ada/Archive' }],
+      ['device.files', { device: 'iPhone', action: 'copy', paths: ['/home/ada/a', '/home/ada/b'], count: 2, dest: '/Volumes/USB' }],
+      ['device.files', { device: 'iPhone', action: 'move', paths: ['/home/ada/a'], count: 1, dest: '/home/ada/B' }],
+      ['device.files', { device: 'iPhone', action: 'undo', count: 1 }],
+      ['device.files', { device: 'iPhone', action: 'compress', paths: ['/home/ada/a'], count: 1, dest: '/home/ada/a.zip' }],
+      ['device.files', { device: 'iPhone', action: 'extract', path: '/home/ada/a.zip', dest: '/home/ada/a' }]
+    ])
+  })
+
+  it('names a device it cannot find by its id, and ignores the desktop, the browser and other channels', async () => {
+    const { a, logged, names, breakDevices } = setup()
+    delete names.d1
+    a.observe('finder:mkdir', { parent: '/home/ada', name: 'A' }, '/home/ada/A', phone)
+    await flush()
+    breakDevices()
+    a.observe('finder:mkdir', { parent: '/home/ada', name: 'B' }, '/home/ada/B', { transport: 'remote', deviceId: 'broken' })
+    a.observe('finder:mkdir', { parent: '/home/ada', name: 'C' }, '/home/ada/C', { transport: 'ipc' })
+    a.observe('finder:mkdir', { parent: '/home/ada', name: 'D' }, '/home/ada/D', { transport: 'remote' })
+    a.observe('browser:open', { url: 'https://x.dev/' }, {}, phone)
+    a.observe('memory:read', { path: 'a.md' }, {}, phone)
+    a.observe('finder:list', { path: '/home/ada' }, {}, phone)
+    a.observe('finder:places', undefined, {}, phone) // no payload at all
+    await flush()
+    expect(logged.map(([, id, p]) => [id, p])).toEqual([
+      ['d1', { device: 'd1', action: 'mkdir', path: '/home/ada/A' }],
+      ['broken', { device: 'broken', action: 'mkdir', path: '/home/ada/B' }]
+    ])
+  })
+})

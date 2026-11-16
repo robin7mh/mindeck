@@ -17,4 +17,5 @@ export function registerLspIpc(router: Router, service: LspService): void {
   router.register('lsp:rename', ({ projectId, path, line, offset, newName }) => service.rename(projectId, path, line, offset, newName))
   router.register('lsp:signature', ({ projectId, path, line, offset }) => service.signature(projectId, path, line, offset))
   router.register('lsp:codeFixes', ({ projectId, path, range, errorCodes }) => service.codeFixes(projectId, path, range, errorCodes))
+  router.register('lsp:symbols', ({ projectId, path }) => service.symbols(projectId, path))
 }

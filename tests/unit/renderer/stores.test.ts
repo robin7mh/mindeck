@@ -4,8 +4,8 @@ import { fail, installBridge, settle } from './bridge'
 
 import { useProjects, useSelectedProject } from '@/features/projects/store'
 import { useContextStore, useProjectContextEntry } from '@/features/context/store'
-import { LAYOUT_GRID, tabLabels, useTerminals } from '@/features/terminal/store'
-import { folderColors, useMemory } from '@/features/memory/store'
+import { LAYOUT_GRID, layoutFor, tabLabels, useTerminals } from '@/features/terminal/store'
+import { folderColors, localNow, pictureName, useMemory } from '@/features/memory/store'
 import { useSystemMetrics } from '@/features/system/useSystemMetrics'
 import type { Note, NoteMeta } from '@shared/types/memory'
 import type { TerminalInfo } from '@shared/types/terminal'
@@ -50,6 +50,22 @@ describe('projects store', () => {
     expect(useProjects.getState().selectedId).toBeUndefined()
     list = [project('a'), project('b')]
     await s.load()
+    // GitHub Desktop can't be looked up: no button for it, the projects still load
+    const lookup = installBridge({ 'projects:list': () => list, 'projects:githubDesktop': () => Promise.reject(new Error('mdfind failed')) })
+    await s.load()
+    expect(useProjects.getState()).toMatchObject({ githubDesktop: null, projects: [expect.objectContaining({ id: 'a' }), expect.objectContaining({ id: 'b' })] })
+    expect(lookup.invoke).toHaveBeenCalledWith('projects:githubDesktop', undefined)
+    installBridge({
+      'projects:list': () => list,
+      'projects:pickFolder': () => ({ path: '/new' }),
+      'projects:add': () => project('c'),
+      'projects:refresh': ({ id }: { id: string }) => ({ ...project(id), name: 'fresh' }),
+      'projects:remove': () => undefined,
+      'projects:openInEditor': () => undefined,
+      'projects:openInGitHubDesktop': () => undefined,
+      'projects:githubDesktop': () => 'GitHub Desktop',
+      'projects:pull': ({ id }: { id: string }) => ({ ...project(id), name: 'pulled' })
+    })
 
     await s.addViaPicker()
     expect(useProjects.getState()).toMatchObject({ selectedId: 'c' })
@@ -65,7 +81,6 @@ describe('projects store', () => {
     expect(useProjects.getState().selectedId).toBe('a')
     await s.remove('c') // not selected → selection kept
     expect(useProjects.getState().selectedId).toBe('a')
-    await s.openEditor('a')
     await s.openInGitHubDesktop('a')
     expect(useProjects.getState().error).toBeUndefined()
   })
@@ -77,7 +92,7 @@ describe('projects store', () => {
 
     installBridge(
       Object.fromEntries(
-        ['projects:list', 'projects:pickFolder', 'projects:remove', 'projects:refresh', 'projects:pull', 'projects:openInEditor', 'projects:openInGitHubDesktop'].map(
+        ['projects:list', 'projects:pickFolder', 'projects:remove', 'projects:refresh', 'projects:pull', 'projects:openInGitHubDesktop'].map(
           (ch) => [ch, () => fail(`${ch} failed`)]
         )
       )
@@ -89,7 +104,6 @@ describe('projects store', () => {
       [() => s.remove('x'), 'projects:remove'],
       [() => s.refresh('x'), 'projects:refresh'],
       [() => s.pull('x'), 'projects:pull'],
-      [() => s.openEditor('x'), 'projects:openInEditor'],
       [() => s.openInGitHubDesktop('x'), 'projects:openInGitHubDesktop']
     ] as const) {
       await run()
@@ -149,7 +163,7 @@ describe('terminal store', () => {
     ...extra
   })
 
-  it('init re-attaches surviving sessions, else opens one; only once', async () => {
+  it('init re-attaches surviving sessions, else starts none; only once', async () => {
     const existing = [info(), info()]
     installBridge({ 'terminal:list': () => existing })
     await useTerminals.getState().init()
@@ -157,16 +171,94 @@ describe('terminal store', () => {
     await useTerminals.getState().init() // no second run
     expect(useTerminals.getState().tabs).toHaveLength(2)
 
+    // Nothing running: no shell until the user opens one.
     useTerminals.setState(initial.terminals, true)
-    const created = info()
-    installBridge({ 'terminal:list': () => [], 'terminal:create': () => created })
+    const create = vi.fn(() => info())
+    installBridge({ 'terminal:list': () => [], 'terminal:create': create })
     await useTerminals.getState().init()
-    expect(useTerminals.getState().activeId).toBe(created.id)
+    expect(useTerminals.getState()).toMatchObject({ initialized: true, tabs: [] })
+    expect(useTerminals.getState().activeId).toBeUndefined()
+    expect(create).not.toHaveBeenCalled()
 
     useTerminals.setState(initial.terminals, true)
     installBridge({ 'terminal:list': () => fail('no main') })
     await useTerminals.getState().init()
     expect(useTerminals.getState().error).toBe('no main')
+  })
+
+  it('after a renderer crash: the running shells come back in the order, layout and focus the window showed', async () => {
+    const [a, b, c] = [info(), info(), info()]
+    installBridge({ 'terminal:list': () => [a, b, c] })
+    sessionStorage.setItem('mindeck.terminal.view', JSON.stringify({ layout: 'grid', order: [c.id, 'gone', a.id], activeId: a.id }))
+    await useTerminals.getState().init()
+    expect(useTerminals.getState()).toMatchObject({ layout: 'grid', activeId: a.id })
+    expect(useTerminals.getState().tabs.map((t) => t.id)).toEqual([c.id, a.id, b.id]) // a new one at the end
+    // the view follows every change
+    useTerminals.getState().setLayout('rows')
+    expect(JSON.parse(sessionStorage.getItem('mindeck.terminal.view')!)).toEqual({ layout: 'rows', order: [c.id, a.id, b.id], activeId: a.id })
+
+    // nothing (or nonsense) remembered: as listed, one pane, the first active
+    for (const stored of ['{', JSON.stringify({ layout: 'mosaic', order: 'x', activeId: 'gone' })]) {
+      useTerminals.setState(initial.terminals, true)
+      sessionStorage.setItem('mindeck.terminal.view', stored)
+      await useTerminals.getState().init()
+      expect(useTerminals.getState()).toMatchObject({ layout: 'single', activeId: a.id })
+      expect(useTerminals.getState().tabs.map((t) => t.id)).toEqual([a.id, b.id, c.id])
+    }
+    // storage unavailable: still the shells, and changes don't fail
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('quota')
+    })
+    useTerminals.getState().setLayout('cols')
+    expect(useTerminals.getState().layout).toBe('cols')
+    sessionStorage.removeItem('mindeck.terminal.view')
+  })
+
+  it('a terminal an agent started a command in: it joins the last run’s tabs, gets the focus and comes on screen', async () => {
+    const restored = [info({ cwd: '/h/a' }), info({ cwd: '/h/b' })]
+    const agents = info({ cwd: '/code/game' })
+    const queue = [...restored]
+    installBridge({
+      'terminal:list': () => [agents], // started before the Terminal was ever opened
+      'terminal:restore': () => ({ layout: 'single', active: 0, tabs: restored.map((t) => ({ title: '~', cwd: t.cwd, scrollback: '' })), savedAt: '2026-01-01T00:00:00Z' }),
+      'terminal:create': () => queue.shift()
+    })
+    sessionStorage.removeItem('mindeck.terminal.view') // a fresh window, not a reload
+    await useTerminals.getState().reveal(agents)
+    expect(useTerminals.getState().tabs.map((t) => t.id)).toEqual([restored[0].id, restored[1].id, agents.id])
+    expect(useTerminals.getState()).toMatchObject({ activeId: agents.id, layout: 'grid' }) // the third one shows on the first screen
+
+    // Terminal open already: a new shell is added (once), a known one only focused; the layout grows no more than needed.
+    const another = info()
+    await useTerminals.getState().reveal(another)
+    await useTerminals.getState().reveal(another)
+    expect(useTerminals.getState().tabs.map((t) => t.id)).toEqual([restored[0].id, restored[1].id, agents.id, another.id])
+    useTerminals.setState({ layout: 'single' })
+    await useTerminals.getState().reveal(restored[1])
+    expect(useTerminals.getState()).toMatchObject({ activeId: restored[1].id, layout: 'cols' })
+    await useTerminals.getState().reveal(restored[0])
+    expect(useTerminals.getState().layout).toBe('cols')
+    expect(layoutFor('rows', 2)).toBe('rows')
+    expect(layoutFor('rows', 3)).toBe('grid')
+    expect(layoutFor('cols', 7)).toBe('grid') // beyond four: the grid scrolls to it
+  })
+
+  it('a shell opened while the last run’s tabs are still coming back joins them instead of being replaced', async () => {
+    const restored = info({ cwd: '/h/a' })
+    const folder = info({ cwd: '/h/code' })
+    let release!: () => void
+    const slow = new Promise<void>((r) => (release = r))
+    installBridge({
+      'terminal:list': () => [],
+      'terminal:restore': () => ({ layout: 'single', active: 0, tabs: [{ title: 'a', cwd: '/h/a', scrollback: '' }], savedAt: '2026-01-01T00:00:00Z' }),
+      'terminal:create': async (p: { cwd?: string }) => (p.cwd === '/h/a' ? slow.then(() => restored) : folder)
+    })
+    const first = useTerminals.getState().init() // the Terminal module restores the last run …
+    const second = useTerminals.getState().openFolder('/h/code') // … while Files opens a shell
+    await Promise.resolve()
+    release()
+    await Promise.all([first, second])
+    expect(useTerminals.getState().tabs.map((t) => t.id)).toEqual([restored.id, folder.id])
   })
 
   it('open / close / restart / markExited, with active-tab bookkeeping', async () => {
@@ -218,6 +310,37 @@ describe('terminal store', () => {
     await s().restart(fresh2.id) // queue empty → error
     expect(s().error).toBe('limit')
     await s().close(fresh.id) // kill fails silently
+  })
+
+  it('openFolder: a shell in any folder — after re-attaching survivors, without opening Home first', async () => {
+    const created = info({ cwd: '/h/code', title: 'code' })
+    const asked: unknown[] = []
+    installBridge({
+      'terminal:list': () => [],
+      'terminal:create': (p: unknown) => {
+        asked.push(p)
+        return created
+      }
+    })
+    await useTerminals.getState().openFolder('/h/code')
+    expect(asked).toEqual([{ cwd: '/h/code' }])
+    expect(useTerminals.getState()).toMatchObject({ initialized: true, activeId: created.id, tabs: [created] })
+    installBridge({ 'terminal:create': () => fail('Not an absolute path', 'bad-path') })
+    await useTerminals.getState().openFolder('code')
+    expect(useTerminals.getState().error).toBe('Not an absolute path')
+    expect(useTerminals.getState().tabs).toHaveLength(1)
+  })
+
+  it('run: a new shell in Home that runs a command, typed in for the user', async () => {
+    const created = info()
+    const written: unknown[] = []
+    installBridge({ 'terminal:list': () => [], 'terminal:create': () => created, 'terminal:write': (p: unknown) => void written.push(p) })
+    expect(await useTerminals.getState().run('claude auth login')).toEqual(created)
+    expect(written).toEqual([{ id: created.id, data: 'claude auth login\r' }])
+    expect(useTerminals.getState()).toMatchObject({ activeId: created.id, tabs: [created] })
+    installBridge({ 'terminal:create': () => fail('remote shells are off') })
+    expect(await useTerminals.getState().run('x')).toBeUndefined()
+    expect(useTerminals.getState().error).toBe('remote shells are off')
   })
 
   it('layouts never reorder: new tabs append, picking a tab only focuses it', async () => {
@@ -320,7 +443,7 @@ describe('memory store', () => {
     const files = new Map(paths.map((p) => [p, note(p)]))
     const calls: string[] = []
     const routes: Record<string, (p: never) => unknown> = {
-      'memory:status': () => ({ root: '/v', defaultRoot: '/v', name: 'Mindeck', isDefault: true, exists: true, noteCount: files.size, graphStyle: { mode: 'colorful', color: 'cyan' } }),
+      'memory:status': () => ({ root: '/v', defaultRoot: '/v', name: 'Mindeck', isDefault: true, exists: true, noteCount: files.size, graphStyle: { mode: 'colorful', color: 'cyan' }, dailyNotes: { folder: 'Daily', template: '' } }),
       'memory:list': () => [...files.keys()].map((p) => meta(p)),
       'memory:graph': () => ({ nodes: [], edges: [] }),
       'memory:folders': () => ['Ich'],
@@ -387,6 +510,7 @@ describe('memory store', () => {
     vault(['Ich/A.md'])
     await m().init()
     expect(m().note!.path).toBe('Ich/A.md')
+    expect(m().openFolders).toEqual([]) // opened by itself at the start: its folder stays closed
 
     useMemory.setState(initial.memory, true)
     vault([])
@@ -396,6 +520,26 @@ describe('memory store', () => {
     installBridge({ 'memory:status': () => fail('no vault service') })
     await m().init()
     expect(m()).toMatchObject({ error: 'no vault service', loading: false })
+  })
+
+  it('the folders open in the note list: none at the start; a note opened, or one made in a folder, opens its folder; collapse all', async () => {
+    vault(['Willkommen.md', 'Ich/A.md', 'Ich/Tief/B.md'])
+    expect(m().openFolders).toEqual([])
+    await m().open('Ich/A.md')
+    await m().open('Ich/Tief/B.md')
+    await m().open('Ich/A.md') // open already
+    await m().open('Willkommen.md') // the root is no folder
+    expect(m().openFolders).toEqual(['Ich', 'Ich/Tief'])
+    m().toggleFolder('Ich')
+    expect(m().openFolders).toEqual(['Ich/Tief'])
+    m().toggleFolder('Ich')
+    expect(m().openFolders).toEqual(['Ich/Tief', 'Ich'])
+    m().collapseAll()
+    expect(m().openFolders).toEqual([])
+    // a new note in a closed folder: the folder opens, so its name is typed there
+    m().startCreate('note', 'Ich')
+    m().startCreate('note', '')
+    expect(m().openFolders).toEqual(['Ich'])
   })
 
   it('edits autosave after a pause, keep typing that happened mid-save, and flush on demand', async () => {
@@ -427,6 +571,48 @@ describe('memory store', () => {
     await m().save() // no note
   })
 
+  it('a save answered after another note was opened never puts that note\'s text into the saved one', async () => {
+    const { files, routes } = vault(['A.md', 'B.md'])
+    await m().open('A.md')
+    // The autosave of A is in flight; its read-back answers late (HTTP in the web UI is unordered).
+    let release: () => void = () => {}
+    const read = routes['memory:read']
+    let slow = true
+    routes['memory:read'] = (p: never) => {
+      if (slow && (p as { path: string }).path === 'A.md') {
+        slow = false
+        return new Promise((r) => (release = () => r(read(p))))
+      }
+      return read(p)
+    }
+    m().setDraft('A edited')
+    const saving = m().save()
+    await m().open('B.md')
+    expect(m()).toMatchObject({ note: { path: 'B.md' }, draft: 'body' })
+    release()
+    await saving
+    // Still B with B's text — and nothing unsaved that the next autosave would write into A.
+    expect(m()).toMatchObject({ note: { path: 'B.md' }, draft: 'body', saving: false })
+    await m().save()
+    expect(files.get('A.md')!.body).toBe('A edited')
+    expect(files.get('B.md')!.body).toBe('body')
+  })
+
+  it('two quick opens: the note clicked last wins, not the one answered last', async () => {
+    const { routes } = vault(['A.md', 'B.md'])
+    const read = routes['memory:read']
+    const answers: (() => void)[] = []
+    routes['memory:read'] = (p: never) => new Promise((r) => answers.push(() => r(read(p))))
+    const a = m().open('A.md')
+    const b = m().open('B.md')
+    await settle()
+    answers[1]() // B first
+    await b
+    answers[0]() // A late
+    await a
+    expect(m().note!.path).toBe('B.md')
+  })
+
   it('reports save failures and opening errors', async () => {
     const v = vault()
     await m().open('Willkommen.md')
@@ -436,8 +622,334 @@ describe('memory store', () => {
     expect(m()).toMatchObject({ error: 'disk full', saving: false })
     m().clearError()
     expect(m().error).toBeUndefined()
+    m().setDraft(m().note!.body) // nothing unsaved in the way
     await m().open('Nope.md')
     expect(m().error).toBe('Note not found')
+  })
+
+  it('a link refreshing its note while another opens never pairs one note with the other’s text', async () => {
+    const v = vault(['A.md', 'B.md'])
+    await m().open('A.md')
+    const read = v.routes['memory:read']
+    let answer: () => void = () => {}
+    let held = 0
+    v.routes['memory:read'] = ((p: { path: string }) => {
+      // The link's read of A is the one that answers late.
+      if (p.path !== 'A.md' || (held += 1) > 1) return read(p as never)
+      return new Promise((r) => (answer = () => r(read(p as never))))
+    }) as never
+    const linking = m().link('B.md')
+    await settle()
+    await m().open('B.md')
+    answer()
+    await linking
+    expect(m()).toMatchObject({ note: { path: 'B.md' }, draft: 'body' })
+    m().setDraft(m().note!.body)
+    await m().save()
+    expect(v.calls).toEqual(['link:A.md->B.md']) // nothing written: no text of B into A
+  })
+
+  it('back on screen, the open note follows what happened while Memory was away', async () => {
+    const v = vault()
+    await m().open('Willkommen.md')
+    // An agent changes the note while another module is on screen: no event reaches the store.
+    v.files.set('Willkommen.md', note('Willkommen.md', 'by the agent', { modifiedAt: '2026-11-04T10:00:00.000Z' }))
+    await m().init()
+    expect(m()).toMatchObject({ draft: 'by the agent', note: { body: 'by the agent', modifiedAt: '2026-11-04T10:00:00.000Z' } })
+    // Deleted meanwhile: closes.
+    v.files.delete('Willkommen.md')
+    await m().init()
+    expect(m().note).toBeUndefined()
+  })
+
+  it('saving says which version the text is based on; a file that moved on asks instead of overwriting', async () => {
+    const v = vault()
+    const base = '2026-11-04T09:00:00.000Z'
+    v.files.set('Willkommen.md', note('Willkommen.md', 'body', { modifiedAt: base }))
+    const write = v.routes['memory:writeBody']
+    const writes: unknown[] = []
+    let moved = false
+    v.routes['memory:writeBody'] = ((p: { expectedMtime?: number }) => {
+      writes.push(p)
+      if (moved && p.expectedMtime !== undefined) fail('changed on disk', 'conflict')
+      return write(p as never)
+    }) as never
+    await m().open('Willkommen.md')
+    m().setDraft('mine')
+    expect(await m().save()).toBe(true)
+    expect(writes).toEqual([{ path: 'Willkommen.md', body: 'mine', expectedMtime: Date.parse(base) }])
+
+    // The file moves on while the user types: the event keeps the text, on the version it was typed on.
+    const seen = m().note!.modifiedAt
+    m().setDraft('mine, more')
+    moved = true
+    v.files.set('Willkommen.md', note('Willkommen.md', 'theirs', { modifiedAt: '2026-11-04T11:00:00.000Z' }))
+    await m().onChanged({ paths: ['Willkommen.md'] })
+    expect(m()).toMatchObject({ draft: 'mine, more', conflict: false, note: { modifiedAt: seen } })
+
+    expect(await m().save()).toBe(false)
+    expect(m()).toMatchObject({ conflict: true, saving: false, draft: 'mine, more' })
+    expect(m().error).toBeUndefined()
+    expect(v.files.get('Willkommen.md')!.body).toBe('theirs')
+    await m().open('Ich/A.md') // nothing replaces the text until the user decides
+    expect(m().note!.path).toBe('Willkommen.md')
+
+    // Load the disk's version…
+    await m().loadDisk()
+    expect(m()).toMatchObject({ draft: 'theirs', conflict: false, note: { body: 'theirs' } })
+
+    // …or keep theirs out: a forced write says no version.
+    m().setDraft('mine after all')
+    await m().save()
+    expect(m().conflict).toBe(true)
+    writes.length = 0
+    expect(await m().save({ force: true })).toBe(true)
+    expect(writes).toEqual([{ path: 'Willkommen.md', body: 'mine after all' }])
+    expect(m()).toMatchObject({ conflict: false, draft: 'mine after all' })
+    expect(v.files.get('Willkommen.md')!.body).toBe('mine after all')
+  })
+
+  it('a note deleted under unsaved text keeps the text; keeping it writes the note anew', async () => {
+    const v = vault()
+    await m().open('Willkommen.md')
+    m().setDraft('still typing')
+    v.files.delete('Willkommen.md')
+    await m().onChanged({ paths: ['Willkommen.md'] })
+    expect(m()).toMatchObject({ note: { path: 'Willkommen.md' }, draft: 'still typing' })
+    await m().onChanged({}) // a full rescan just the same
+    expect(m().draft).toBe('still typing')
+
+    v.routes['memory:writeBody'] = (({ expectedMtime }: { expectedMtime?: number }) => fail('Gone', expectedMtime === undefined ? 'not-found' : 'conflict')) as never
+    v.routes['memory:write'] = (({ path, raw }: { path: string; raw: string }) => (v.files.set(path, note(path, raw)), meta(path))) as never
+    expect(await m().save()).toBe(false)
+    expect(m().conflict).toBe(true)
+    expect(await m().save({ force: true })).toBe(true)
+    expect(v.files.get('Willkommen.md')!.body).toBe('still typing')
+    expect(m().conflict).toBe(false)
+
+    // Deleted again, and this time the user lets the text go.
+    m().setDraft('more')
+    v.files.delete('Willkommen.md')
+    await m().loadDisk()
+    expect(m().note).toBeUndefined()
+    expect(m().draft).toBe('')
+
+    // A forced write that fails for another reason says so.
+    await m().open('Ich/A.md')
+    v.routes['memory:writeBody'] = (() => fail('disk full')) as never
+    m().setDraft('x')
+    expect(await m().save({ force: true })).toBe(false)
+    expect(m().error).toBe('disk full')
+  })
+
+  it('text that can’t be written can be let go, and the vault left', async () => {
+    const v = vault()
+    await m().open('Willkommen.md')
+    v.routes['memory:writeBody'] = (() => fail('read-only')) as never
+    m().setDraft('one typed character')
+    useMemory.setState({ view: 'graph' })
+    await m().open('Ich/A.md')
+    // Refused, and the note comes up: that's where the way out is.
+    expect(m()).toMatchObject({ note: { path: 'Willkommen.md' }, draft: 'one typed character', saveFailed: true, conflict: false, view: 'note', error: 'read-only' })
+
+    m().discardDraft()
+    expect(m()).toMatchObject({ note: { path: 'Willkommen.md' }, draft: 'body', saveFailed: false })
+    expect(m().error).toBeUndefined()
+    await m().setVault('/elsewhere')
+    expect(v.calls).toContain('setVault:/elsewhere')
+
+    await m().open('Willkommen.md')
+    m().setDraft('again')
+    await m().save()
+    expect(m().saveFailed).toBe(true)
+    // It can be written after all: nothing left to discard.
+    v.routes['memory:writeBody'] = (({ path, body }: { path: string; body: string }) => (v.files.set(path, note(path, body)), meta(path))) as never
+    expect(await m().save()).toBe(true)
+    expect(m().saveFailed).toBe(false)
+
+    useMemory.setState({ note: undefined })
+    m().discardDraft() // nothing open
+  })
+
+  it('“Keep mine” that fails too: the same way out, not the conflict any more', async () => {
+    const v = vault()
+    await m().open('Willkommen.md')
+    v.routes['memory:writeBody'] = (({ expectedMtime }: { expectedMtime?: number }) => fail(expectedMtime === undefined ? 'read-only' : 'changed', expectedMtime === undefined ? 'error' : 'conflict')) as never
+    m().setDraft('mine')
+    await m().save()
+    expect(m()).toMatchObject({ conflict: true, saveFailed: false })
+    await m().save({ force: true })
+    expect(m()).toMatchObject({ conflict: false, saveFailed: true, error: 'read-only' })
+    // The next try notices the file moved on again.
+    await m().save()
+    expect(m()).toMatchObject({ conflict: true, saveFailed: false })
+  })
+
+  it('a write that worked counts, even when reading the note back fails', async () => {
+    const v = vault()
+    await m().open('Willkommen.md')
+    v.routes['memory:read'] = (() => fail('EMFILE')) as never
+    m().setDraft('on disk')
+    expect(await m().save()).toBe(true)
+    expect(m()).toMatchObject({ saving: false, saveFailed: false, draft: 'on disk', note: { body: 'on disk' } })
+    expect(m().error).toBeUndefined()
+  })
+
+  it('closing the window with text the disk doesn’t have asks, whichever module is on screen', async () => {
+    const closing = () => {
+      const event = new Event('beforeunload', { cancelable: true })
+      window.dispatchEvent(event)
+      return event.defaultPrevented
+    }
+    const v = vault()
+    expect(closing()).toBe(false) // no note open
+    await m().open('Willkommen.md')
+    expect(closing()).toBe(false) // nothing unsaved
+
+    // Typed a moment ago: it isn't on disk yet, and the write could still be refused.
+    m().setDraft('typed a moment ago')
+    expect(closing()).toBe(true)
+    expect(await m().save()).toBe(true)
+    expect(v.files.get('Willkommen.md')!.body).toBe('typed a moment ago')
+    expect(closing()).toBe(false)
+
+    // An agent touches the note, the user keeps typing past the banner: only this window has that text.
+    const write = v.routes['memory:writeBody']
+    v.routes['memory:writeBody'] = (() => fail('changed on disk', 'conflict')) as never
+    m().setDraft('past the banner')
+    expect(await m().save()).toBe(false)
+    expect(m().conflict).toBe(true)
+    m().setDraft('past the banner, and on')
+    expect(closing()).toBe(true)
+    expect(m().draft).toBe('past the banner, and on')
+    expect(v.files.get('Willkommen.md')!.body).toBe('typed a moment ago')
+
+    // A write that keeps failing for another reason: the same.
+    v.routes['memory:writeBody'] = (() => fail('read-only')) as never
+    expect(await m().save()).toBe(false)
+    expect(closing()).toBe(true)
+
+    // Kept on disk at last: free to go.
+    v.routes['memory:writeBody'] = write
+    expect(await m().save({ force: true })).toBe(true)
+    expect(closing()).toBe(false)
+  })
+
+  it('a note closed while its text is being written stays closed', async () => {
+    const v = vault()
+    await m().open('Willkommen.md')
+    const write = v.routes['memory:writeBody']
+    let answer: () => void = () => {}
+    v.routes['memory:writeBody'] = ((p: never) => new Promise((r) => (answer = () => r(write(p))))) as never
+    m().setDraft('last words')
+    const saving = m().save()
+    await settle()
+    useMemory.setState({ note: undefined, draft: '' })
+    answer()
+    expect(await saving).toBe(true)
+    expect(m()).toMatchObject({ draft: '', saving: false })
+    expect(m().note).toBeUndefined()
+  })
+
+  it('a read that failed says nothing about the note: it stays open', async () => {
+    const v = vault()
+    await m().open('Willkommen.md')
+    v.routes['memory:read'] = (() => fail('EMFILE')) as never
+    await m().onChanged({})
+    expect(m().note!.path).toBe('Willkommen.md')
+  })
+
+  it('loading the disk’s version: nothing open, another note opened meanwhile, or a failing read', async () => {
+    const v = vault(['A.md', 'B.md'])
+    await m().loadDisk() // nothing open
+    await m().open('A.md')
+    const read = v.routes['memory:read']
+    let answer: () => void = () => {}
+    v.routes['memory:read'] = ((p: never) => new Promise((r) => (answer = () => r(read(p))))) as never
+    const loading = m().loadDisk()
+    useMemory.setState({ note: note('B.md'), draft: 'body' })
+    answer()
+    await loading
+    expect(m().note!.path).toBe('B.md')
+    v.routes['memory:read'] = (() => fail('unreadable')) as never
+    await m().loadDisk()
+    expect(m().error).toBe('unreadable')
+  })
+
+  it('writes run one after the other: the second starts from what the first left, never from an older version', async () => {
+    const v = vault()
+    const stamp = (n: number) => `2026-11-04T09:00:0${n}.000Z`
+    v.files.set('Willkommen.md', note('Willkommen.md', 'body', { modifiedAt: stamp(0) }))
+    const read = v.routes['memory:read']
+    await m().open('Willkommen.md')
+
+    const asked: { body: string; expectedMtime?: number }[] = []
+    let release: () => void = () => {}
+    v.routes['memory:writeBody'] = ((p: { path: string; body: string; expectedMtime?: number }) => {
+      asked.push(p)
+      const n = asked.length
+      const done = () => {
+        v.files.set(p.path, note(p.path, p.body, { modifiedAt: stamp(n) }))
+        return meta(p.path, { modifiedAt: stamp(n) })
+      }
+      return n === 1 ? new Promise((r) => (release = () => r(done()))) : done()
+    }) as never
+    // The first read-back answers late, after the second write.
+    const answers: (() => void)[] = []
+    v.routes['memory:read'] = ((p: never) => {
+      const answer = read(p)
+      return new Promise((r) => answers.push(() => r(answer)))
+    }) as never
+
+    m().setDraft('one')
+    const first = m().save()
+    await settle()
+    m().setDraft('two')
+    const second = m().save()
+    await settle()
+    expect(asked).toHaveLength(1) // the second waits for the first
+    release()
+    await settle()
+    expect(asked.map((a) => a.body)).toEqual(['one', 'two'])
+    expect(asked[1].expectedMtime).toBe(Date.parse(stamp(1)))
+    // Both read-backs answer; the first one (older, a version behind) must not win.
+    answers[0]()
+    await first
+    expect(m().note!.modifiedAt).toBe(stamp(2))
+    answers[1]()
+    await second
+    expect(m()).toMatchObject({ draft: 'two', saving: false, note: { modifiedAt: stamp(2) } })
+  })
+
+  it('a save that failed keeps the text: nothing switches away from it, and the error stays', async () => {
+    const v = vault()
+    await m().open('Willkommen.md')
+    v.routes['memory:writeBody'] = (() => fail('read-only')) as never
+    m().setDraft('unsaved')
+    const unchanged = { note: { path: 'Willkommen.md' }, draft: 'unsaved', error: 'read-only' }
+    await m().open('Ich/A.md')
+    expect(m()).toMatchObject(unchanged)
+    await m().pickVault()
+    expect(m()).toMatchObject(unchanged)
+    await m().setVault('/elsewhere')
+    expect(v.calls).not.toContain('setVault:/elsewhere')
+    expect(m()).toMatchObject(unchanged)
+    await m().createNote('New')
+    expect(v.files.has('New.md')).toBe(false)
+    await m().openDaily()
+    await m().rename('Other')
+    await m().moveNote('Willkommen.md', 'Ich')
+    await m().moveFolder('Ich', 'Archiv')
+    expect([...v.files.keys()]).toEqual(['Willkommen.md', 'Ich/A.md'])
+    expect(m()).toMatchObject(unchanged)
+    expect(v.bridge.invoke).not.toHaveBeenCalledWith('memory:daily', expect.anything())
+
+    // Once it can be written, all is well again.
+    v.routes['memory:writeBody'] = (({ path, body }: { path: string; body: string }) => v.files.set(path, note(path, body))) as never
+    await m().open('Ich/A.md')
+    expect(v.files.get('Willkommen.md')!.body).toBe('unsaved')
+    expect(m()).toMatchObject({ note: { path: 'Ich/A.md' }, draft: 'body' })
+    expect(m().error).toBeUndefined()
   })
 
   it('follows file changes: external edits, deletes, unsaved text, renames in flight', async () => {
@@ -457,6 +969,7 @@ describe('memory store', () => {
     v.files.delete('Willkommen.md')
     await m().onChanged({ paths: ['Other.md'] }) // gone, but not reported → keep
     expect(m().note).toBeDefined()
+    m().setDraft(m().note!.body) // nothing unsaved
     await m().onChanged({}) // full rescan → drop
     expect(m().note).toBeUndefined()
     await m().onChanged({}) // no note → nothing to do
@@ -659,6 +1172,156 @@ describe('memory store', () => {
     resolve({ mode: 'single', color: 'lime' })
     await pending
     expect(m().status).toBeUndefined()
+  })
+
+  it('daily notes, templates and the daily-note settings', async () => {
+    const v = vault()
+    const seen: unknown[] = []
+    v.routes['memory:daily'] = ((p: { now: string }) => {
+      seen.push(p)
+      v.files.set('Daily/2026-10-15.md', note('Daily/2026-10-15.md', ''))
+      return meta('Daily/2026-10-15.md')
+    }) as never
+    v.routes['memory:create'] = ((p: { title: string; folder: string; template?: string; now?: string }) => {
+      seen.push(p)
+      const path = `${p.folder ? `${p.folder}/` : ''}${p.title}.md`
+      v.files.set(path, note(path, ''))
+      return meta(path)
+    }) as never
+    v.routes['memory:renderTemplate'] = ((p: unknown) => {
+      seen.push(p)
+      return '## filled'
+    }) as never
+    v.routes['memory:setDailyNotes'] = ((d: unknown) => d) as never
+    await m().init()
+
+    await m().openDaily()
+    expect(m()).toMatchObject({ note: { path: 'Daily/2026-10-15.md' }, mode: 'edit', view: 'note' })
+    expect((seen[0] as { now: string }).now).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/)
+
+    m().startCreate('note', 'Ich', 'Templates/Tag.md')
+    expect(m().creating).toEqual({ kind: 'note', parent: 'Ich', template: 'Templates/Tag.md' })
+    await m().submitCreate('Aus Vorlage')
+    expect(seen[1]).toMatchObject({ title: 'Aus Vorlage', folder: 'Ich', template: 'Templates/Tag.md', now: expect.any(String) })
+    m().startCreate('note')
+    expect(m().creating).toEqual({ kind: 'note', parent: '' })
+    await m().submitCreate('Ohne')
+    expect(seen[2]).toEqual({ title: 'Ohne', folder: '' })
+
+    expect(await m().renderTemplate('Templates/Tag.md')).toBe('## filled')
+    expect(seen[3]).toMatchObject({ path: 'Templates/Tag.md', title: 'Ohne', now: expect.any(String) })
+    v.routes['memory:renderTemplate'] = (() => fail('gone')) as never
+    expect(await m().renderTemplate('Templates/Tag.md')).toBeNull()
+    expect(m().error).toBe('gone')
+    useMemory.setState({ note: undefined })
+    expect(await m().renderTemplate('Templates/Tag.md')).toBeNull()
+
+    await m().setDailyNotes({ folder: 'Journal', template: 'Templates/Tag.md' })
+    expect(m().status!.dailyNotes).toEqual({ folder: 'Journal', template: 'Templates/Tag.md' })
+    v.routes['memory:setDailyNotes'] = (() => fail('bad-path')) as never
+    await m().setDailyNotes({ folder: '..', template: '' })
+    expect(m().error).toBe('bad-path')
+    v.routes['memory:setDailyNotes'] = ((d: unknown) => d) as never
+    useMemory.setState({ status: undefined })
+    await m().setDailyNotes({ folder: 'X', template: '' })
+    expect(m().status).toBeUndefined()
+
+    v.routes['memory:daily'] = (() => fail('no vault')) as never
+    await m().openDaily()
+    expect(m().error).toBe('no vault')
+  })
+
+  it('pictures: pasted ones are saved under an Obsidian name; shown ones come from the vault, cached per note', async () => {
+    const v = vault()
+    const attached: { name: string; data: string }[] = []
+    v.routes['memory:attach'] = ((p: { name: string; data: string }) => {
+      attached.push(p)
+      return { path: `attachments/${p.name}`, link: p.name }
+    }) as never
+    let reads = 0
+    v.routes['memory:attachment'] = ((p: { target: string; from?: string }) => {
+      reads += 1
+      return p.target === 'missing.png' ? fail('not found', 'not-found') : { path: p.target, mime: 'image/png', dataUrl: `data:image/png;base64,${p.target}|${p.from ?? ''}` }
+    }) as never
+    await m().init()
+
+    expect(await m().attach(new File([new Uint8Array([1, 2, 3])], 'image.png', { type: 'image/png' }))).toMatch(/^Pasted image \d{14}\.png$/)
+    expect(attached[0].data).toBe('AQID')
+    expect(await m().attach(new File(['x'], 'Foto.JPG', { type: 'image/jpeg' }))).toBe('Foto.JPG')
+    v.routes['memory:attach'] = (() => fail('too-large')) as never
+    expect(await m().attach(new File(['x'], 'big.png', { type: 'image/png' }))).toBeNull()
+    expect(m().error).toBe('too-large')
+    // A file that cannot be read.
+    const Reader = window.FileReader
+    class Broken {
+      onerror: (() => void) | null = null
+      error: Error | null = null
+      readAsDataURL() {
+        setTimeout(() => this.onerror!())
+      }
+    }
+    window.FileReader = Broken as never
+    expect(await m().attach(new File(['x'], 'a.png', { type: 'image/png' }))).toBeNull()
+    expect(m().error).toBe('Could not read the picture')
+    class Denied extends Broken {
+      error = new Error('denied')
+    }
+    window.FileReader = Denied as never
+    expect(await m().attach(new File(['x'], 'a.png', { type: 'image/png' }))).toBeNull()
+    expect(m().error).toBe('denied')
+    window.FileReader = Reader
+
+    expect(await m().loadImage('a.png')).toBe('data:image/png;base64,a.png|Willkommen.md')
+    expect(await m().loadImage(' a.png ')).toBe('data:image/png;base64,a.png|Willkommen.md')
+    expect(reads).toBe(1) // cached
+    expect(await m().loadImage('a%20b.png')).toBe('data:image/png;base64,a b.png|Willkommen.md')
+    expect(await m().loadImage('100%.png')).toBe('data:image/png;base64,100%.png|Willkommen.md')
+    expect(await m().loadImage('missing.png')).toBeNull()
+    expect(await m().loadImage('https://x.dev/t.png')).toBeNull()
+    expect(await m().loadImage('file:///etc/passwd')).toBeNull()
+    expect(await m().loadImage('data:image/gif;base64,R0')).toBe('data:image/gif;base64,R0')
+    // A vault change may bring the picture: the cache starts over.
+    await m().onChanged({})
+    await m().loadImage('a.png')
+    expect(reads).toBe(5)
+    useMemory.setState({ note: undefined })
+    expect(await m().loadImage('a.png')).toBe('data:image/png;base64,a.png|')
+  })
+
+  it('reads the source-mode choice at start, also without storage', async () => {
+    localStorage.setItem('mindeck.memory.source', '1')
+    vi.resetModules()
+    expect((await import('@/features/memory/store')).useMemory.getState().source).toBe(true)
+    const get = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new Error('denied')
+    })
+    vi.resetModules()
+    expect((await import('@/features/memory/store')).useMemory.getState().source).toBe(false)
+    get.mockRestore()
+  })
+
+  it('remembers source mode per device, also when storage fails', () => {
+    m().setSource(true)
+    expect(m()).toMatchObject({ source: true, mode: 'edit' })
+    expect(localStorage.getItem('mindeck.memory.source')).toBe('1')
+    m().setSource(false)
+    expect(localStorage.getItem('mindeck.memory.source')).toBe('0')
+    const set = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('quota')
+    })
+    m().setSource(true)
+    expect(m().source).toBe(true)
+    set.mockRestore()
+  })
+
+  it('names pasted pictures by their type; local time without a zone', () => {
+    const d = new Date(2026, 9, 5, 7, 4, 9)
+    expect(localNow(d)).toBe('2026-10-05T07:04:09')
+    expect(pictureName(new File([''], '', { type: 'image/jpeg' }), d)).toBe('Pasted image 20261005070409.jpg')
+    expect(pictureName(new File([''], 'image.png', { type: 'image/svg+xml' }), d)).toBe('Pasted image 20261005070409.svg')
+    expect(pictureName(new File([''], '', { type: '' }), d)).toBe('Pasted image 20261005070409.png')
+    expect(pictureName(new File([''], 'mine.webp', { type: 'image/webp' }), d)).toBe('mine.webp')
+    expect(localNow()).toMatch(/^\d{4}-/)
   })
 
   it('folderColors assigns stable slots per folder', () => {

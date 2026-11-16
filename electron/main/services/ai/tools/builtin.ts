@@ -44,7 +44,9 @@ export function builtinTools(deps: ToolDeps): ToolDefinition<never>[] {
   const project = (id: string | undefined, ctx: ToolContext): Project => {
     const wanted = id || ctx.projectId
     if (!wanted) throw coded('no-project', 'No project selected — pass projectId (see projects_list)')
-    const p = deps.projects.list().find((x) => x.id === wanted || x.name === wanted)
+    // Pinned to its project, another one is "unknown" (not even whether it exists is told).
+    const allowed = ctx.onlyProject ? deps.projects.list().filter((x) => x.id === ctx.projectId) : deps.projects.list()
+    const p = allowed.find((x) => x.id === wanted || x.name === wanted)
     if (!p) throw coded('no-project', `Unknown project: ${wanted}`)
     return p
   }

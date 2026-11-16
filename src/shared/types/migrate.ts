@@ -37,6 +37,8 @@ export interface EditorSettings {
    * that use Prettier; the rest the editor's own formatters.
    */
   prettier?: boolean
+  /** Who last changed the cursor's line, dimmed after it (git blame); on unless switched off. */
+  inlineBlame?: boolean
   /** Prettier's options where a project has no config (the extension's `prettier.*` settings). */
   prettierOptions?: Record<string, string | number | boolean>
   /** Apply ESLint's fixes when saving (editor.codeActionsOnSave: source.fixAll.eslint). */
@@ -99,7 +101,7 @@ export interface VimMapping {
 
 export type LanguageSettings = Omit<
   EditorSettings,
-  'languages' | 'keybindings' | 'importedFrom' | 'blankLines' | 'liveServer' | 'sass' | 'prettierOptions' | 'eslintFixOnSave' | 'vim' | 'vimMappings'
+  'languages' | 'keybindings' | 'importedFrom' | 'blankLines' | 'liveServer' | 'sass' | 'prettierOptions' | 'eslintFixOnSave' | 'vim' | 'vimMappings' | 'inlineBlame'
 >
 
 export interface Snippet {

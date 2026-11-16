@@ -6,6 +6,8 @@
 //
 // Script: "note"/"merk" in the message → a memory_create_note tool call
 // (needs approval), then a confirmation; anything else → a Markdown answer.
+// `hold()` keeps the next answers back until the returned function releases
+// them (`waiting` counts the requests held) — for what happens meanwhile.
 import { createServer } from 'node:http'
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
@@ -46,9 +48,16 @@ function message(model, blocks, stopReason) {
 
 export function startFakeAnthropic(port = 0) {
   const requests = []
+  let gate = null
+  let waiting = 0
   const server = createServer(async (req, res) => {
     let raw = ''
     for await (const c of req) raw += c
+    if (gate && req.method === 'POST') {
+      waiting += 1
+      await gate
+      waiting -= 1
+    }
     const body = raw ? JSON.parse(raw) : {}
     requests.push({ url: req.url, body })
     if (req.method === 'GET' && req.url.startsWith('/v1/models/')) {
@@ -90,6 +99,15 @@ export function startFakeAnthropic(port = 0) {
       resolve({
         url: `http://127.0.0.1:${server.address().port}`,
         requests,
+        hold: () => {
+          let release
+          gate = new Promise((r) => (release = r))
+          return () => {
+            gate = null
+            release()
+          }
+        },
+        waiting: () => waiting,
         close: () => new Promise((r) => server.close(() => r()))
       })
     )

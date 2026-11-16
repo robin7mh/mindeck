@@ -1,5 +1,5 @@
 import type { ProcessInfo, SystemSnapshot } from '@shared/types/system'
-import { collect, collectProcesses, currentUser } from './collectors'
+import { collect, collectProcesses, currentUser, startSampling, stopSampling } from './collectors'
 
 /**
  * Samples system telemetry and pushes it to the renderer via an injected sender.
@@ -16,6 +16,7 @@ export class SystemService {
   private tickCount = 0
   private lastProcesses: ProcessInfo[] = []
   private scanning = false
+  private sampling = false
 
   constructor(
     private readonly send: (snapshot: SystemSnapshot) => void,
@@ -61,6 +62,7 @@ export class SystemService {
   dispose(): void {
     if (this.timer) clearInterval(this.timer)
     this.timer = null
+    stopSampling()
   }
 
   private evaluate(): void {
@@ -71,16 +73,23 @@ export class SystemService {
     } else if (!shouldRun && this.timer) {
       clearInterval(this.timer)
       this.timer = null
+      stopSampling()
     }
   }
 
   private async tick(): Promise<void> {
+    // A sample still in flight (e.g. `df` stuck on a dead network mount): skip, don't pile up processes.
+    if (this.sampling) return
+    this.sampling = true
+    startSampling()
     this.tickCount += 1
     if (this.tickCount % this.processEveryNTicks === 1) void this.refreshProcesses()
     try {
       this.send(await collect(this.lastProcesses))
     } catch {
       // Skip a bad sample rather than crash the sampler.
+    } finally {
+      this.sampling = false
     }
   }
 

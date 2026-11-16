@@ -28,14 +28,15 @@ describe('parse', () => {
         'tags: [Alpha, "#beta", 7, {x: 1}]',
         'tag: Gamma delta',
         '---',
-        'See [[Target#Head|alias]] ![[Embed]] [[ ]] [doc](Folder/Doc%20One.md#x) [web](https://x.md) [bad](%E0%A4%A.md)',
+        'See [[Target#Head|alias]] ![[Embed]] [[ ]] [doc](Folder/Doc%20One.md#x) [web](https://x.md) [bad](%E0%A4%A.md) ![[bild.PNG]] [[plan.pdf]] [[v1.2 Plan]]',
         '`[[InlineCode]]` #inline-tag #123 # heading (#paren)',
         '```',
         '[[InFence]] #fenced',
         '```'
       ].join('\n')
     )
-    expect(note.links).toEqual(['Target', 'Embed', 'Folder/Doc One.md', '%E0%A4%A.md'])
+    // Attachments are embedded or linked files, not notes — no links, no ghost nodes.
+    expect(note.links).toEqual(['Target', 'Embed', 'v1.2 Plan', 'Folder/Doc One.md', '%E0%A4%A.md'])
     expect(note.tags).toEqual(['7', 'alpha', 'beta', 'delta', 'gamma', 'inline-tag', 'paren'])
   })
 
@@ -156,17 +157,23 @@ describe('MemoryIndex', () => {
     expect(g.nodes.find((n) => n.id === 'Home.md')!.degree).toBe(5)
   })
 
-  it('search(): title hits first, snippets with ellipsis, limit, empty query', () => {
+  it('search(): ranked full text with snippets and match ranges; filters; limit, empty query', () => {
     const i = idx()
     expect(i.search('   ')).toEqual([])
     const hits = i.search('needle')
-    expect(hits.map((h) => h.path)).toEqual(['Sub/B.md', 'Other/B.md']) // same title → stable order
-    expect(hits[1].snippet.startsWith('needle')).toBe(true)
-    i.upsert('Long.md', `${'x'.repeat(60)} needle at the end`, new Date())
+    expect(hits.map((h) => h.path)).toEqual(['Other/B.md', 'Sub/B.md']) // the shorter note ranks higher
+    expect(hits[0].snippet.startsWith('needle')).toBe(true)
+    expect(hits[0].matches).toEqual([[0, 6]])
+    i.upsert('Long.md', `${'x '.repeat(60)} needle at the end`, new Date())
     expect(i.search('needle').find((h) => h.path === 'Long.md')!.snippet.startsWith('…')).toBe(true)
-    expect(i.search('needle needle')).toEqual([])
-    expect(i.search('home')[0]).toMatchObject({ path: 'Home.md', snippet: expect.stringContaining('See') })
+    expect(i.search('home')[0]).toMatchObject({ path: 'Home.md', snippet: expect.stringContaining('See'), titleMatches: [[0, 4]] })
+    expect(i.search('needle path:sub').map((h) => h.path)).toEqual(['Sub/B.md'])
     expect(i.search('b', 1)).toHaveLength(1)
+    // Removed notes (one, or a whole folder) leave the search too.
+    i.remove('Sub')
+    expect(i.search('needle').map((h) => h.path)).toEqual(['Other/B.md', 'Long.md'])
+    i.clear()
+    expect(i.search('needle')).toEqual([])
   })
 
   it('remove(): single notes and whole folder prefixes; clear()', () => {

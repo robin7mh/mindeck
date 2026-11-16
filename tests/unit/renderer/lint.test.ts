@@ -58,13 +58,14 @@ const mon = vi.hoisted(() => {
     offsetAt(line: number, column: number) {
       return this.value.split('\n').slice(0, line - 1).reduce((n, l) => n + l.length + 1, 0) + column - 1
     }
-    pushEditOperations(_s: unknown, ops: { range: Range; text: string }[]) {
+    pushEditOperations(_s: unknown, ops: { range: Range; text: string }[], cursor?: (inverse: unknown[]) => unknown) {
       for (const { range, text } of ops) {
         this.edits.push({ range, text })
         this.value = this.value.slice(0, this.offsetAt(range.startLineNumber, range.startColumn)) + text + this.value.slice(this.offsetAt(range.endLineNumber, range.endColumn))
       }
       this.version += 1
       this.change.fire()
+      return cursor?.([]) ?? null // like Monaco: the cursor afterwards comes from the caller
     }
     type(text: string) {
       this.value += text
@@ -273,8 +274,12 @@ describe('ESLint in the editor', () => {
     model.type('!')
     answer('changed')
     expect(await pending).toBe(false)
-    routes({ 'lint:fix': () => fail('boom') })
+    routes({ 'lint:fix': () => fail('boom'), 'format:document': () => fail('prettier crashed') })
     expect(await fixAll(model as never)).toBe(false)
+    expect(await formatWithPrettier(model as never, { prettier: true })).toBe(false) // the editor's formatter then
+    // ESLint that can't be restarted still lints the open files again
+    routes({ 'lint:restart': () => fail('busy') })
+    await expect(restartLint()).resolves.toBeUndefined()
     model.dispose()
   })
 
@@ -285,6 +290,13 @@ describe('ESLint in the editor', () => {
     const res = lintActions.provideCodeActions(model as never, {} as never, { markers: mon.state.markers.get('eslint:/p/j.ts') } as never, {} as never) as unknown as { actions: { title: string }[] }
     expect(res.actions[0].title).toBe('Fix: eslint (ESLint)')
     model.dispose()
+    // nothing ESLint can fix: no "fix all"
+    routes({ 'lint:file': () => ({ available: true, diagnostics: [diag(1, 1, 'Nope', undefined, 'no-x')] }) })
+    const plain = mon.make('/p/k.ts', 'x')
+    await settle()
+    const only = lintActions.provideCodeActions(plain as never, {} as never, { markers: mon.state.markers.get('eslint:/p/k.ts') } as never, {} as never) as unknown as { actions: { title: string }[] }
+    expect(only.actions.map((a) => a.title)).toEqual(['Disable no-x for this line'])
+    plain.dispose()
     vi.resetModules()
     const fresh = await import('@/features/editor/lintStatus')
     await expect(fresh.useLintStatus.getState().restart()).resolves.toBeUndefined()

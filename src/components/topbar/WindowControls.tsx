@@ -12,12 +12,12 @@ export function WindowControls() {
   const [maximized, setMaximized] = useState(false)
 
   useEffect(() => {
-    window.mindeck?.isMaximized().then(setMaximized)
+    window.mindeck?.isMaximized().then(setMaximized).catch(() => {})
     return window.mindeck?.onMaximizedChange(setMaximized)
   }, [])
 
   const btn =
-    'no-drag flex h-7 w-9 items-center justify-center rounded text-text-muted transition-colors hover:text-text-primary'
+    'no-drag flex h-8 w-9 items-center justify-center rounded-md text-text-secondary transition-colors hover:text-text-primary'
 
   return (
     <div className="no-drag flex items-center gap-0.5">

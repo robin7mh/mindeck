@@ -210,7 +210,7 @@ export function snippetsOf(file: SnippetFile | undefined, language?: string): Sn
     if (!s?.prefix || s.body === undefined) return []
     const body = Array.isArray(s.body) ? s.body.join('\n') : String(s.body)
     const description = Array.isArray(s.description) ? s.description.join(' ') : s.description
-    const languages = language ? [language] : s.scope ? s.scope.split(',').map((l) => l.trim()).filter(Boolean) : ['*']
+    const languages = language ? [language] : typeof s.scope === 'string' && s.scope ? s.scope.split(',').map((l) => l.trim()).filter(Boolean) : ['*']
     const prefixes = Array.isArray(s.prefix) ? s.prefix : [s.prefix]
     return languages.flatMap((l) => prefixes.map((prefix) => ({ name, language: monacoLanguage(l), prefix, body, description })))
   })

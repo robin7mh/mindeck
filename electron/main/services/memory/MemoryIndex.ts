@@ -1,5 +1,6 @@
 import type { GraphNode, MemoryGraph, NoteMeta, NotePath, SearchHit } from '@shared/types/memory'
 import { linkKey, parseNote, type ParsedNote } from './parse'
+import { SearchIndex } from './search'
 
 interface Entry extends ParsedNote {
   path: NotePath
@@ -11,13 +12,14 @@ interface Entry extends ParsedNote {
 
 /**
  * In-memory read model over the vault: parsed notes, wikilink resolution,
- * backlinks, graph, and substring search. Rebuildable from the files at any
+ * backlinks, graph, and ranked full-text search (`search.ts`). Rebuildable from the files at any
  * time, so it is never persisted. Resolution follows Obsidian: a link matches
  * a note by filename (case-insensitive), or by path suffix when it contains a
  * folder; ties go to the shortest path.
  */
 export class MemoryIndex {
   private entries = new Map<NotePath, Entry>()
+  private readonly text = new SearchIndex()
   private derived?: {
     byName: Map<string, NotePath[]>
     outgoing: Map<NotePath, Set<NotePath>>
@@ -26,6 +28,7 @@ export class MemoryIndex {
 
   clear(): void {
     this.entries.clear()
+    this.text.clear()
     this.derived = undefined
   }
 
@@ -44,24 +47,28 @@ export class MemoryIndex {
 
   upsert(path: NotePath, raw: string, modifiedAt: Date): void {
     const slash = path.indexOf('/')
-    this.entries.set(path, {
+    const entry: Entry = {
       ...parseNote(raw),
       path,
       title: path.slice(path.lastIndexOf('/') + 1).replace(/\.md$/i, ''),
       folder: slash === -1 ? '' : path.slice(0, slash),
       raw,
       modifiedAt: modifiedAt.toISOString()
-    })
+    }
+    this.entries.set(path, entry)
+    this.text.set(entry)
     this.derived = undefined
   }
 
   /** Removes a note, or every note under a folder prefix. */
   remove(path: NotePath): boolean {
     let removed = this.entries.delete(path)
+    this.text.remove(path)
     const prefix = path.endsWith('/') ? path : `${path}/`
     for (const key of [...this.entries.keys()]) {
       if (!key.startsWith(prefix)) continue
       this.entries.delete(key)
+      this.text.remove(key)
       removed = true
     }
     if (removed) this.derived = undefined
@@ -131,23 +138,7 @@ export class MemoryIndex {
   }
 
   search(query: string, limit = 50): SearchHit[] {
-    const q = query.trim().toLowerCase()
-    if (!q) return []
-    const hits: (SearchHit & { rank: number })[] = []
-    for (const e of this.entries.values()) {
-      const inTitle = e.title.toLowerCase().includes(q)
-      const at = e.body.toLowerCase().indexOf(q)
-      if (!inTitle && at === -1) continue
-      const snippet =
-        at === -1
-          ? e.body.trim().slice(0, 120)
-          : `${at > 40 ? '…' : ''}${e.body.slice(Math.max(0, at - 40), at + q.length + 80).trim()}`
-      hits.push({ path: e.path, title: e.title, snippet: snippet.replace(/\s+/g, ' '), rank: inTitle ? 0 : 1 })
-    }
-    return hits
-      .sort((a, b) => a.rank - b.rank || a.title.localeCompare(b.title))
-      .slice(0, limit)
-      .map(({ rank: _rank, ...hit }) => hit)
+    return this.text.search(query, limit)
   }
 
   private meta(e: Entry): NoteMeta {

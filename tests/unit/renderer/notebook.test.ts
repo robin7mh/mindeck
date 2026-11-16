@@ -83,7 +83,7 @@ const mon = vi.hoisted(() => {
 })
 vi.mock('@/features/editor/monaco/setup', () => ({ monaco: mon.monaco }))
 
-import { addOutput, joinSource, newCell, notebookLanguage, parseNotebook, serializeNotebook, splitSource, stripAnsi, updateCell } from '@/features/editor/notebook/doc'
+import { addOutput, joinSource, MAX_STREAM_CHARS, newCell, notebookLanguage, parseNotebook, serializeNotebook, splitSource, stripAnsi, updateCell } from '@/features/editor/notebook/doc'
 import { NotebookSession, notebookSession } from '@/features/editor/notebook/session'
 import { tabKey, useEditor, type EditorTab } from '@/features/editor/store'
 
@@ -116,12 +116,54 @@ describe('the notebook format', () => {
     expect(old.metadata).toEqual({})
   })
 
+  it('a cell or output that breaks the format is refused, so nothing tries to draw it', () => {
+    const nb = (cell: object) => JSON.stringify({ cells: [{ cell_type: 'code', source: '', ...cell }], nbformat: 4, nbformat_minor: 5 })
+    for (const bad of [
+      { outputs: [{ output_type: 'error', ename: 'x', evalue: 'y' }] }, // no traceback
+      { outputs: [{ output_type: 'display_data', metadata: {} }] }, // no data
+      { outputs: [{ output_type: 'execute_result', data: 'x', metadata: {} }] },
+      { outputs: [{ output_type: 'stream', name: 'stdout', text: 5 }] },
+      { outputs: [null] },
+      { outputs: 'x' },
+      { source: 5 }
+    ]) {
+      expect(() => parseNotebook(nb(bad)), JSON.stringify(bad)).toThrow('Cell 1')
+    }
+    expect(() => parseNotebook(JSON.stringify({ cells: [null], nbformat: 4 }))).toThrow('Cell 1')
+    // What the format allows stays: no outputs, no source, a stream without text.
+    expect(parseNotebook(nb({})).cells).toHaveLength(1)
+    expect(parseNotebook(nb({ source: undefined, outputs: [{ output_type: 'stream', name: 'stdout' }] })).cells).toHaveLength(1)
+    expect(parseNotebook(nb({ source: ['a'], outputs: [{ output_type: 'error', ename: 'x', evalue: 'y', traceback: [] }, { output_type: 'display_data', data: {}, metadata: {} }] })).cells).toHaveLength(1)
+  })
+
   it('writes as Jupyter does; ids only from nbformat 4.5 on', () => {
     expect(serializeNotebook(parseNotebook(text()))).toBe(text())
     const old = parseNotebook(JSON.stringify({ cells: [{ id: 'x', cell_type: 'code', source: 'x', metadata: {} }], metadata: {}, nbformat: 4, nbformat_minor: 4 }))
     expect(JSON.parse(serializeNotebook(old)).cells[0]).toEqual({ cell_type: 'code', source: 'x', metadata: {} })
     const fresh = parseNotebook(JSON.stringify({ cells: [{ cell_type: 'markdown', source: 'x' }], metadata: {}, nbformat: 5, nbformat_minor: 0 }))
     expect(JSON.parse(serializeNotebook(fresh)).cells[0].id).toBe(fresh.cells[0].key)
+  })
+
+  it('a stream keeps its end, with a mark where it was cut, however much a cell prints', () => {
+    const line = 'x'.repeat(99) + '\n'
+    const chunk = line.repeat(6000) // 600,000 characters
+    const stream = (text: string) => ({ output_type: 'stream', name: 'stdout', text }) as const
+    const textOf = (outs: ReturnType<typeof addOutput>) => joinSource((outs[0] as { text: string[] }).text)
+
+    let outs = addOutput([], stream(chunk), 'CUT')
+    expect(textOf(outs)).toBe(chunk)
+    outs = addOutput(outs, stream(chunk), 'CUT')
+    expect(textOf(outs).startsWith('CUT\n')).toBe(true)
+    expect(textOf(outs)).toHaveLength(MAX_STREAM_CHARS + 'CUT\n'.length)
+    expect(textOf(outs).endsWith(line)).toBe(true)
+    // More of it: still one mark, still the same size.
+    outs = addOutput(outs, stream(`${chunk}the end\n`), 'CUT')
+    expect(textOf(outs).match(/CUT/g)).toHaveLength(1)
+    expect(textOf(outs)).toHaveLength(MAX_STREAM_CHARS + 'CUT\n'.length)
+    expect(textOf(outs).endsWith('the end\n')).toBe(true)
+    // One huge piece at once, too.
+    const huge = addOutput([], stream('y'.repeat(MAX_STREAM_CHARS + 1)), 'CUT')
+    expect(textOf(huge)).toHaveLength(MAX_STREAM_CHARS + 'CUT\n'.length)
   })
 
   it('cells, sources, outputs, language, colours', () => {
@@ -131,10 +173,10 @@ describe('the notebook format', () => {
     expect([joinSource(['a\n', 'b']), joinSource('c'), joinSource(undefined)]).toEqual(['a\nb', 'c', ''])
     expect([splitSource(''), splitSource('a\n\nb\n')]).toEqual([[], ['a\n', '\n', 'b\n']])
     // Text on the same stream joins; other outputs line up.
-    let outs = addOutput([], { output_type: 'stream', name: 'stdout', text: 'a' })
-    outs = addOutput(outs, { output_type: 'stream', name: 'stdout', text: ['b\n', 'c'] })
-    outs = addOutput(outs, { output_type: 'stream', name: 'stderr', text: 'warn\n' })
-    outs = addOutput(outs, { output_type: 'display_data', data: { 'text/plain': 'x' }, metadata: {} })
+    let outs = addOutput([], { output_type: 'stream', name: 'stdout', text: 'a' }, 'CUT')
+    outs = addOutput(outs, { output_type: 'stream', name: 'stdout', text: ['b\n', 'c'] }, 'CUT')
+    outs = addOutput(outs, { output_type: 'stream', name: 'stderr', text: 'warn\n' }, 'CUT')
+    outs = addOutput(outs, { output_type: 'display_data', data: { 'text/plain': 'x' }, metadata: {} }, 'CUT')
     expect(outs).toEqual([
       { output_type: 'stream', name: 'stdout', text: ['ab\n', 'c'] },
       { output_type: 'stream', name: 'stderr', text: ['warn\n'] },
@@ -294,6 +336,8 @@ describe('a notebook session', () => {
     await s.run(['c1'])
     expect(b.invoke.mock.calls.filter(([c]) => c === 'notebook:start')).toHaveLength(2)
 
+    // a kernel that's gone already: interrupting, restarting and stopping it fail quietly
+    for (const ch of ['notebook:interrupt', 'notebook:restart', 'notebook:shutdown']) routes[ch] = () => Promise.reject(new Error('no kernel'))
     s.interrupt()
     s.restart()
     await settle()

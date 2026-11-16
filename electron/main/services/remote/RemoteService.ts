@@ -6,9 +6,11 @@ import { createServer, type Server } from 'node:net'
 import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
 import type { RemoteConnection, SshHost } from '@shared/types/remote'
-import type { CloudAccount } from '@shared/types/cloud'
 import type { PairResult } from '@shared/types/server'
+import { spawnNode, type NodeLauncher, type NodeProcess } from '../../lib/nodeProcess'
 import { spawnInShell } from '../debug/adapters'
+import { userEnv } from '../tools/ToolsService'
+import type { Handover } from '../cloud/CloudService'
 
 function coded(code: string, message: string): Error {
   return Object.assign(new Error(message), { code })
@@ -26,14 +28,18 @@ export interface RemoteOptions {
   /** The server package for an architecture (a .tar.gz). */
   bundle: (arch: 'x64' | 'arm64') => Promise<string>
   secrets: { get(name: string): Promise<string | undefined>; set(name: string, value: string | null): Promise<void> }
-  /** The desktop's current entitlement, handed to the remote core (it runs on this license). */
-  entitlement: () => { token: string; account: CloudAccount } | null
+  /** The desktop's current entitlement, handed to the remote core (it runs on this license) while the cloud issues no follower leases. */
+  entitlement: () => Handover | null
+  /** A follower lease from Mindeck Cloud for the remote core with this install id — null when there is none (BE-SEC-09). */
+  followerLease?: (installId: string) => Promise<Handover | null>
   openWindow?: (opts: { title: string; url: string; token: string; deviceId: string }) => { closed: Promise<void>; close: () => void }
   publish: (connections: RemoteConnection[]) => void
   /** The ssh config with the hosts (default ~/.ssh/config). */
   sshConfig?: string
-  /** The Dev Containers CLI (`devcontainer up`): command, arguments, environment. */
-  devcontainer?: (root: string) => [string, string[], Record<string, string>?]
+  /** How the Dev Containers CLI runs as a Node program (Platform.node). */
+  node?: NodeLauncher
+  /** Start the Dev Containers CLI's `devcontainer up` for a project (default: defaultDevcontainer). */
+  devcontainer?: (root: string) => Promise<NodeProcess>
   start?: Start
   fetch?: typeof fetch
   /** How often the entitlement is handed over again. */
@@ -46,6 +52,8 @@ interface Live {
   procs: ChildProcess[]
   proxy?: Server
   timer?: ReturnType<typeof setInterval>
+  /** Hands the license to its core, once it runs. */
+  license?: () => void
   window?: { close: () => void }
 }
 
@@ -121,13 +129,14 @@ function freePort(): Promise<number> {
  */
 export class RemoteService {
   private live = new Map<string, Live>()
+  private licenseHeld = false
   private readonly opts: RemoteOptions & Required<Pick<RemoteOptions, 'start' | 'fetch' | 'devcontainer' | 'licenseMs' | 'timeoutMs'>> & { hostsFile: string }
 
   constructor(opts: RemoteOptions) {
     this.opts = {
       start: (command, args, env) => spawnInShell(command, args, homedir(), env),
       fetch: globalThis.fetch,
-      devcontainer: defaultDevcontainer,
+      devcontainer: defaultDevcontainer(opts.node ?? spawnNode),
       licenseMs: 60_000,
       timeoutMs: 60_000,
       hostsFile: opts.sshConfig ?? join(homedir(), '.ssh', 'config'),
@@ -145,6 +154,8 @@ export class RemoteService {
 
   /** Connect to an ssh host (a config entry or user@host[:port]). */
   async ssh(target: string): Promise<RemoteConnection> {
+    // ssh would read a leading '-' as an option (-oProxyCommand…), not a host.
+    if (target.startsWith('-')) throw coded('bad-input', `Not a host: ${target}`)
     const id = `ssh:${target}`
     const ssh = (command: string, extra: string[] = []) => this.start('ssh', [...this.sshArgs(), ...extra, ...hostArgs(target), command])
     return this.connect(id, 'ssh', target, async (live) => {
@@ -172,8 +183,7 @@ export class RemoteService {
     if (!this.hasContainer(root)) throw coded('no-devcontainer', 'This project has no .devcontainer/devcontainer.json')
     const name = basename(root)
     return this.connect(`container:${root}`, 'container', `Container: ${name}`, async (live) => {
-      const [cli, args, env] = this.opts.devcontainer(root)
-      const up = await this.collect(this.start(cli, args, env), 10 * 60_000)
+      const up = await this.collect(await this.opts.devcontainer(root), 10 * 60_000)
       const result = up.stdout
         .split('\n')
         .reverse()
@@ -192,6 +202,9 @@ export class RemoteService {
       // Each connection to the local port is piped into the container (works without published ports).
       live.proxy = createServer((socket) => {
         const pipe = this.start('docker', ['exec', '-i', '-u', user, cid, 'sh', '-c', `exec "${dirOf(this.opts.version)}/node" -e "${PIPE(remotePort)}"`])
+        // The far end may go away mid-write (EPIPE): never an uncaught 'error' in the core.
+        pipe.on('error', () => socket.destroy())
+        pipe.stdin?.on('error', () => socket.destroy())
         socket.pipe(pipe.stdin!)
         pipe.stdout!.pipe(socket)
         socket.on('error', () => pipe.kill())
@@ -256,7 +269,11 @@ export class RemoteService {
         const bundle = await this.opts.bundle(arch)
         const dir = dirOf(this.opts.version)
         const install = target.install(`rm -rf "${dir}" && mkdir -p "${dir}" && tar xzf - -C "${dir}"`)
-        createReadStream(bundle).pipe(install.stdin!)
+        // tar or ssh failing mid-upload (EPIPE), or an unreadable package: the exit code says so — no uncaught 'error'.
+        const upload = createReadStream(bundle)
+        upload.on('error', () => install.kill())
+        install.stdin?.on('error', () => upload.destroy())
+        upload.pipe(install.stdin!)
         const done = await this.collect(install, 10 * 60_000)
         if (done.code !== 0) throw coded('remote-install', lastLine(done.stderr) ?? `exit ${done.code}`)
       }
@@ -266,9 +283,10 @@ export class RemoteService {
       live.procs.push(core)
       const started = await this.waitFor(core, /listening on/)
       core.on('exit', () => live.info.state === 'ready' && this.stop(live, 'failed', 'The remote Mindeck stopped'))
-      const { token, deviceId } = await this.pair(id, target.url, started, () => this.collect(target.run(`cd "${dirOf(this.opts.version)}" && MINDECK_HOME="$HOME/.mindeck" ./node out/server/index.cjs pair`)))
+      const { token, deviceId } = await this.pair(id, target.url, started, () => this.collect(target.run(`cd "${dirOf(this.opts.version)}" && MINDECK_HOME="$HOME/.mindeck" ./node out/server/index.cjs pair --admin`)))
       await this.handLicense(target.url, token)
-      live.timer = setInterval(() => void this.handLicense(target.url, token).catch(() => {}), this.opts.licenseMs)
+      live.license = () => void this.handLicense(target.url, token).catch(() => {})
+      live.timer = setInterval(live.license, this.opts.licenseMs)
       live.timer.unref?.()
       if (target.folder) await this.rpc(target.url, token, 'projects:add', { path: target.folder }).catch(() => {})
       this.update(live, { state: 'ready', url: target.url })
@@ -306,14 +324,39 @@ export class RemoteService {
     return paired
   }
 
-  /** The remote core runs on this desktop's license (it can't sign in itself). */
+  /**
+   * The remote core runs on this desktop's license (it can't sign in itself):
+   * on a lease Mindeck Cloud issues for that core alone — or, while the cloud
+   * issues none (or the remote core can't say its install id), on this
+   * desktop's own entitlement, which the core then takes for a day at most.
+   */
   private async handLicense(url: string, token: string): Promise<void> {
     const entitlement = this.opts.entitlement()
     if (!entitlement) return
-    await this.rpc(url, token, 'cloud:adopt', entitlement).catch((err: Error) => {
+    this.licenseHeld = true
+    const lease = await this.leaseFor(url, token)
+    await this.rpc(url, token, 'cloud:adopt', lease ?? entitlement).catch((err: Error) => {
       // Its package verifies with the key built into it — the same as this app's.
       throw coded('remote-license', `The remote Mindeck can't verify this license (${err.message}) — its server package must come from the same release`)
     })
+  }
+
+  /**
+   * This desktop's license status changed. Back after a gap (the trial pauses
+   * with nobody at the computer): a remote window that locked gets it at once,
+   * not when the timer next comes round.
+   */
+  licenseChanged(): void {
+    const held = !!this.opts.entitlement()
+    if (held && !this.licenseHeld) for (const live of this.live.values()) live.license?.()
+    this.licenseHeld = held
+  }
+
+  private async leaseFor(url: string, token: string): Promise<Handover | null> {
+    if (!this.opts.followerLease) return null
+    const remote = (await this.rpc(url, token, 'cloud:installId').catch(() => null)) as { installId?: unknown } | null
+    if (typeof remote?.installId !== 'string' || !remote.installId) return null
+    return this.opts.followerLease(remote.installId).catch(() => null)
   }
 
   private async rpc(url: string, token: string, channel: string, payload?: unknown): Promise<unknown> {
@@ -338,7 +381,7 @@ export class RemoteService {
   }
 
   /** Run to the end: exit code and output. */
-  private collect(proc: ChildProcess, timeoutMs = this.opts.timeoutMs): Promise<{ code: number; stdout: string; stderr: string }> {
+  private collect(proc: NodeProcess, timeoutMs = this.opts.timeoutMs): Promise<{ code: number; stdout: string; stderr: string }> {
     return new Promise((resolve) => {
       let stdout = ''
       let stderr = ''
@@ -368,6 +411,10 @@ export class RemoteService {
       }
       proc.stdout?.on('data', seen)
       proc.stderr?.on('data', (d: Buffer) => (out += d.toString()))
+      proc.on('error', (err) => {
+        clearTimeout(timer)
+        reject(coded('remote-start', err.message))
+      })
       proc.on('close', () => {
         clearTimeout(timer)
         reject(coded('remote-start', lastLine(out) ?? 'The remote Mindeck stopped'))
@@ -378,6 +425,7 @@ export class RemoteService {
   private stop(live: Live, state: 'closed' | 'failed', error?: string): void {
     if (live.info.state === 'closed' || (live.info.state === 'failed' && state === 'failed')) return
     clearInterval(live.timer)
+    live.license = undefined
     for (const p of live.procs) p.kill()
     live.proxy?.close()
     const win = live.window
@@ -403,7 +451,8 @@ const lastLine = (text: string): string | undefined =>
     .filter(Boolean)
     .pop()
 
-/** The Dev Containers CLI that ships with Mindeck, run by Mindeck's own Node (Electron as Node). */
-export function defaultDevcontainer(root: string): [string, string[], Record<string, string>] {
-  return [process.execPath, [require.resolve('@devcontainers/cli/devcontainer.js'), 'up', '--workspace-folder', root], { ELECTRON_RUN_AS_NODE: '1' }]
+/** The Dev Containers CLI that ships with Mindeck, run as a Node program; it finds docker on the user's PATH. */
+export function defaultDevcontainer(node: NodeLauncher, env: () => Promise<Record<string, string>> = userEnv): (root: string) => Promise<NodeProcess> {
+  return async (root) =>
+    node([require.resolve('@devcontainers/cli/devcontainer.js'), 'up', '--workspace-folder', root], { cwd: homedir(), env: await env(), name: 'Dev Containers' })
 }

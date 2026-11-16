@@ -1,5 +1,7 @@
-# Merges (push to main/develop) and releases (tags v*) build and publish —
-# without re-running tests: every change already passed CI on its pull request.
+# Merges (push to main/develop) and releases (tags v*) build and publish the
+# core image — only after typecheck and unit tests pass here too: a direct push
+# never reaches the public image untested (E2E stays on the pull request, ci.yml).
+# The GitHub release of a tag comes from release.yml alone, once everything is built.
 name: CD
 
 on:
@@ -15,24 +17,73 @@ concurrency:
 env:
   IMAGE: ghcr.io/${{ github.repository_owner }}/mindeck
 
+permissions:
+  contents: read
+
 jobs:
+  test:
+    name: Typecheck + unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run test:coverage
+      # A coverage gap only this runner shows (timing, Linux): the full report to name it (gh run download).
+      - if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: coverage
+          path: coverage/coverage-final.json
+          retention-days: 7
+          if-no-files-found: ignore
+
+  # Without a baked-in cloud the server is no release build and needs no license (server/main.ts):
+  # a public image like that would be the full product for free. No image, then. A tag fails: a
+  # release must not go out without it. A branch goes on without an image until the cloud exists.
+  cloud:
+    name: Mindeck Cloud configured?
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      ready: ${{ steps.check.outputs.ready }}
+    steps:
+      - id: check
+        env:
+          MINDECK_CLOUD_URL: ${{ vars.MINDECK_CLOUD_URL }}
+          MINDECK_CLOUD_KEY: ${{ secrets.MINDECK_CLOUD_KEY }}
+        run: |
+          case "$MINDECK_CLOUD_URL" in https://*) if [ -n "$MINDECK_CLOUD_KEY" ]; then echo 'ready=true' >> "$GITHUB_OUTPUT"; exit 0; fi ;; esac
+          msg='Set the variable MINDECK_CLOUD_URL (https://…) and the secret MINDECK_CLOUD_KEY (docs/RELEASE.md) — without them the image would need no license'
+          case "$GITHUB_REF" in
+            refs/tags/*) echo "::error::$msg"; exit 1 ;;
+            *) echo "::warning::No image for now. $msg" ;;
+          esac
+
   image:
     name: Web image → GHCR
+    needs: [test, cloud]
+    if: needs.cloud.outputs.ready == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@v5
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
         with:
           images: ${{ env.IMAGE }}
           # develop → :develop, main → :main, v1.2.3 → :1.2.3 :1.2 :latest, plus :sha-<short>
@@ -41,41 +92,18 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=sha
+          # v1.2.3-rc.1 is no :latest.
           flavor: |
-            latest=${{ startsWith(github.ref, 'refs/tags/v') }}
-      - uses: docker/build-push-action@v6
+            latest=${{ startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-') }}
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: .
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          # Mindeck Cloud baked in: the published image requires a license (server/main.ts).
+          build-args: |
+            MINDECK_CLOUD_URL=${{ vars.MINDECK_CLOUD_URL }}
+            MINDECK_CLOUD_KEY=${{ secrets.MINDECK_CLOUD_KEY }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
-  release:
-    name: GitHub Release
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: image
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
-        with:
-          node-version: 22
-          cache: npm
-      - name: Build the web bundle
-        run: |
-          npm ci --ignore-scripts
-          npm run web:build
-          tar -czf mindeck-web-${GITHUB_REF_NAME}.tar.gz -C out/web .
-        env:
-          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
-      - uses: softprops/action-gh-release@v2
-        with:
-          generate_release_notes: true
-          files: mindeck-web-*.tar.gz
-          body: |
-            Docker image: `${{ env.IMAGE }}:latest` (also tagged with this version)

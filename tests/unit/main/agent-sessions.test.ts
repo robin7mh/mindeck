@@ -1,12 +1,14 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync, lstatSync } from 'node:fs'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { mkdir, readdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import { basename, dirname, join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { onCleanup, tempDir, tick } from './helpers'
 import { AgentSessionService, type AgentSessionDeps } from '../../../electron/main/services/agents/AgentSessionService'
 import { GitService } from '../../../electron/main/services/git/GitService'
+import { hookSettings, mcpConfig } from '../../../electron/main/services/agents/claudeLaunch'
 import type { ApprovalDecision } from '../../../src/shared/types/ai'
+import { CLAUDE_MODELS, CLAUDE_MODES } from '../../../src/shared/types/claude'
 
 const sh = (cwd: string, ...args: string[]) => execFileSync('git', args, { cwd, encoding: 'utf8' })
 
@@ -57,6 +59,7 @@ async function setup(opts: { projectPath?: string; projectName?: string; probe?:
   const deps: AgentSessionDeps = {
     dir: join(dir, 'agents'),
     worktreesDir: join(dir, 'worktrees'),
+    chatsDir: join(dir, 'chats'),
     terminal,
     git: new GitService(),
     server: { register: vi.fn(() => 'tok'), unregister: vi.fn(), url: (route: string, id: string) => `http://127.0.0.1:1/${route}/${id}` },
@@ -105,9 +108,20 @@ describe('AgentSessionService: sessions', () => {
     expect(req).toMatchObject({ cwd: t.projectPath, command: { file: 'claude' }, env: { MINDECK_TOKEN: 'tok', MINDECK_HOOK_URL: `http://127.0.0.1:1/hooks/${s.id}` }, projectId: 'p1' })
     expect(req.command.args.slice(0, 2)).toEqual(['--session-id', s.id])
     expect(req.command.args.slice(-2)).toEqual(['--', 'Fix the login bug\nand add a test'])
+    // The session's token stays off the command line: in files only the user can read.
+    expect(req.command.args.join(' ')).not.toContain('tok')
+    const launch = join(t.deps.dir, 'launch', s.id, '1')
+    expect(req.command.args[req.command.args.indexOf('--settings') + 1]).toBe(join(launch, 'settings.json'))
+    expect(JSON.parse(await readFile(join(launch, 'settings.json'), 'utf8'))).toEqual(hookSettings(`http://127.0.0.1:1/hooks/${s.id}`, 'tok'))
+    expect(JSON.parse(await readFile(join(launch, 'mcp.json'), 'utf8'))).toEqual(mcpConfig(`http://127.0.0.1:1/mcp/${s.id}`, 'tok'))
+    expect((await stat(join(launch, 'mcp.json'))).mode & 0o777).toBe(0o600)
+    expect((await stat(launch)).mode & 0o777).toBe(0o700)
+    expect((await stat(join(t.deps.dir, 'launch'))).mode & 0o777).toBe(0o700)
     expect(t.deps.events.emit).toHaveBeenCalledWith('session.started', expect.objectContaining({ conversationId: s.id }))
     expect(t.svc.list()).toHaveLength(1)
     expect(t.svc.get(s.id)).toMatchObject({ id: s.id, messages: [] })
+    expect([t.svc.projectOf(s.id), t.svc.projectOf('nope')]).toEqual(['p1', undefined])
+    expect([t.svc.folderOf(s.id), t.svc.folderOf('nope')]).toEqual([t.projectPath, undefined])
 
     expect((await t.svc.create({ kind: 'claude-code', projectId: 'p1', title: '  Named  ' })).title).toBe('Named')
     expect((await t.svc.create({ kind: 'claude-code', projectId: 'p1', title: 'x'.repeat(120) })).title).toHaveLength(80)
@@ -115,11 +129,31 @@ describe('AgentSessionService: sessions', () => {
     expect(() => t.svc.get('nope')).toThrow(expect.objectContaining({ code: 'not-found' }))
   })
 
+  it('the launch files (they hold the token) go when the agent ends, the session is removed, or Mindeck starts again', async () => {
+    const a = await t.svc.create({ kind: 'claude-code', projectId: 'p1' })
+    const launch = (id: string) => join(t.deps.dir, 'launch', id)
+    expect(existsSync(join(launch(a.id), '1'))).toBe(true)
+    t.terminal.kill('pty-1')
+    for (let i = 0; i < 50 && existsSync(join(launch(a.id), '1')); i += 1) await tick(5)
+    expect(existsSync(join(launch(a.id), '1'))).toBe(false)
+    // Resumed right away: the new run's files are its own, the old run's cleanup can't take them.
+    await t.svc.resume(a.id)
+    expect(existsSync(join(launch(a.id), '2', 'settings.json'))).toBe(true)
+    const b = await t.svc.create({ kind: 'claude-code', projectId: 'p1' })
+    await t.svc.remove(b.id)
+    expect(existsSync(launch(b.id))).toBe(false)
+    // Left over from a run that crashed: its tokens are dead, the files go at the next start.
+    await mkdir(launch('stale'), { recursive: true })
+    await writeFile(join(launch('stale'), 'mcp.json'), '{}')
+    await track(new AgentSessionService(t.deps)).init()
+    expect(existsSync(join(t.deps.dir, 'launch'))).toBe(false)
+  })
+
   it('types messages into the agent (pastes multi-line), interrupts, stops and resumes', async () => {
     vi.useFakeTimers()
     const s = await t.svc.create({ kind: 'claude-code', projectId: 'p1' })
-    t.svc.send(s.id, 'hello')
-    t.svc.send(s.id, 'two\nlines')
+    await t.svc.send(s.id, 'hello')
+    await t.svc.send(s.id, 'two\nlines')
     vi.advanceTimersByTime(60)
     expect(t.terminal.write.mock.calls).toEqual([
       ['pty-1', 'hello'],
@@ -130,13 +164,13 @@ describe('AgentSessionService: sessions', () => {
     t.svc.interrupt(s.id)
     expect(t.terminal.write).toHaveBeenLastCalledWith('pty-1', '\x1b')
 
-    t.svc.send(s.id, 'late')
+    await t.svc.send(s.id, 'late')
     t.svc.stop(s.id) // exits before the Enter is due
     vi.advanceTimersByTime(60)
     expect(t.terminal.write).toHaveBeenLastCalledWith('pty-1', 'late')
     expect(t.svc.get(s.id)).toMatchObject({ status: 'ended', terminalId: undefined })
     expect(t.deps.server.unregister).toHaveBeenCalledWith(s.id)
-    expect(() => t.svc.send(s.id, 'x')).toThrow(expect.objectContaining({ code: 'not-running' }))
+    await expect(t.svc.send(s.id, 'x')).rejects.toMatchObject({ code: 'not-running' })
     t.svc.stop(s.id) // not running: nothing to stop
 
     const resumed = await t.svc.resume(s.id)
@@ -174,6 +208,23 @@ describe('AgentSessionService: sessions', () => {
     expect(existsSync(join(plain.deps.dir, `${s.id}.json`))).toBe(false)
   })
 
+  it('a transcript that can’t be deleted stops no later save', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const stuck = await t.svc.create({ kind: 'claude-code', projectId: 'p1' })
+    const kept = await t.svc.create({ kind: 'claude-code', projectId: 'p1' })
+    await t.svc.remove((await t.svc.create({ kind: 'claude-code', projectId: 'p1' })).id) // what is queued so far is on disk
+    const transcript = join(t.deps.dir, `${stuck.id}.json`)
+    await rm(transcript, { force: true })
+    await mkdir(join(transcript, 'not-a-file'), { recursive: true })
+    await t.svc.remove(stuck.id)
+    expect(t.svc.list().map((s) => s.id)).toEqual([kept.id])
+    expect(t.published).toContainEqual({ channel: 'agents:changed', payload: { removed: stuck.id } })
+    t.svc.rename(kept.id, 'Saved all the same')
+    await t.svc.dispose()
+    const { sessions } = JSON.parse(await readFile(join(t.deps.dir, 'sessions.json'), 'utf8')) as { sessions: { session: { title: string } }[] }
+    expect(sessions.map((s) => s.session.title)).toEqual(['Saved all the same'])
+  })
+
   it('remembers sessions across restarts as ended (resumable); survives a broken list', async () => {
     const s = await t.svc.create({ kind: 'claude-code', projectId: 'p1', prompt: 'hi' })
     await t.hook(s.id, { hook_event_name: 'UserPromptSubmit', prompt: 'hi' })
@@ -199,6 +250,50 @@ describe('AgentSessionService: sessions', () => {
     const noTranscript = track(new AgentSessionService(t.deps))
     await noTranscript.init()
     expect(noTranscript.get(s.id)).toMatchObject({ status: 'ended', terminalId: undefined, messages: [] })
+    await noTranscript.dispose()
+
+    // A damaged transcript loses only its own messages, never the other sessions.
+    await writeFile(join(t.deps.dir, 'sessions.json'), JSON.stringify({ version: 1, sessions: [s, failed].map((x) => ({ session: again.get(x.id), baseline: null, projectPath: t.projectPath })) }))
+    await writeFile(join(t.deps.dir, `${s.id}.json`), '[{"role":')
+    const damaged = track(new AgentSessionService(t.deps))
+    await damaged.init()
+    expect(damaged.list().map((x) => x.id).sort()).toEqual([s.id, failed.id].sort())
+    expect(damaged.get(s.id).messages).toEqual([expect.objectContaining({ errorCode: 'transcript-damaged' })])
+  })
+
+  it('a damaged transcript never stops the start: the session loads with a notice, the file is set aside', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const s = await t.svc.create({ kind: 'claude-code', projectId: 'p1', prompt: 'hi' })
+    const other = await t.svc.create({ kind: 'claude-code', projectId: 'p1' })
+    await t.hook(s.id, { hook_event_name: 'UserPromptSubmit', prompt: 'hi' })
+    await t.hook(other.id, { hook_event_name: 'UserPromptSubmit', prompt: 'there' })
+    await t.svc.dispose()
+    await writeFile(join(t.deps.dir, `${s.id}.json`), '[{"id":"m1","role":"us') // torn by a full disk
+    await writeFile(join(t.deps.dir, `${other.id}.json`), '{"not":"a list"}')
+    // and a list entry nobody can use
+    const list = JSON.parse(await readFile(join(t.deps.dir, 'sessions.json'), 'utf8'))
+    list.sessions.push({ nonsense: true }, null)
+    await writeFile(join(t.deps.dir, 'sessions.json'), JSON.stringify(list))
+
+    const again = track(new AgentSessionService(t.deps))
+    await again.init()
+    expect(again.list()).toHaveLength(2)
+    const [notice] = again.get(s.id).messages
+    expect(notice).toMatchObject({ role: 'assistant', status: 'error', errorCode: 'transcript-damaged', parts: [] })
+    expect(notice.error).toMatch(new RegExp(`set aside as ${s.id}\\.corrupt-.*\\.json`))
+    const files = await readdir(t.deps.dir)
+    expect(files.some((f) => f.startsWith(`${s.id}.corrupt-`))).toBe(true)
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('is damaged'))
+    // valid JSON of the wrong shape: a notice as well (nothing worth keeping to set aside)
+    expect(again.get(other.id).messages).toEqual([expect.objectContaining({ errorCode: 'transcript-damaged', error: 'The earlier messages of this session could not be read.' })])
+  })
+
+  it('keeps transcripts and the session list private (0600)', async () => {
+    const s = await t.svc.create({ kind: 'claude-code', projectId: 'p1', prompt: 'hi' })
+    await t.hook(s.id, { hook_event_name: 'UserPromptSubmit', prompt: 'hi' })
+    await t.svc.dispose()
+    expect((await stat(join(t.deps.dir, `${s.id}.json`))).mode & 0o777).toBe(0o600)
+    expect((await stat(join(t.deps.dir, 'sessions.json'))).mode & 0o777).toBe(0o600)
   })
 
   it('named after the agent; renamed by the user (notification and journal follow); the repo page from origin', async () => {
@@ -279,7 +374,8 @@ describe('AgentSessionService: sessions', () => {
         await rm(bad.deps.dir, { recursive: true })
         await writeFile(bad.deps.dir, 'not a folder')
       })
-    await bad.svc.create({ kind: 'claude-code', projectId: 'p1' })
+    // Nor can the agent start: its launch files (the token) have nowhere to go.
+    await expect(bad.svc.create({ kind: 'claude-code', projectId: 'p1' })).rejects.toThrow()
     await bad.svc.dispose()
     expect(warn).toHaveBeenCalledWith('[agents] could not save sessions:', expect.any(String))
   })
@@ -337,6 +433,71 @@ describe('AgentSessionService: hooks, approvals, memory', () => {
     await vi.waitFor(() => expect(t.journal).toHaveBeenLastCalledWith('Agents/Demo App', expect.any(String), t.svc.get(s.id).journal, expect.any(String)))
   })
 
+  it('without a project: an empty folder of its own under chats — no project to scope it, no repo, no worktree; journal in Agents', async () => {
+    const s = await t.svc.create({ kind: 'claude-code', prompt: 'Just a question' })
+    expect(s).toMatchObject({ projectId: '', projectName: '', isolated: false })
+    expect(s.repoUrl).toBeUndefined()
+    expect(dirname(s.cwd)).toBe(t.deps.chatsDir)
+    expect(basename(s.cwd)).toMatch(/^\d{4}-\d{2}-\d{2}-[0-9a-f]{8}$/)
+    expect(await readdir(s.cwd)).toEqual([])
+    expect(t.terminal.spawned.at(-1)).toMatchObject({ cwd: s.cwd, projectId: undefined })
+    expect(t.deps.events.emit).toHaveBeenCalledWith('session.started', expect.objectContaining({ conversationId: s.id, projectId: undefined }))
+    expect([t.svc.projectOf(s.id), t.svc.folderOf(s.id)]).toEqual([undefined, s.cwd])
+    // "Always allow" there holds outside projects — not for a project called ''
+    await t.hook(s.id, { hook_event_name: 'UserPromptSubmit', prompt: 'Write it down' })
+    const asked = t.asks.length
+    const allow = t.hook(s.id, { hook_event_name: 'PermissionRequest', tool_name: 'Write', tool_use_id: 'w', tool_input: { file_path: 'notes.md' } })
+    // waited for, not a tick: a slower machine (CI) takes longer to get there
+    await vi.waitFor(() => expect(t.permissions.isGranted).toHaveBeenLastCalledWith('claude-code', 'Write', undefined))
+    await vi.waitFor(() => expect(t.asks).toHaveLength(asked + 1))
+    t.asks.at(-1)!.settle('once')
+    await allow
+    // the journal goes straight into Agents
+    t.svc.stop(s.id)
+    await vi.waitFor(() => expect(t.journal).toHaveBeenLastCalledWith('Agents', expect.any(String), undefined, expect.any(String)))
+    // an own worktree needs a project
+    await expect(t.svc.create({ kind: 'codex', isolated: true })).rejects.toMatchObject({ code: 'bad-input' })
+  })
+
+  it('as Claude Code sends them: no tool id in a request; leaving plan mode gets the plan back; its questions are the user’s turn', async () => {
+    const s = await t.svc.create({ kind: 'claude-code', projectId: 'p1', mode: 'plan' })
+    await t.hook(s.id, { hook_event_name: 'UserPromptSubmit', prompt: 'plan it' })
+    const parts = () => t.svc.get(s.id).messages.at(-1)!.parts
+    const plan = { plan: '# Plan\n1. **Tests:** add them\n2. Ship', planFilePath: '/home/me/.claude/plans/p.md' }
+    await t.hook(s.id, { hook_event_name: 'PreToolUse', tool_name: 'ExitPlanMode', tool_use_id: 'x1', tool_input: plan, permission_mode: 'plan' })
+    const asked = t.asks.length
+    const allow = t.hook(s.id, { hook_event_name: 'PermissionRequest', tool_name: 'ExitPlanMode', tool_input: plan, permission_mode: 'plan' })
+    await vi.waitFor(() => expect(t.asks).toHaveLength(asked + 1))
+    // the card its PreToolUse started is the one asked about — no second one
+    expect(parts()).toHaveLength(1)
+    expect(parts()[0]).toMatchObject({ id: 'x1', status: 'awaiting-approval', requestId: expect.any(String) })
+    t.asks.at(-1)!.settle('once')
+    // a bare yes would leave Claude Code asking in its terminal: the plan goes back with it
+    expect(await allow).toEqual({ hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: { behavior: 'allow', updatedInput: plan } } })
+    expect(parts()[0]).toMatchObject({ id: 'x1', status: 'running' })
+    expect(t.svc.get(s.id).plan.map((p) => p.text)).toEqual(['Tests', 'Ship'])
+    // out of plan mode: the session shows the mode Claude Code goes on in — not one Mindeck doesn't offer
+    await t.hook(s.id, { hook_event_name: 'PostToolUse', tool_name: 'ExitPlanMode', tool_use_id: 'x1', tool_response: { plan: plan.plan }, permission_mode: 'auto' })
+    expect(t.svc.get(s.id).mode).toBe('plan')
+    await t.hook(s.id, { hook_event_name: 'PostToolUse', tool_name: 'ExitPlanMode', tool_use_id: 'x1', tool_response: { plan: plan.plan }, permission_mode: 'default' })
+    expect(t.svc.get(s.id).mode).toBe('default')
+    await t.hook(s.id, { hook_event_name: 'PostToolUse', tool_name: 'ExitPlanMode', tool_use_id: 'x1', permission_mode: 'default' }) // already
+    expect(t.svc.get(s.id).mode).toBe('default')
+    // no input to give back: an empty one
+    const bare = t.hook(s.id, { hook_event_name: 'PermissionRequest', tool_name: 'ExitPlanMode' })
+    await vi.waitFor(() => expect(t.asks).toHaveLength(asked + 2))
+    t.asks.at(-1)!.settle('once')
+    expect(await bare).toMatchObject({ hookSpecificOutput: { decision: { behavior: 'allow', updatedInput: {} } } })
+
+    // its questions need answers, not a yes: Claude Code asks them in its terminal — no approval, the user's turn
+    await t.hook(s.id, { hook_event_name: 'PreToolUse', tool_name: 'AskUserQuestion', tool_use_id: 'q1', tool_input: { questions: [] } })
+    expect(await t.hook(s.id, { hook_event_name: 'PermissionRequest', tool_name: 'AskUserQuestion', tool_input: { questions: [] } })).toBeUndefined()
+    expect(t.asks).toHaveLength(asked + 2)
+    expect(t.svc.get(s.id).status).toBe('waiting')
+    expect(parts().find((p) => p.type === 'tool' && p.id === 'q1')).toMatchObject({ status: 'running' })
+    expect(t.deps.notify).toHaveBeenLastCalledWith(expect.any(String), expect.any(String), s.id)
+  })
+
   it('journal: nothing before the first prompt; failures are logged', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const s = await t.svc.create({ kind: 'claude-code', projectId: 'p1' })
@@ -375,10 +536,16 @@ describe('AgentSessionService: hooks, approvals, memory', () => {
     expect(t.svc.get(s.id).messages[1].parts[0]).toMatchObject({ status: 'running' })
 
     const deny = t.hook(s.id, { hook_event_name: 'PermissionRequest', tool_name: 'Edit', tool_use_id: 'e1', tool_input: { file_path: 'a.ts' } })
-    await tick()
+    await vi.waitFor(() => expect(t.asks).toHaveLength(2)) // it looks at the disk first
     expect(t.asks[1].input).toMatchObject({ risk: 'write', allowAlways: true })
     t.asks[1].settle('deny')
     expect(await deny).toMatchObject({ hookSpecificOutput: { decision: { behavior: 'deny', message: expect.any(String) } } })
+    // Reading outside the project is approved like a change (a device needs remote shells for it, BE-SEC-17).
+    const outside = t.hook(s.id, { hook_event_name: 'PermissionRequest', tool_name: 'Read', tool_use_id: 'r1', tool_input: { file_path: '/home/me/.ssh/id_ed25519' } })
+    await tick()
+    expect(t.asks[2].input).toMatchObject({ toolName: 'Read', risk: 'write' })
+    t.asks.splice(2, 1)[0].settle('deny')
+    await outside
     expect(t.svc.get(s.id).messages[1].parts[1]).toMatchObject({ status: 'denied' })
 
     t.granted.add('Edit') // "Always allow" earlier
@@ -393,6 +560,82 @@ describe('AgentSessionService: hooks, approvals, memory', () => {
     expect(await anon).toMatchObject({ hookSpecificOutput: { decision: { behavior: 'allow' } } })
   })
 
+  it('"Always allow" holds inside the session\'s folder: what reaches outside is asked every time, and never offered for good', async () => {
+    const s = await t.svc.create({ kind: 'claude-code', projectId: 'p1' })
+    t.granted.add('Write')
+    t.granted.add('Read')
+    t.granted.add('Glob')
+    const inside = { file_path: join(t.projectPath, 'src/a.ts') }
+    expect(await t.hook(s.id, { hook_event_name: 'PermissionRequest', tool_name: 'Write', tool_use_id: 'w1', tool_input: inside })).toMatchObject({ hookSpecificOutput: { decision: { behavior: 'allow' } } })
+    expect(t.asks).toHaveLength(0)
+
+    const cases: [string, Record<string, unknown>][] = [
+      ['Write', { file_path: '/home/me/.zshenv' }], // a grant from inside the project: run at the next login, without any Bash approval
+      ['Write', { file_path: '../other/a.ts' }],
+      ['Write', { file_path: '.env' }], // keys and credentials, even inside
+      ['Read', { file_path: '/home/me/.ssh/id_ed25519' }],
+      ['Glob', { pattern: '/home/me/.ssh/*' }] // a Glob's pattern names where it looks
+    ]
+    for (const [i, [tool_name, tool_input]] of cases.entries()) {
+      const answer = t.hook(s.id, { hook_event_name: 'PermissionRequest', tool_name, tool_use_id: `o${i}`, tool_input })
+      await tick()
+      expect(t.asks[i].input, JSON.stringify(tool_input)).toMatchObject({ toolName: tool_name, risk: 'write', allowAlways: false })
+      t.asks[i].settle('deny')
+      expect(await answer).toMatchObject({ hookSpecificOutput: { decision: { behavior: 'deny' } } })
+    }
+    // Inside, a Glob's pattern is what it always was.
+    expect(await t.hook(s.id, { hook_event_name: 'PermissionRequest', tool_name: 'Glob', tool_use_id: 'g', tool_input: { pattern: 'src/**/*.ts' } })).toMatchObject({ hookSpecificOutput: { decision: { behavior: 'allow' } } })
+    expect(t.asks).toHaveLength(cases.length)
+  })
+
+  it('"Always allow" goes by where a path really lands, and never covers files that run by themselves', async () => {
+    const s = await t.svc.create({ kind: 'claude-code', projectId: 'p1' })
+    for (const tool of ['Write', 'Edit', 'MultiEdit', 'NotebookEdit', 'Read', 'Glob', 'Grep', 'LS']) t.granted.add(tool)
+    const home = await tempDir()
+    await writeFile(join(home, 'notes.txt'), 'x')
+    await mkdir(join(t.projectPath, 'src'), { recursive: true })
+    await symlink(home, join(t.projectPath, 'vendor')) // what a cloned repository can bring along
+    await symlink(join(home, 'not-yet'), join(t.projectPath, 'dangling.md'))
+    await symlink('src', join(t.projectPath, 'lib'))
+    await symlink('.claude', join(t.projectPath, 'docs'))
+    const asked: [string, Record<string, unknown>, string][] = [
+      ['Write', { file_path: join(t.projectPath, 'vendor/.zshenv') }, 'write'],
+      ['Write', { file_path: 'vendor/new/deep/file' }, 'write'], // doesn't exist yet: its nearest parent decides
+      ['Write', { file_path: 'dangling.md' }, 'write'], // writing to it creates what it points to
+      ['Read', { file_path: 'vendor/notes.txt' }, 'write'],
+      ['LS', { path: 'vendor' }, 'write'],
+      ['Glob', { pattern: 'vendor/**/*' }, 'write'],
+      ['Glob', { pattern: '{src,vendor}/*' }, 'write'],
+      ['Glob', { pattern: '{.,../..}/**/*' }, 'write'],
+      ['Write', { file_path: '.claude/settings.json' }, 'write'], // hooks: run with no Bash approval
+      ['Edit', { file_path: join(t.projectPath, '.mcp.json') }, 'write'],
+      ['Write', { file_path: '.git/hooks/pre-commit' }, 'write'],
+      ['Write', { file_path: '.husky/pre-commit' }, 'write'],
+      ['MultiEdit', { file_path: '.devcontainer/devcontainer.json' }, 'write'],
+      ['Write', { file_path: '.vscode/tasks.json' }, 'write'],
+      ['Write', { file_path: 'docs/settings.json' }, 'write'] // a link to .claude is .claude
+    ]
+    for (const [i, [tool_name, tool_input, risk]] of asked.entries()) {
+      const answer = t.hook(s.id, { hook_event_name: 'PermissionRequest', tool_name, tool_use_id: `a${i}`, tool_input })
+      await vi.waitFor(() => expect(t.asks.length, `no question for ${tool_name} ${JSON.stringify(tool_input)}`).toBe(i + 1))
+      expect(t.asks[i].input, JSON.stringify(tool_input)).toMatchObject({ toolName: tool_name, risk, allowAlways: false })
+      t.asks[i].settle('deny')
+      await answer
+    }
+    // Inside it all holds as before: a link that stays inside, a file yet to come, reading the files above.
+    const held: [string, Record<string, unknown>][] = [
+      ['Write', { file_path: 'lib/a.ts' }],
+      ['Write', { file_path: 'src/new/deep/a.ts' }],
+      ['Read', { file_path: '.claude/settings.json' }],
+      ['Glob', { pattern: '{src,lib}/**/*.ts' }],
+      ['Grep', { pattern: '../..', path: 'src' }]
+    ]
+    for (const [i, [tool_name, tool_input]] of held.entries()) {
+      expect(await t.hook(s.id, { hook_event_name: 'PermissionRequest', tool_name, tool_use_id: `h${i}`, tool_input }), JSON.stringify(tool_input)).toMatchObject({ hookSpecificOutput: { decision: { behavior: 'allow' } } })
+    }
+    expect(t.asks).toHaveLength(asked.length)
+  })
+
   it('ignores hooks for unknown sessions and junk; SessionEnd retires the token', async () => {
     const s = await t.svc.create({ kind: 'claude-code', projectId: 'p1' })
     expect(await t.hook('nope', { hook_event_name: 'Stop' })).toBeUndefined()
@@ -405,12 +648,25 @@ describe('AgentSessionService: hooks, approvals, memory', () => {
     expect(t.deps.notify).toHaveBeenLastCalledWith(expect.any(String), 'Waiting for your answer', s.id)
   })
 
+  it('/clear and /resume end a conversation, not the agent: its hooks, approvals and memory go on', async () => {
+    const s = await t.svc.create({ kind: 'claude-code', projectId: 'p1' })
+    await t.hook(s.id, { hook_event_name: 'SessionStart' })
+    for (const reason of ['clear', 'resume']) {
+      await t.hook(s.id, { hook_event_name: 'SessionEnd', reason })
+      expect(t.deps.server.unregister, reason).not.toHaveBeenCalled()
+      expect(t.svc.get(s.id).status, reason).toBe('idle')
+    }
+    await t.hook(s.id, { hook_event_name: 'SessionEnd', reason: 'prompt_input_exit' })
+    expect(t.deps.server.unregister).toHaveBeenCalledWith(s.id)
+    expect(t.svc.get(s.id).status).toBe('ended')
+  })
+
   it('serves MCP scoped to the project and records the notes the agent used', async () => {
     const s = await t.svc.create({ kind: 'claude-code', projectId: 'p1' })
     expect(await t.svc.handleMcp(s.id, { jsonrpc: '2.0', id: 1, method: 'ping' })).toEqual({ echo: { jsonrpc: '2.0', id: 1, method: 'ping' } })
     expect(t.deps.mcp).toHaveBeenCalledWith(expect.objectContaining({ projectId: 'p1' }), expect.anything())
     expect(t.svc.get(s.id).notes).toEqual(['Projekte/Demo.md', 'Projekte/Decision.md', 'Loose.md'])
-    expect(() => t.svc.handleMcp('nope', {})).toThrow(expect.objectContaining({ code: 'not-found' }))
+    await expect(t.svc.handleMcp('nope', {})).rejects.toMatchObject({ code: 'not-found' })
   })
 
   it('the plan follows Claude\'s task hooks', async () => {
@@ -419,6 +675,44 @@ describe('AgentSessionService: hooks, approvals, memory', () => {
     await t.hook(s.id, { hook_event_name: 'TaskCompleted', task_id: 'a' })
     expect(t.svc.get(s.id).plan).toEqual([{ id: 'a', text: 'write the test', done: true }])
     expect(t.published.filter((p) => p.channel === 'agents:changed').at(-1)!.payload).toMatchObject({ session: { plan: [{ done: true }] } })
+  })
+
+  it('a plan approved in plan mode: its steps go to Claude Code, it marks them over MCP (plan_update), the panel follows', async () => {
+    const s = await t.svc.create({ kind: 'claude-code', projectId: 'p1', mode: 'plan' })
+    await t.hook(s.id, { hook_event_name: 'UserPromptSubmit', prompt: 'plan it' })
+    const plan = { plan: '# Plan\n1. Tests\n2. CI\n3. Docs', planFilePath: '/home/me/.claude/plans/p.md' }
+    await t.hook(s.id, { hook_event_name: 'PreToolUse', tool_name: 'ExitPlanMode', tool_use_id: 'x', tool_input: plan })
+    expect(t.svc.get(s.id).planStatus).toBe('draft')
+    // the hook's answer goes back to Claude Code: the steps, and how to mark them
+    const handedOver = await t.hook(s.id, { hook_event_name: 'PostToolUse', tool_name: 'ExitPlanMode', tool_use_id: 'x', tool_response: plan, permission_mode: 'default' })
+    expect(handedOver).toMatchObject({ hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: expect.stringContaining('1. Tests\n2. CI\n3. Docs') } })
+    expect(t.svc.get(s.id)).toMatchObject({ planStatus: 'active', mode: 'default' })
+
+    // Claude Code finds the tool among Mindeck's
+    vi.mocked(t.deps.mcp).mockResolvedValueOnce({ jsonrpc: '2.0', id: 1, result: { tools: [{ name: 'memory_search' }] } })
+    const listed = (await t.svc.handleMcp(s.id, { jsonrpc: '2.0', id: 1, method: 'tools/list' })) as { result: { tools: { name: string }[] } }
+    expect(listed.result.tools.map((tool) => tool.name)).toEqual(['memory_search', 'plan_update'])
+    vi.mocked(t.deps.mcp).mockResolvedValueOnce(undefined) // a notification: nothing to add to
+    expect(await t.svc.handleMcp(s.id, { jsonrpc: '2.0', id: 9, method: 'tools/list' })).toBeUndefined()
+
+    // it marks: step 1 done, step 2 in hand — Mindeck answers itself, the panel follows
+    const call = (id: string, args?: unknown) => t.svc.handleMcp(id, { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'plan_update', arguments: args } })
+    const marked = (await call(s.id, { done: [1], doing: 2 })) as { result: { content: { text: string }[]; isError?: boolean } }
+    expect(marked.result.isError).toBeUndefined()
+    expect(marked.result.content[0].text).toContain('1 of 3 steps done')
+    expect(t.svc.get(s.id).plan.map((p) => [p.text, p.done, p.active])).toEqual([
+      ['Tests', true, false],
+      ['CI', false, true],
+      ['Docs', false, false]
+    ])
+    expect(t.published.filter((p) => p.channel === 'agents:changed').at(-1)!.payload).toMatchObject({ session: { plan: [{ done: true }, { active: true }, {}] } })
+    // a step that doesn't exist: told so, nothing changed
+    expect(await call(s.id, { done: [7] })).toMatchObject({ result: { isError: true, content: [{ text: 'Steps are numbered 1 to 3.' }] } })
+    expect(await call(s.id)).toMatchObject({ result: { content: [{ text: expect.stringContaining('1 of 3') }] } }) // no arguments: just where it stands
+    // and every other message to Claude Code's goes on there too, as does one that isn't JSON-RPC
+    await t.svc.handleMcp(s.id, { jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'memory_read' } })
+    await t.svc.handleMcp(s.id, null)
+    expect(t.deps.mcp).toHaveBeenLastCalledWith(expect.objectContaining({ sessionId: s.id }), null)
   })
 
   it('works without a notifier', async () => {
@@ -545,5 +839,145 @@ describe('AgentSessionService: changes and own working folders', () => {
     sh(t.projectPath, 'worktree', 'remove', '--force', s.worktree!)
     await t.svc.remove(s.id) // git refuses, the session goes anyway
     expect(t.svc.list()).toEqual([])
+  })
+})
+
+describe('AgentSessionService: own working folders, odd cases', () => {
+  it('isolated where the repo tracks node_modules itself: the checked-out folder stays, no link', async () => {
+    const t = await setup()
+    await mkdir(join(t.projectPath, 'node_modules'))
+    await writeFile(join(t.projectPath, 'node_modules', 'vendored.js'), 'export {}\n')
+    sh(t.projectPath, 'add', '-f', 'node_modules')
+    sh(t.projectPath, 'commit', '-q', '-m', 'vendor')
+    const s = await t.svc.create({ kind: 'claude-code', projectId: 'p1', isolated: true })
+    expect(lstatSync(join(s.worktree!, 'node_modules')).isSymbolicLink()).toBe(false)
+    expect(existsSync(join(s.worktree!, 'node_modules', 'vendored.js'))).toBe(true)
+  })
+
+  it('an agent ending whose launch files can\'t be removed still ends', async () => {
+    const t = await setup()
+    const a = await t.svc.create({ kind: 'claude-code', projectId: 'p1' })
+    const launch = join(t.deps.dir, 'launch', a.id)
+    await rm(launch, { recursive: true })
+    await writeFile(launch, 'not a folder') // removing launch/<id>/1 fails now
+    t.terminal.kill('pty-1')
+    await tick(20)
+    expect(t.svc.get(a.id).status).toBe('ended')
+  })
+})
+
+describe('AgentSessionService: the composer with Claude Code', () => {
+  const png = (bytes = 4) => ({ name: 'shot.png', mimeType: 'image/png' as const, data: Buffer.alloc(bytes, 7).toString('base64') })
+
+  it('starts with a model and permission mode; refuses unknown ones; offers models, modes, commands and images', async () => {
+    const t = await setup()
+    const s = await t.svc.create({ kind: 'claude-code', projectId: 'p1', model: 'sonnet', mode: 'acceptEdits' })
+    expect(s).toMatchObject({ model: 'sonnet', mode: 'acceptEdits', images: true, models: CLAUDE_MODELS, modes: CLAUDE_MODES })
+    expect(s.commands!.map((c) => c.name)).toContain('compact')
+    expect(t.terminal.spawned[0].command.args).toEqual(expect.arrayContaining(['--model', 'sonnet', '--permission-mode', 'acceptEdits']))
+    await expect(t.svc.create({ kind: 'claude-code', projectId: 'p1', model: 'gpt-5' })).rejects.toMatchObject({ code: 'bad-input' })
+    await expect(t.svc.create({ kind: 'claude-code', projectId: 'p1', mode: 'bypassPermissions' })).rejects.toMatchObject({ code: 'bad-input' })
+  })
+
+  it('sessions from earlier runs get the options too (only Claude Code\'s are known up front)', async () => {
+    const t = await setup()
+    const s = await t.svc.create({ kind: 'claude-code', projectId: 'p1' })
+    const stored = { ...t.svc.get(s.id), messages: undefined, models: undefined, commands: undefined }
+    const codex = { ...stored, id: 'c1', kind: 'codex' }
+    await t.svc.dispose()
+    await writeFile(join(t.deps.dir, 'sessions.json'), JSON.stringify({ version: 1, sessions: [stored, codex].map((session) => ({ session, baseline: null, projectPath: t.projectPath })) }))
+    const again = track(new AgentSessionService(t.deps))
+    await again.init()
+    expect(again.get(s.id)).toMatchObject({ models: CLAUDE_MODELS, images: true })
+    expect(again.get('c1').models).toBeUndefined()
+  })
+
+  it('types @ mentions and saved images into the prompt; refuses empty or oversized messages; cleans up with the session', async () => {
+    const t = await setup()
+    const images = await tempDir()
+    const vault = await tempDir()
+    Object.assign(t.deps, { tempDir: images, vaultRoot: async () => vault })
+    const s = await t.svc.create({ kind: 'claude-code', projectId: 'p1' })
+    await t.svc.send(s.id, 'Look at this', { refs: [{ kind: 'file', path: 'app.ts' }, { kind: 'note', path: 'Plan.md' }], images: [png()] })
+    await tick(80)
+    const [saved] = await readdir(join(images, s.id))
+    expect(t.terminal.write.mock.calls).toEqual([
+      ['pty-1', `\x1b[200~Look at this\n\n@app.ts @${join(vault, 'Plan.md')} @${join(images, s.id, saved)}\x1b[201~`],
+      ['pty-1', '\r']
+    ])
+    expect(await readFile(join(images, s.id, saved))).toEqual(Buffer.alloc(4, 7))
+    await t.svc.send(s.id, '', { refs: [{ kind: 'tab', path: 'https://example.com', label: 'Docs' }] })
+    expect(t.terminal.write).toHaveBeenLastCalledWith('pty-1', 'Browser tab: Docs <https://example.com/>')
+
+    await expect(t.svc.send(s.id, '  ')).rejects.toMatchObject({ code: 'bad-input' })
+    await expect(t.svc.send(s.id, 'x', { images: [png(5 * 1024 * 1024 + 1)] })).rejects.toMatchObject({ code: 'too-large' })
+    await expect(t.svc.send(s.id, 'x', { refs: [{ kind: 'file', path: '../../etc/passwd' }] })).rejects.toMatchObject({ code: 'outside-project' })
+    await t.svc.remove(s.id)
+    expect(existsSync(join(images, s.id))).toBe(false)
+  })
+
+  it('without a vault, notes can\'t be referenced', async () => {
+    const t = await setup()
+    const s = await t.svc.create({ kind: 'claude-code', projectId: 'p1' })
+    await expect(t.svc.send(s.id, 'x', { refs: [{ kind: 'note', path: 'a.md' }] })).rejects.toMatchObject({ code: 'no-vault' })
+    await t.svc.remove(s.id) // its (never made) image folder in the system's temp folder: nothing to remove
+  })
+
+  it('switches the model with /model while it runs; the permission mode applies from the next start', async () => {
+    const t = await setup()
+    const s = await t.svc.create({ kind: 'claude-code', projectId: 'p1' })
+    vi.useFakeTimers()
+    expect(await t.svc.configure(s.id, { model: 'opus' })).toMatchObject({ model: 'opus' })
+    vi.advanceTimersByTime(60)
+    expect(t.terminal.write.mock.calls).toEqual([
+      ['pty-1', '/model opus'],
+      ['pty-1', '\r']
+    ])
+    expect(await t.svc.configure(s.id, { model: 'opus', mode: 'plan' })).toMatchObject({ model: 'opus', mode: 'plan' })
+    expect(t.terminal.write).toHaveBeenCalledTimes(2) // the same model: nothing typed; the mode: nothing to type
+    await expect(t.svc.configure(s.id, { model: 'gpt-5' })).rejects.toMatchObject({ code: 'bad-input' })
+    await expect(t.svc.configure(s.id, { mode: 'bypassPermissions' })).rejects.toMatchObject({ code: 'bad-input' })
+    vi.useRealTimers()
+
+    t.svc.stop(s.id)
+    await t.svc.configure(s.id, { model: 'haiku' }) // not running: for the next start
+    expect(t.terminal.write).toHaveBeenCalledTimes(2)
+    await t.svc.resume(s.id)
+    expect(t.terminal.spawned[1].command.args).toEqual(expect.arrayContaining(['--resume', s.id, '--model', 'haiku', '--permission-mode', 'plan']))
+  })
+
+  it('pushes to the phone: approvals with the tool (never its input), finished turns, questions, failed starts', async () => {
+    const t = await setup()
+    const push = vi.fn()
+    t.deps.push = push
+    const s = await t.svc.create({ kind: 'claude-code', projectId: 'p1', title: 'Fix login' })
+    await t.hook(s.id, { hook_event_name: 'UserPromptSubmit', prompt: 'go' })
+    const allow = t.hook(s.id, { hook_event_name: 'PermissionRequest', tool_name: 'Bash', tool_use_id: 'b1', tool_input: { command: 'cat ~/.ssh/id_rsa' } })
+    await tick()
+    expect(push).toHaveBeenLastCalledWith({ kind: 'approval', title: 'Claude Code · Fix login', body: 'Run command · Waiting for your approval · Demo App', sessionId: s.id })
+    t.asks[0].settle('once')
+    await allow
+    await t.hook(s.id, { hook_event_name: 'Stop', last_assistant_message: 'done' })
+    expect(push).toHaveBeenLastCalledWith({ kind: 'agent_done', title: 'Claude Code · Fix login', body: 'Done — your turn · Demo App', sessionId: s.id })
+    await t.hook(s.id, { hook_event_name: 'Notification', notification_type: 'agent_needs_input' })
+    expect(push).toHaveBeenLastCalledWith(expect.objectContaining({ kind: 'approval', body: 'Waiting for your answer · Demo App' }))
+
+    const failing = await t.svc.create({ kind: 'claude-code', projectId: 'p1' })
+    t.terminal.spawned.at(-1)!.onExit!(127)
+    expect(push).toHaveBeenLastCalledWith({ kind: 'agent_error', title: 'Claude Code', body: 'Stopped with an error · Demo App', sessionId: failing.id })
+    push.mockClear()
+    t.terminal.fail = true
+    await expect(t.svc.resume(failing.id)).rejects.toThrow('spawn failed')
+    expect(push).toHaveBeenCalledWith(expect.objectContaining({ kind: 'agent_error' }))
+
+    // without a project: nothing after the state
+    t.terminal.fail = false
+    const loose = await t.svc.create({ kind: 'claude-code', title: 'Loose' })
+    await t.hook(loose.id, { hook_event_name: 'UserPromptSubmit', prompt: 'go' })
+    await t.hook(loose.id, { hook_event_name: 'Stop', last_assistant_message: 'done' })
+    expect(push).toHaveBeenLastCalledWith({ kind: 'agent_done', title: 'Claude Code · Loose', body: 'Done — your turn', sessionId: loose.id })
+    const failingLoose = await t.svc.create({ kind: 'claude-code' })
+    t.terminal.spawned.at(-1)!.onExit!(127)
+    expect(push).toHaveBeenLastCalledWith({ kind: 'agent_error', title: 'Claude Code', body: 'Stopped with an error', sessionId: failingLoose.id })
   })
 })

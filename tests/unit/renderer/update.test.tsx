@@ -60,6 +60,18 @@ describe('UpdateChip', () => {
     act(() => useUpdate.setState({ status: status({ state: 'ready', version: undefined }) }))
     expect(screen.getByRole('button', { name: 'Update · restart' })).toBeInTheDocument()
   })
+
+  it('a .deb install: a new version links to its download', () => {
+    installBridge({ 'update:status': () => status() })
+    render(<UpdateChip />)
+    const url = 'https://github.com/robin7mh/mindeck/releases/download/v0.2.0/Mindeck.deb'
+    act(() => useUpdate.setState({ status: status({ state: 'available', version: '0.2.0', downloadUrl: url }) }))
+    expect(screen.getByRole('link', { name: 'New version 0.2.0 · download' })).toHaveAttribute('href', url)
+    act(() => useUpdate.setState({ status: status({ state: 'available', downloadUrl: url }) }))
+    expect(screen.getByRole('link', { name: 'New version · download' })).toBeInTheDocument()
+    act(() => useUpdate.setState({ status: status({ state: 'available' }) }))
+    expect(screen.queryByRole('link')).not.toBeInTheDocument()
+  })
 })
 
 describe('profile update row', () => {
@@ -102,5 +114,14 @@ describe('profile update row', () => {
     expect(bridge.invoke).toHaveBeenCalledWith('update:install', undefined)
     act(() => useUpdate.setState({ status: status({ state: 'ready' }) }))
     expect(row()).toHaveTextContent('Version is ready')
+
+    // A .deb install downloads the new version itself.
+    const url = 'https://github.com/robin7mh/mindeck/releases/download/v0.3.0/Mindeck.deb'
+    act(() => useUpdate.setState({ status: status({ state: 'available', version: '0.3.0', downloadUrl: url }) }))
+    expect(row()).toHaveTextContent('Version 0.3.0 is out — download it to update')
+    expect(screen.getByRole('link', { name: 'Download' })).toHaveAttribute('href', url)
+    act(() => useUpdate.setState({ status: status({ state: 'available' }) }))
+    expect(row()).toHaveTextContent('Version is out')
+    expect(screen.getByRole('button', { name: 'Check for updates' })).toBeInTheDocument()
   })
 })

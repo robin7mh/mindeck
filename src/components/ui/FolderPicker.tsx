@@ -3,11 +3,13 @@ import { ArrowUp, Check, Folder, Home, Loader2, X } from 'lucide-react'
 import { errorMessage, ipc } from '@shared/ipc/client'
 import type { DirListing } from '@shared/types/server'
 import { useT } from '@/lib/i18n'
+import { cn } from '@/lib/cn'
 import { TechLabel } from './TechLabel'
 
 /**
  * Folder chooser for the web/mobile UI — browses folders on the machine the
  * Mindeck core runs on (fs:dirs), standing in for the desktop's native dialog.
+ * A paired device sees the shared folders only; the core lists them as `roots`.
  */
 export function FolderPicker({
   title,
@@ -48,6 +50,7 @@ export function FolderPicker({
 
   useEffect(() => {
     void open()
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the first listing, once; later ones follow clicks
   }, [])
 
   const sep = listing?.path.includes('\\') ? '\\' : '/'
@@ -57,13 +60,13 @@ export function FolderPicker({
     <div
       role="dialog"
       aria-label={title}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-void/70 p-4 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-void/70 p-4 backdrop-blur-xs"
       onKeyDown={(e) => e.key === 'Escape' && onClose()}
     >
       <div className="panel flex max-h-[80vh] w-full max-w-lg flex-col overflow-hidden">
         <header className="flex h-10 shrink-0 items-center justify-between border-b border-hud/60 px-3">
           <TechLabel className="text-text-secondary">{title}</TechLabel>
-          <button type="button" aria-label={t.common.close} onClick={onClose} className="text-text-muted hover:text-cyan">
+          <button type="button" aria-label={t.common.close} onClick={onClose} className="text-text-muted hover:text-text-primary">
             <X size={15} />
           </button>
         </header>
@@ -79,7 +82,7 @@ export function FolderPicker({
             type="button"
             aria-label={t.folderPicker.home}
             onClick={() => void open()}
-            className="rounded-md border border-hud/60 px-2 text-text-muted hover:border-cyan/50 hover:text-cyan"
+            className="rounded-md border border-hud/60 px-2 text-text-muted hover:border-hud-strong/80 hover:text-text-primary"
           >
             <Home size={14} />
           </button>
@@ -88,7 +91,7 @@ export function FolderPicker({
             aria-label={t.folderPicker.parent}
             disabled={!listing?.parent}
             onClick={() => listing?.parent && void open(listing.parent)}
-            className="rounded-md border border-hud/60 px-2 text-text-muted hover:border-cyan/50 hover:text-cyan disabled:opacity-30"
+            className="rounded-md border border-hud/60 px-2 text-text-muted hover:border-hud-strong/80 hover:text-text-primary disabled:opacity-30"
           >
             <ArrowUp size={14} />
           </button>
@@ -97,9 +100,27 @@ export function FolderPicker({
             value={typed}
             onChange={(e) => setTyped(e.target.value)}
             spellCheck={false}
-            className="min-w-0 flex-1 rounded-md border border-hud/70 bg-surface/70 px-2 py-1 font-mono text-[12px] text-text-primary outline-none focus:border-cyan/60"
+            className="min-w-0 flex-1 rounded-md border border-hud/70 bg-surface/70 px-2 py-1 font-mono text-[12px] text-text-primary outline-hidden focus:border-cyan/60"
           />
         </form>
+
+        {listing?.roots && listing.roots.length > 1 && (
+          <div className="flex flex-wrap items-center gap-1.5 border-b border-hud/50 px-2 py-1.5" aria-label={t.folderPicker.sharedFolders}>
+            {listing.roots.map((root) => (
+              <button
+                key={root}
+                type="button"
+                onClick={() => void open(root)}
+                className={cn(
+                  'max-w-full truncate rounded-sm border px-1.5 py-0.5 font-mono text-[10.5px]',
+                  root === listing.path ? 'border-cyan/50 text-cyan' : 'border-hud/60 text-text-muted hover:border-cyan/40 hover:text-text-primary'
+                )}
+              >
+                {root}
+              </button>
+            ))}
+          </div>
+        )}
 
         <div className="min-h-[200px] flex-1 overflow-y-auto p-1.5">
           {loading && (
@@ -117,7 +138,7 @@ export function FolderPicker({
                 key={name}
                 type="button"
                 onClick={() => void open(join(listing.path, name))}
-                className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left font-sans text-[13px] text-text-secondary hover:bg-cyan/[0.06] hover:text-text-primary"
+                className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left font-sans text-[13px] text-text-secondary hover:bg-cyan/6 hover:text-text-primary"
               >
                 <Folder size={14} className="shrink-0 text-cyan/80" />
                 <span className="truncate">{name}</span>
@@ -131,7 +152,7 @@ export function FolderPicker({
             type="button"
             disabled={!listing}
             onClick={() => listing && onPick(listing.path)}
-            className="flex shrink-0 items-center gap-1.5 rounded-md border border-cyan/50 bg-cyan/[0.10] px-3 py-1.5 font-sans text-[12px] font-medium text-cyan hover:bg-cyan/[0.16] disabled:opacity-40"
+            className="flex shrink-0 items-center gap-1.5 rounded-md border border-cyan bg-cyan px-3 py-1.5 font-sans text-[12px] font-semibold text-void hover:opacity-90 disabled:opacity-40"
           >
             <Check size={13} /> {confirmLabel ?? t.folderPicker.select}
           </button>

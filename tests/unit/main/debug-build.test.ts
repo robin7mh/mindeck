@@ -58,6 +58,13 @@ describe('building what the debugger runs', () => {
     expect(await buildProgram(python.ctx)).toBe(python.ctx.program)
   })
 
+  it('Windows: programs end in .exe, paths quoted for PowerShell', async () => {
+    const t = await ctx('cpp', "it's.c")
+    const r = runner()
+    expect(await buildProgram({ ...t.ctx, platform: 'win32' }, r.run)).toBe(join(t.root, '.mindeck', 'build', "it's.exe"))
+    expect(r.calls[0].line).toBe(`clang -g -O0 '${join(t.root, "it''s.c")}' -o '${join(t.root, '.mindeck', 'build', "it''s.exe")}'`)
+  })
+
   it('Swift with swiftc; Rust with cargo (its JSON names the program) or rustc for a lone file', async () => {
     const swift = await ctx('swift', 'main.swift')
     const s = runner()

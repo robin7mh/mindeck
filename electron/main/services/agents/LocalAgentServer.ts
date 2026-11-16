@@ -119,9 +119,9 @@ export class LocalAgentServer {
     res.on('close', () => aborted.abort())
     try {
       const answer = route === 'hooks' ? await this.handlers.hook(sessionId, body, aborted.signal) : await this.handlers.mcp(sessionId, body)
-      if (!res.writableEnded) send(res, answer === undefined ? (route === 'mcp' ? 202 : 204) : 200, answer)
+      send(res, answer === undefined ? (route === 'mcp' ? 202 : 204) : 200, answer)
     } catch (err) {
-      if (!res.writableEnded) send(res, 500, { error: (err as Error).message })
+      send(res, 500, { error: (err as Error).message })
     }
   }
 }

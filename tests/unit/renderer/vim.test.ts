@@ -59,6 +59,8 @@ describe('Vim mode', () => {
     // Something else changed: the mappings stay as they are.
     settings({ fontSize: 15 })
     expect(vim.attached).toHaveLength(1)
+    useEditorPrefs.setState({ snippets: [] }) // not the settings at all
+    expect(vim.attached).toHaveLength(1)
     expect(vim.maps).toEqual([['jj', '<Esc>', 'insert']])
     settings({ vimMappings: [{ mode: 'normal', before: '<space>w', after: ':w<CR>' }] })
     expect(vim.maps).toEqual([['<space>w', ':w<CR>', 'normal']])

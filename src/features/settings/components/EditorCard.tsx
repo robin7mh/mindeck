@@ -6,7 +6,7 @@ import { useT } from '@/lib/i18n'
 import { DEFAULTS, useEditorPrefs } from '@/features/editor/prefs'
 import { Toggle } from './Toggle'
 
-const number = 'w-16 rounded-md border border-hud/70 bg-surface/70 px-2 py-1 font-mono text-[12px] text-text-primary outline-none focus:border-cyan/60'
+const number = 'w-16 rounded-md border border-hud/70 bg-surface/70 px-2 py-1 font-mono text-[12px] text-text-primary outline-hidden focus:border-cyan/60'
 
 /** Settings → Editor: formatting and fixing on save, Prettier, ESLint, the look of the text. */
 export function EditorCard() {

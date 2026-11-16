@@ -123,6 +123,8 @@ interface Session {
 
 export interface NotebookOptions {
   resolveRoot: (projectId: string) => string | undefined
+  /** Whether the project is trusted (WorkspaceTrust): its Python runs only then. */
+  trusted?: (projectId: string) => boolean
   publish: (event: NotebookEvent) => void
   /** Start Python (tests give a stand-in). */
   start?: (command: string, args: string[], cwd: string) => ChildProcess
@@ -188,7 +190,11 @@ export class NotebookService {
     let stderr = ''
     let buffer = ''
     const ready = new Promise<void>((ok, fail) => {
-      const timer = setTimeout(() => fail(coded('kernel-timeout', 'The kernel did not start in time')), START_MS)
+      const timer = setTimeout(() => {
+        fail(coded('kernel-timeout', 'The kernel did not start in time'))
+        // Ended, so its session goes too: else every later start would get this failed one back.
+        proc.kill()
+      }, START_MS)
       const settle = (err?: Error) => {
         clearTimeout(timer)
         if (err) fail(err)
@@ -253,7 +259,7 @@ export class NotebookService {
   }
 
   private send(session: Session, message: Record<string, unknown>): void {
-    session.proc.stdin?.write(`${JSON.stringify(message)}\n`)
+    if (session.proc.stdin?.writable) session.proc.stdin.write(`${JSON.stringify(message)}\n`)
   }
 
   private session(projectId: string, path: string): Session {
@@ -278,9 +284,15 @@ export class NotebookService {
     return (this.opts.start ?? spawnInShell)(command, args, cwd)
   }
 
+  /**
+   * The project's folder — for a trusted project only: Python started there
+   * runs the project's code before any cell (its .venv's interpreter, a
+   * `json.py` next to it shadowing the standard library).
+   */
   private async root(projectId: string): Promise<string> {
     const configured = this.opts.resolveRoot(projectId)
     if (!configured) throw coded('not-found', `Unknown project: ${projectId}`)
+    if (!this.opts.trusted?.(projectId)) throw coded('untrusted', 'Notebooks run only in projects you trust — trust this project first')
     return realpath(configured)
   }
 }

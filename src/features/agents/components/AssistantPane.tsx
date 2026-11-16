@@ -30,7 +30,7 @@ function AgentPicker({ agents, value, onPick }: { agents: AgentInfo[]; value: st
             onClick={() => onPick(a.id)}
             className={cn(
               'flex items-center gap-1.5 rounded-md border px-2 py-1.5 text-left font-sans text-[12px] transition-colors',
-              a.id === value ? 'border-cyan/50 bg-cyan/[0.08] text-cyan' : 'border-hud/60 text-text-secondary hover:border-cyan/40 hover:text-text-primary'
+              a.id === value ? 'border-cyan/50 bg-cyan/8 text-cyan' : 'border-hud/60 text-text-secondary hover:border-cyan/40 hover:text-text-primary'
             )}
           >
             <Icon size={13} className="shrink-0" />
@@ -64,14 +64,14 @@ export function AssistantPane({ onOpenSettings }: { onOpenSettings: () => void }
         <Icon size={14} className="shrink-0 text-cyan" />
         <span className="truncate font-sans text-[13px] font-semibold text-text-primary">{active ? active.title : t.agents.newChatWith(agent?.name ?? t.agents.assistantName)}</span>
         {a.status?.model && (
-          <span className="ml-auto hidden font-mono text-[10px] text-text-muted md:inline">
+          <span className="ml-auto hidden font-mono text-[11px] text-text-muted md:inline">
             {t.agents.assistant} · {a.status.model} · {a.status.settings.effort}
           </span>
         )}
       </div>
 
       {a.error && (
-        <div className="flex items-start gap-2 border-b border-danger/30 bg-danger/[0.06] px-3 py-2">
+        <div className="flex items-start gap-2 border-b border-danger/30 bg-danger/6 px-3 py-2">
           <AlertTriangle size={13} className="mt-0.5 shrink-0 text-danger" />
           <span className="min-w-0 flex-1 font-mono text-[11px] text-text-secondary">{a.error}</span>
           <button type="button" aria-label={t.common.dismiss} onClick={a.clearError} className="text-text-muted hover:text-text-primary">

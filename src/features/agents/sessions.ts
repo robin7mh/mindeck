@@ -1,8 +1,9 @@
 import { create } from 'zustand'
-import { errorMessage, ipc, onEvent } from '@shared/ipc/client'
+import { errorMessage, ipc, onEvent, onResync } from '@shared/ipc/client'
 import type { ChatMessage } from '@shared/types/ai'
-import type { AgentAvailability, AgentSession, CreateSessionRequest, FileChange, FileDiff, SessionBranch } from '@shared/types/agents'
-import { upsertMessage } from './store'
+import type { AgentAvailability, AgentInput, AgentSession, CreateSessionRequest, FileChange, FileDiff, SessionBranch, SessionConfigure } from '@shared/types/agents'
+import { CACHED_CHATS, merge, upsertMessage } from './store'
+import { saveDraft } from './composerPrefs'
 
 /** What the center of the Agents module shows. */
 export type AgentsView = 'empty' | 'session' | 'assistant'
@@ -32,7 +33,9 @@ interface AgentsState {
   create: (req: CreateSessionRequest) => Promise<boolean>
   open: (id: string) => Promise<void>
   showAssistant: () => void
-  send: (text: string) => Promise<boolean>
+  send: (text: string, extra?: Omit<AgentInput, 'text'>) => Promise<boolean>
+  /** Switch the active session's model or mode. */
+  configure: (patch: SessionConfigure) => Promise<void>
   interrupt: () => Promise<void>
   stop: (id?: string) => Promise<void>
   resume: (id?: string) => Promise<void>
@@ -40,7 +43,6 @@ interface AgentsState {
   rename: (id: string, title: string) => Promise<void>
   /** A shell in the session's folder (ACP agents have no terminal of their own). */
   openShell: (id: string) => Promise<string | undefined>
-  openInEditor: (id: string) => Promise<void>
   loadChanges: (id?: string) => Promise<void>
   loadBranch: (id?: string) => Promise<void>
   showDiff: (path: string) => Promise<void>
@@ -52,6 +54,9 @@ interface AgentsState {
 
 let connections = 0
 let unsubscribe: (() => void) | undefined
+let recentSessions: string[] = []
+/** How often each session's changes were asked for: an answer that a newer question has overtaken is dropped. */
+const changesAsked = new Map<string, number>()
 
 const upsertSession = (list: AgentSession[], s: AgentSession) => [s, ...list.filter((x) => x.id !== s.id)].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
 
@@ -72,6 +77,25 @@ export const useAgents = create<AgentsState>((set, get) => {
     }
   }
 
+  /** A session with its messages from the core, merged with what arrived live (the most recently opened stay in memory). */
+  const load = async (id: string, liveWins = true) => {
+    const { messages, ...session } = await ipc('agents:get', { id })
+    recentSessions = [id, ...recentSessions.filter((x) => x !== id)].slice(0, CACHED_CHATS)
+    set((s) => ({
+      sessions: upsertSession(s.sessions, session),
+      messages: Object.fromEntries(Object.entries({ ...s.messages, [id]: merge(messages, s.messages[id], liveWins) }).filter(([key]) => key === s.activeId || recentSessions.includes(key)))
+    }))
+  }
+
+  /** A removed session leaves nothing behind. */
+  const forget = (s: AgentsState, id: string) => {
+    changesAsked.delete(id)
+    const { [id]: _messages, ...messages } = s.messages
+    const { [id]: _changes, ...changes } = s.changes
+    const { [id]: _branch, ...branches } = s.branches
+    return { messages, changes, branches }
+  }
+
   return {
     availability: [],
     detecting: false,
@@ -90,6 +114,7 @@ export const useAgents = create<AgentsState>((set, get) => {
             if (session) set((s) => ({ sessions: upsertSession(s.sessions, session) }))
             if (removed) {
               set((s) => ({
+                ...forget(s, removed),
                 sessions: s.sessions.filter((x) => x.id !== removed),
                 ...(s.activeId === removed ? { activeId: undefined, view: 'empty' as const } : {})
               }))
@@ -97,7 +122,16 @@ export const useAgents = create<AgentsState>((set, get) => {
           }),
           onEvent('agents:message', ({ sessionId, message }) => {
             const list = get().messages[sessionId]
-            if (list) set((s) => ({ messages: { ...s.messages, [sessionId]: upsertMessage(list, message) } }))
+            // The open session may still be loading: `load` merges what came meanwhile.
+            if (list || get().activeId === sessionId) set((s) => ({ messages: { ...s.messages, [sessionId]: upsertMessage(list ?? [], message) } }))
+          }),
+          // Back after an outage of the push channel: statuses and messages from the gap are missing.
+          onResync(() => {
+            void get().refresh()
+            const id = get().activeId
+            // Sessions not on screen missed the gap too: they come fresh when opened again, not as they were left.
+            set((s) => ({ messages: id && s.messages[id] ? { [id]: s.messages[id] } : {} }))
+            if (id) void load(id, false).catch(fail)
           })
         ]
         unsubscribe = () => offs.forEach((off) => off())
@@ -155,9 +189,7 @@ export const useAgents = create<AgentsState>((set, get) => {
     open: async (id) => {
       set({ activeId: id, view: 'session', error: undefined })
       try {
-        const detail = await ipc('agents:get', { id })
-        const { messages, ...session } = detail
-        set((s) => ({ sessions: upsertSession(s.sessions, session), messages: { ...s.messages, [id]: messages } }))
+        await load(id)
       } catch (err) {
         fail(err)
       }
@@ -165,17 +197,23 @@ export const useAgents = create<AgentsState>((set, get) => {
 
     showAssistant: () => set({ view: 'assistant', activeId: undefined }),
 
-    send: async (text) => {
+    send: async (text, extra = {}) => {
       const id = get().activeId
       if (!id) return false
       try {
-        await ipc('agents:send', { id, text })
+        await ipc('agents:send', { id, text, ...extra })
         return true
       } catch (err) {
         fail(err)
         return false
       }
     },
+
+    configure: (patch) =>
+      act(async (id) => {
+        const session = await ipc('agents:configure', { id, ...patch })
+        set((s) => ({ sessions: upsertSession(s.sessions, session) }))
+      }),
 
     interrupt: () => act((id) => ipc('agents:interrupt', { id })),
     stop: (id) => act((x) => ipc('agents:stop', { id: x }), id),
@@ -184,7 +222,9 @@ export const useAgents = create<AgentsState>((set, get) => {
     remove: (id) =>
       act(async (x) => {
         await ipc('agents:remove', { id: x })
+        saveDraft(x, { text: '', refs: [] })
         set((s) => ({
+          ...forget(s, x),
           sessions: s.sessions.filter((v) => v.id !== x),
           ...(s.activeId === x ? { activeId: undefined, view: 'empty' as const } : {})
         }))
@@ -205,12 +245,13 @@ export const useAgents = create<AgentsState>((set, get) => {
       }
     },
 
-    openInEditor: (id) => act((x) => ipc('agents:openInEditor', { id: x }), id),
 
     loadChanges: (id) =>
       act(async (x) => {
+        const asked = (changesAsked.get(x) ?? 0) + 1
+        changesAsked.set(x, asked)
         const changes = await ipc('agents:changes', { id: x })
-        set((s) => ({ changes: { ...s.changes, [x]: changes } }))
+        if (changesAsked.get(x) === asked) set((s) => ({ changes: { ...s.changes, [x]: changes } }))
       }, id),
 
     loadBranch: (id) =>

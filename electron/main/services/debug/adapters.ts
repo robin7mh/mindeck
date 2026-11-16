@@ -5,25 +5,41 @@ import { basename, dirname, extname } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { shellCommand, shellEnv, shellQuote } from '../terminal/TerminalService'
 import { shellArgs } from '../../lib/shellArgs'
+import { spawnProgram } from '../../lib/executables'
+import { spawnNode, type NodeLauncher, type NodeProcess } from '../../lib/nodeProcess'
 import { pythonFor } from '../tools/catalog'
+import { userEnv } from '../tools/ToolsService'
 import type { DapLaunch, DapTransport } from './Dap'
 
-/** Start a program like the user's terminal would (their PATH), with extra environment. */
-export function spawnInShell(command: string, args: string[], cwd: string, env: Record<string, string> = {}): ChildProcess {
+/**
+ * Start a program like the user's terminal would (their PATH), with extra
+ * environment. Windows: directly, without PowerShell (batch launchers like
+ * the Kotlin adapter's through cmd.exe).
+ */
+export function spawnInShell(command: string, args: string[], cwd: string, env: Record<string, string> = {}, platform: NodeJS.Platform = process.platform): ChildProcess {
+  if (platform === 'win32') return spawnProgram(command, args, { cwd, env: { ...shellEnv(), ...env }, stdio: ['pipe', 'pipe', 'pipe'] }, platform)
   const { file } = shellCommand()
   const line = [command, ...args].map(shellQuote).join(' ')
-  return spawn(file, shellArgs(line), {
+  const proc = spawn(file, shellArgs(line), {
     cwd,
     env: { ...shellEnv(), ...env },
     stdio: ['pipe', 'pipe', 'pipe']
   })
+  // Writing to a process that just ended (EPIPE) must not crash the app — its exit is reported on its own.
+  proc.stdin.on('error', () => {})
+  return proc
 }
 
-export function stdioTransport(proc: Pick<ChildProcess, 'stdin' | 'stdout' | 'on' | 'kill'>): DapTransport {
+export function stdioTransport(proc: Pick<NodeProcess, 'stdin' | 'stdout' | 'stderr' | 'on' | 'kill'>): DapTransport {
+  // Adapters log on stderr: nobody reading it would fill the pipe and freeze the adapter.
+  proc.stderr?.resume()
   return {
     write: (data) => void proc.stdin!.write(data),
     onData: (fn) => void proc.stdout!.on('data', fn),
-    onClose: (fn) => void proc.on('exit', fn),
+    onClose: (fn) => {
+      proc.on('exit', fn)
+      proc.on('error', fn)
+    },
     close: () => void proc.kill()
   }
 }
@@ -52,6 +68,8 @@ export interface AdapterContext {
   module?: string
   /** Go: run the package's tests. */
   goTest?: boolean
+  /** How a debug adapter written in JavaScript runs as a Node program (Platform.node). */
+  node?: NodeLauncher
 }
 
 export type Spawn = (command: string, args: string[], cwd: string, env?: Record<string, string>) => ChildProcess
@@ -60,6 +78,8 @@ export type Spawn = (command: string, args: string[], cwd: string, env?: Record<
 export const DAP_LANGUAGES = ['python', 'go', 'cpp', 'rust', 'swift', 'php', 'java', 'kotlin']
 /** Compiled to a program first, then run under LLDB — with any built program Mindeck has no language for ('native'). */
 export const NATIVE_LANGUAGES = ['cpp', 'rust', 'swift', 'native']
+/** How long Delve may take to open its DAP port. */
+const DELVE_START_MS = 30_000
 
 function coded(code: string, message: string): Error {
   return Object.assign(new Error(message), { code })
@@ -120,8 +140,8 @@ export async function startAdapter(language: string, ctx: AdapterContext, run: S
     }
   }
   if (language === 'php') {
-    // Xdebug's adapter is JavaScript: Mindeck's own Node runs it. It starts php with Xdebug pointed at its port.
-    const proc = run(process.execPath, [ctx.debugger], ctx.root, { ELECTRON_RUN_AS_NODE: '1' })
+    // Xdebug's adapter is JavaScript: Mindeck runs it as a Node program. It starts php (the user's PATH) with Xdebug pointed at its port.
+    const proc = (ctx.node ?? spawnNode)([ctx.debugger], { cwd: ctx.root, env: await userEnv(), name: 'PHP Debug' })
     return {
       transport: stdioTransport(proc),
       launch: {
@@ -171,18 +191,30 @@ export async function startAdapter(language: string, ctx: AdapterContext, run: S
   const proc = run(ctx.debugger, ['dap', '--listen=127.0.0.1:0'], ctx.root)
   const port = await new Promise<number>((resolve, reject) => {
     let listening = false
+    // Delve that never says where it listens (and never exits) must not leave the start waiting forever.
+    const timer = setTimeout(() => {
+      reject(Object.assign(new Error('Delve did not start'), { code: 'debug' }))
+      proc.kill()
+    }, DELVE_START_MS)
     proc.stdout!.on('data', (d: Buffer) => {
       const text = d.toString()
       const match = /listening at:? *\[?[\d.:a-f]*?\]?:?(\d+)\s*$/im.exec(text)
       if (!listening && match) {
         listening = true
+        clearTimeout(timer)
         return resolve(Number(match[1]))
       }
       if (listening) ctx.output('stdout', text)
     })
     proc.stderr!.on('data', (d: Buffer) => ctx.output('stderr', d.toString()))
-    proc.on('exit', () => !listening && reject(Object.assign(new Error('Delve did not start'), { code: 'debug' })))
-    proc.on('error', reject)
+    proc.on('exit', () => {
+      clearTimeout(timer)
+      if (!listening) reject(Object.assign(new Error('Delve did not start'), { code: 'debug' }))
+    })
+    proc.on('error', (err) => {
+      clearTimeout(timer)
+      reject(err)
+    })
   })
   const socket = await connectTo(port)
   return {

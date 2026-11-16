@@ -1,10 +1,13 @@
 import { act, createEvent, fireEvent, render, screen, within } from '@testing-library/react'
+import { useState } from 'react'
+import { EditorView } from '@codemirror/view'
 import { describe, expect, it, vi } from 'vitest'
 import type { Note, NoteMeta, SearchHit } from '@shared/types/memory'
 
 import { GraphStyleControl } from '@/features/memory/components/GraphStyleControl'
 import { NoteList } from '@/features/memory/components/NoteList'
 import { NoteEditor } from '@/features/memory/components/NoteEditor'
+import { PaneContext } from '@/features/workspace/pane'
 
 const meta = (path: string, extra: Partial<NoteMeta> = {}): NoteMeta => ({
   path,
@@ -52,6 +55,9 @@ function listProps(over: Partial<Parameters<typeof NoteList>[0]> = {}) {
     folderSlots: new Map([['Ideen', 1]]),
     style: { mode: 'colorful' as const, color: 'cyan' as const },
     creating: null,
+    openFolders: ['Ideen', 'Ideen/Sub', 'Leer', 'Loose', 'Zeta'],
+    onToggleFolder: vi.fn(),
+    onShowInFinder: vi.fn(),
     onSearch: vi.fn(),
     onOpen: vi.fn(),
     onStartCreate: vi.fn(),
@@ -61,6 +67,18 @@ function listProps(over: Partial<Parameters<typeof NoteList>[0]> = {}) {
     onMoveFolder: vi.fn(),
     ...over
   }
+}
+
+/** The list with its folders open and closed as the memory store keeps them. */
+function OpenList(p: Parameters<typeof NoteList>[0]) {
+  const [open, setOpen] = useState(p.openFolders)
+  return (
+    <NoteList
+      {...p}
+      openFolders={open}
+      onToggleFolder={(dir) => setOpen((o) => (o.includes(dir) ? o.filter((d) => d !== dir) : [...o, dir]))}
+    />
+  )
 }
 
 const dt = (data: Record<string, string> = {}) => ({
@@ -74,12 +92,12 @@ const dt = (data: Record<string, string> = {}) => ({
 describe('NoteList', () => {
   it('groups notes by folder (root first, sorted), marks the active note and link counts', () => {
     const p = listProps()
-    const { container } = render(<NoteList {...p} />)
+    const { container } = render(<OpenList {...p} />)
     const folderNames = [...container.querySelectorAll('span.truncate.font-sans.text-\\[12px\\]')].map((e) => e.textContent)
     expect(folderNames).toEqual(['Ideen', 'Ideen/Sub', 'Leer', 'Loose', 'Zeta'])
     const titles = [...container.querySelectorAll('span.min-w-0.flex-1.truncate')].map((e) => e.textContent)
     expect(titles.slice(0, 2)).toEqual(['Alpha', 'Root'])
-    expect(screen.getByText('A').closest('button')!.className).toContain('bg-cyan/[0.08]')
+    expect(screen.getByText('A').closest('button')!.className).toContain('bg-cyan/8')
     expect(screen.getByText('Root').nextElementSibling).toHaveTextContent('2') // link count
     expect(screen.getByText('Alpha').nextElementSibling).toBeNull()
     expect(screen.getAllByText('Empty — drop notes here')).toHaveLength(2) // Leer, Zeta
@@ -101,6 +119,40 @@ describe('NoteList', () => {
     expect(p.onStartCreate).toHaveBeenCalledWith('folder', '')
   })
 
+  it('a row of tools spread over its width — search, the vault in the Finder, new note, new folder; the magnifier turns it into the search field', () => {
+    const p = listProps()
+    const { rerender } = render(<NoteList {...p} />)
+    // the tools, in their order — no search field yet
+    const row = screen.getByRole('button', { name: 'Search memory…' }).parentElement!
+    expect([...row.querySelectorAll('button')].map((b) => b.getAttribute('aria-label'))).toEqual(['Search memory…', 'Show vault in Finder', 'New note', 'New folder'])
+    expect(row).toHaveClass('justify-around')
+    expect(screen.queryByRole('textbox', { name: 'Search memory…' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Show vault in Finder' }))
+    expect(p.onShowInFinder).toHaveBeenCalled()
+    // the magnifier: the other tools go, the field takes the row, the caret in it
+    fireEvent.click(screen.getByRole('button', { name: 'Search memory…' }))
+    const field = screen.getByRole('textbox', { name: 'Search memory…' })
+    expect(field).toHaveFocus()
+    expect(screen.queryByRole('button', { name: 'New note' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'New folder' })).toBeNull()
+    // Escape empties it and brings the tools back
+    fireEvent.change(field, { target: { value: 'ide' } })
+    fireEvent.keyDown(field, { key: 'a' })
+    expect(screen.getByRole('textbox', { name: 'Search memory…' })).toBeInTheDocument()
+    fireEvent.keyDown(field, { key: 'Escape' })
+    expect(p.onSearch).toHaveBeenLastCalledWith('')
+    expect(screen.queryByRole('textbox', { name: 'Search memory…' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'New note' })).toBeInTheDocument()
+    // the web UI has no Finder: no such tool
+    rerender(<NoteList {...p} onShowInFinder={undefined} />)
+    expect(screen.queryByRole('button', { name: 'Show vault in Finder' })).toBeNull()
+  })
+
+  it('a search still on (memory came back on screen): the field shows it', () => {
+    render(<NoteList {...listProps({ query: 'ide' })} />)
+    expect(screen.getByRole('textbox', { name: 'Search memory…' })).toHaveValue('ide')
+  })
+
   it('folder dots follow the graph style', () => {
     const { container, rerender } = render(<NoteList {...listProps()} />)
     const dots = () => [...container.querySelectorAll<HTMLElement>('span.h-1\\.5.w-1\\.5')].map((e) => e.style.background)
@@ -118,6 +170,7 @@ describe('NoteList', () => {
       vi.advanceTimersByTime(200)
     })
     expect(p.onSearch).toHaveBeenLastCalledWith('')
+    fireEvent.click(screen.getByRole('button', { name: 'Search memory…' }))
     fireEvent.change(screen.getByPlaceholderText('Search memory…'), { target: { value: 'ide' } })
     act(() => {
       vi.advanceTimersByTime(200)
@@ -130,24 +183,32 @@ describe('NoteList', () => {
         query="ide"
         hits={[
           { path: 'Ideen/A.md', title: 'A', snippet: 'aaa' },
-          { path: 'Root.md', title: 'Root', snippet: 'rrr' }
+          { path: 'Root.md', title: 'Root', snippet: 'rrr' },
+          { path: 'Ideen.md', title: 'Ideen', snippet: '', titleMatches: [[0, 3]] },
+          { path: 'Mark.md', title: 'Mark', snippet: 'one ide two ide', matches: [[4, 7], [12, 15]] }
         ]}
       />
     )
-    expect(screen.getByText('2 results')).toBeInTheDocument()
+    expect(screen.getByText('4 results')).toBeInTheDocument()
+    // Matches are marked, in titles and snippets; an empty snippet shows no line.
+    expect([...document.querySelectorAll('mark')].map((m) => m.textContent)).toEqual(['Ide', 'ide', 'ide'])
+    expect(screen.getAllByRole('button').find((b) => b.textContent === 'Ideen')!.querySelectorAll(':scope > span').length).toBe(1)
+    expect(screen.getByText('two', { exact: false }).textContent).toBe('one ide two ide')
     expect(screen.getByText('aaa').closest('button')!.className).toContain('border-cyan/40')
     expect(screen.getByText('rrr').closest('button')!.className).toContain('border-transparent')
     fireEvent.click(screen.getByText('rrr'))
     expect(p.onOpen).toHaveBeenCalledWith('Root.md')
-    fireEvent.click(screen.getByLabelText('Clear search'))
-    expect(screen.queryByLabelText('Clear search')).toBeNull()
+    // the X closes the search: emptied, the tools back
+    fireEvent.click(screen.getByLabelText('Close search'))
+    expect(screen.queryByLabelText('Close search')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Search memory…' })).toBeInTheDocument()
     vi.useRealTimers()
   })
 
   it('inline create: note at root, folder inside a folder; Enter, Escape and blur', () => {
     const p = listProps({ creating: { kind: 'note', parent: '' } })
     const { rerender } = render(<NoteList {...p} />)
-    const input = screen.getByPlaceholderText('Note title…')
+    const input = screen.getByRole('textbox', { name: 'Note title…' })
     expect(input).toHaveFocus()
     expect(input.parentElement!.className).toContain('pl-2')
     fireEvent.change(input, { target: { value: 'Neu' } })
@@ -160,7 +221,7 @@ describe('NoteList', () => {
     expect(p.onSubmitCreate).toHaveBeenCalledTimes(2)
 
     rerender(<NoteList {...p} creating={{ kind: 'folder', parent: 'Leer' }} />)
-    const folderInput = screen.getByPlaceholderText('Folder name…')
+    const folderInput = screen.getByRole('textbox', { name: 'Folder name…' })
     expect(folderInput.parentElement!.className).toContain('pl-7')
     expect(screen.getAllByText('Empty — drop notes here')).toHaveLength(1) // Leer shows the input instead
     fireEvent.blur(folderInput) // blank → cancel
@@ -237,11 +298,22 @@ function editorProps(over: Partial<Parameters<typeof NoteEditor>[0]> = {}) {
   return {
     note,
     notes: [meta('Other.md'), meta('Ideen/Sub/Plan.md'), meta('Mindeck.md'), meta('Ideen für Mindeck.md'), meta('Projekte/Mindeck Pro.md')],
+    templates: [] as NoteMeta[],
     draft: note.body,
     mode: 'preview' as const,
+    source: false,
     saving: false,
+    conflict: false,
+    saveFailed: false,
+    onDiscard: vi.fn(),
+    onLoadDisk: vi.fn(),
+    onKeepMine: vi.fn(),
     onDraft: vi.fn(),
     onMode: vi.fn(),
+    onSource: vi.fn(),
+    onInsertTemplate: vi.fn(async () => 'from template'),
+    onAttach: vi.fn(async () => null),
+    loadImage: vi.fn(async () => null),
     onSave: vi.fn(),
     onRename: vi.fn(),
     onOpen: vi.fn(),
@@ -254,6 +326,41 @@ function editorProps(over: Partial<Parameters<typeof NoteEditor>[0]> = {}) {
 }
 
 describe('NoteEditor', () => {
+  it('typing doesn’t filter every note again for the connect menu', () => {
+    const p = editorProps({ draft: 'a' })
+    const filter = vi.spyOn(p.notes, 'filter')
+    const { rerender } = render(<NoteEditor {...p} />)
+    const before = filter.mock.calls.length
+    rerender(<NoteEditor {...p} draft="ab" />)
+    rerender(<NoteEditor {...p} draft="abc" />)
+    expect(filter.mock.calls.length).toBe(before)
+  })
+
+  it('text that can’t be written: the way out is on screen', () => {
+    const p = editorProps({ draft: 'mine', saveFailed: true })
+    const { rerender } = render(<NoteEditor {...p} />)
+    expect(screen.getByRole('alert')).toHaveTextContent(`${p.note.title} can’t be saved`)
+    fireEvent.click(screen.getByText('Discard my text'))
+    expect(p.onDiscard).toHaveBeenCalled()
+    expect(screen.queryByText('Keep mine')).toBeNull()
+    // Undone back to the file's text: nothing left to discard.
+    rerender(<NoteEditor {...p} draft={p.note.body} />)
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it('a file that moved on under the draft: the user decides', () => {
+    const p = editorProps({ draft: 'mine', conflict: true })
+    const { rerender } = render(<NoteEditor {...p} />)
+    expect(screen.getByRole('alert')).toHaveTextContent(`${p.note.title} changed on disk`)
+    fireEvent.click(screen.getByText('Load disk version'))
+    expect(p.onLoadDisk).toHaveBeenCalled()
+    fireEvent.click(screen.getByText('Keep mine'))
+    expect(p.onKeepMine).toHaveBeenCalled()
+    // Undone back to the file's text: nothing left to decide.
+    rerender(<NoteEditor {...p} draft={p.note.body} />)
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
   it('header: folder path, type, tags, save state; properties formatting', () => {
     const date = new Date(2026, 0, 1, 12, 0)
     const note = baseNote({
@@ -302,11 +409,14 @@ describe('NoteEditor', () => {
     expect(screen.getByText(/Not connected yet/)).toBeInTheDocument()
   })
 
-  it('mode buttons, edit textarea and keyboard shortcuts', () => {
+  it('mode buttons (Live, Source, Read), the editor and keyboard shortcuts', () => {
     const p = editorProps()
-    const { rerender } = render(<NoteEditor {...p} />)
-    fireEvent.click(screen.getByTitle('Edit (⌘E)'))
-    expect(p.onMode).toHaveBeenLastCalledWith('edit')
+    const { rerender, container } = render(<NoteEditor {...p} />)
+    expect(screen.getByTitle('Read (⌘E)')).toHaveAttribute('aria-pressed', 'true')
+    fireEvent.click(screen.getByTitle(/^Live Preview/))
+    expect(p.onSource).toHaveBeenLastCalledWith(false)
+    fireEvent.click(screen.getByTitle('Source — plain Markdown'))
+    expect(p.onSource).toHaveBeenLastCalledWith(true)
     fireEvent.click(screen.getByTitle('Read (⌘E)'))
     expect(p.onMode).toHaveBeenLastCalledWith('preview')
 
@@ -316,13 +426,30 @@ describe('NoteEditor', () => {
     fireEvent.keyDown(window, { key: 's', ctrlKey: true })
     expect(p.onSave).toHaveBeenCalledTimes(1)
     fireEvent.keyDown(window, { key: 'x', ctrlKey: true })
-    expect(p.onMode).toHaveBeenCalledTimes(3)
+    expect(p.onMode).toHaveBeenCalledTimes(2)
 
     rerender(<NoteEditor {...p} mode="edit" />)
+    expect(screen.getByTitle(/^Live Preview/)).toHaveAttribute('aria-pressed', 'true')
     fireEvent.keyDown(window, { key: 'e', ctrlKey: true })
     expect(p.onMode).toHaveBeenLastCalledWith('preview')
-    fireEvent.change(screen.getByRole('textbox', { name: '' }), { target: { value: 'typed' } })
-    expect(p.onDraft).toHaveBeenCalledWith('typed')
+    const view = EditorView.findFromDOM(container.querySelector('.cm-editor') as HTMLElement)!
+    expect(view.state.doc.toString()).toBe(p.draft)
+    act(() => view.dispatch({ changes: { from: 0, insert: 'typed ' } }))
+    expect(p.onDraft).toHaveBeenCalledWith(`typed ${p.draft}`)
+
+    rerender(<NoteEditor {...p} mode="edit" source />)
+    expect(screen.getByTitle('Source — plain Markdown')).toHaveAttribute('aria-pressed', 'true')
+
+    // next to the editor, without the focus: ⌘S is the editor's
+    const { unmount } = render(
+      <PaneContext.Provider value={{ focused: false }}>
+        <NoteEditor {...p} />
+      </PaneContext.Provider>
+    )
+    rerender(<div />)
+    fireEvent.keyDown(window, { key: 's', ctrlKey: true })
+    expect(p.onSave).toHaveBeenCalledTimes(1)
+    unmount()
   })
 
   it('preview links: wikilinks, external, relative markdown and plain anchors', () => {
@@ -344,8 +471,8 @@ describe('NoteEditor', () => {
     expect(p.onOpenOrCreate).toHaveBeenLastCalledWith('')
     fireEvent.click(screen.getByText('web'))
     fireEvent.click(screen.getByText('mail'))
-    expect(open).toHaveBeenCalledWith('https://example.com', '_blank')
-    expect(open).toHaveBeenCalledWith('mailto:a@b.c', '_blank')
+    expect(open).toHaveBeenCalledWith('https://example.com', '_blank', 'noopener,noreferrer')
+    expect(open).toHaveBeenCalledWith('mailto:a@b.c', '_blank', 'noopener,noreferrer')
     fireEvent.click(screen.getByText('rel'))
     expect(p.onOpen).toHaveBeenLastCalledWith('Other.md')
     fireEvent.click(screen.getByText('new'))
@@ -357,6 +484,73 @@ describe('NoteEditor', () => {
     fireEvent.click(screen.getByText('nohref'))
     fireEvent.click(screen.getByText(/plain/))
     expect(vi.mocked(p.onOpen).mock.calls.length + vi.mocked(p.onOpenOrCreate).mock.calls.length).toBe(calls)
+  })
+
+  it('read mode fills pictures from the vault; missing ones are marked', async () => {
+    const loadImage = vi.fn(async (t: string) => (t === 'ok.png' ? 'data:image/png;base64,AA' : null))
+    const p = editorProps({ note: baseNote({ body: '![[ok.png]] ![[gone.png]]' }), loadImage })
+    const { container, unmount } = render(<NoteEditor {...p} />)
+    await act(async () => {})
+    const imgs = container.querySelectorAll<HTMLImageElement>('.md-prose img')
+    expect(imgs[0].src).toBe('data:image/png;base64,AA')
+    expect(imgs[1].className).toContain('missing')
+    expect(loadImage.mock.calls.map((c) => c[0])).toEqual(['ok.png', 'gone.png'])
+
+    // Answers that arrive after leaving are dropped.
+    let late!: (url: string) => void
+    const slow = editorProps({ note: baseNote({ body: '![[late.png]]' }), loadImage: vi.fn(() => new Promise<string | null>((r) => (late = r))) })
+    unmount()
+    const second = render(<NoteEditor {...slow} />)
+    const img = second.container.querySelector<HTMLImageElement>('.md-prose img')!
+    second.rerender(<NoteEditor {...slow} mode="edit" />)
+    await act(async () => late('data:image/png;base64,BB'))
+    expect(img.getAttribute('src')).toBeNull()
+  })
+
+  it('edit mode: links in the editor open notes or pages; templates insert at the cursor', async () => {
+    const open = vi.spyOn(window, 'open').mockReturnValue(null)
+    const templates = [meta('Templates/Tag.md'), meta('Templates/Leer.md')]
+    const onInsertTemplate = vi.fn(async (path: string) => (path === 'Templates/Tag.md' ? '## Heute\n' : null))
+    const p = editorProps({ mode: 'edit', templates, onInsertTemplate, note: baseNote({ body: '[[Other]] [w](https://w.dev) [n](Neu.md) [o](Other.md)\n\nend', links: { Other: 'Other.md', 'Other.md': 'Other.md' } }) })
+    const { container } = render(<NoteEditor {...p} />)
+    const view = EditorView.findFromDOM(container.querySelector('.cm-editor') as HTMLElement)!
+    act(() => view.dispatch({ selection: { anchor: view.state.doc.length } }))
+    const click = (el: Element) => el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0 }))
+    click(container.querySelector('[data-target="Other"]')!)
+    expect(p.onOpenOrCreate).toHaveBeenLastCalledWith('Other')
+    const hrefs = container.querySelectorAll('[data-href]')
+    click(hrefs[0])
+    expect(open).toHaveBeenCalledWith('https://w.dev', '_blank', 'noopener,noreferrer')
+    click(hrefs[1])
+    expect(p.onOpenOrCreate).toHaveBeenLastCalledWith('Neu.md')
+    click(hrefs[2])
+    expect(p.onOpen).toHaveBeenLastCalledWith('Other.md')
+
+    // Insert template: a menu of the template notes.
+    fireEvent.mouseDown(screen.getByRole('button', { name: 'Insert template' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Insert template' }))
+    expect(screen.getAllByRole('menuitem').map((b) => b.textContent)).toEqual(['Tag', 'Leer'])
+    fireEvent.mouseDown(document.body)
+    expect(screen.queryByRole('menu')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Insert template' }))
+    fireEvent.mouseDown(screen.getByRole('menuitem', { name: 'Tag' }))
+    fireEvent.mouseDown(screen.getByRole('menu'))
+    await act(async () => fireEvent.click(screen.getByRole('menuitem', { name: 'Tag' })))
+    expect(onInsertTemplate).toHaveBeenCalledWith('Templates/Tag.md')
+    expect(view.state.doc.toString().endsWith('end## Heute\n')).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: 'Insert template' }))
+    await act(async () => fireEvent.click(screen.getByRole('menuitem', { name: 'Leer' })))
+    expect(view.state.doc.toString().endsWith('end## Heute\n')).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: 'Insert template' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Insert template' }))
+    expect(screen.queryByRole('menu')).toBeNull()
+  })
+
+  it('no template button without templates or while reading', () => {
+    const { rerender } = render(<NoteEditor {...editorProps({ mode: 'edit' })} />)
+    expect(screen.queryByLabelText('Insert template')).toBeNull()
+    rerender(<NoteEditor {...editorProps({ templates: [meta('Templates/T.md')] })} />)
+    expect(screen.queryByLabelText('Insert template')).toBeNull()
   })
 
   it('rename via the title input: Enter commits, Escape and blank/same revert', () => {

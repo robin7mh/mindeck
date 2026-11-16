@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach } from 'vitest'
@@ -11,9 +11,13 @@ export function onCleanup(fn: () => Promise<unknown>): void {
   cleanups.push(fn)
 }
 
-/** A fresh temp directory, removed after the current test. */
+/**
+ * A fresh temp directory, removed after the current test — its real path:
+ * macOS's temp folder is a link (/var → /private/var), and the code under
+ * test resolves links.
+ */
 export async function tempDir(prefix = 'mindeck-test-'): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), prefix))
+  const dir = await realpath(await mkdtemp(join(tmpdir(), prefix)))
   created.push(dir)
   return dir
 }

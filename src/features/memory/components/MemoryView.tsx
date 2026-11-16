@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from 'react'
-import { AlertTriangle, ArrowLeftRight, BrainCircuit, FileText, FolderOpen, Network, Plus, Sparkles, X } from 'lucide-react'
+import { useEffect, useMemo, useState, type ComponentProps } from 'react'
+import { AlertTriangle, ArrowLeftRight, BrainCircuit, CalendarDays, ChevronDown, CopyMinus, FileText, FolderOpen, Network, Plus, Sparkles, X } from 'lucide-react'
 import { isDesktop, onEvent } from '@shared/ipc/client'
-import { DEFAULT_GRAPH_STYLE } from '@shared/types/memory'
+import { useShallow } from 'zustand/react/shallow'
+import { DEFAULT_GRAPH_STYLE, TEMPLATES_FOLDER, type NoteMeta } from '@shared/types/memory'
 import { Panel } from '@/components/ui/Panel'
 import { cn } from '@/lib/cn'
 import { useT } from '@/lib/i18n'
@@ -11,6 +12,8 @@ import { GraphStyleControl } from './GraphStyleControl'
 import { NoteList } from './NoteList'
 import { NoteEditor } from './NoteEditor'
 import { FolderPicker } from '@/components/ui/FolderPicker'
+import { usePaneFocused } from '@/features/workspace/pane'
+import { DailySettings } from './DailySettings'
 
 /**
  * The Memory module: an Obsidian-compatible vault with a note list, a
@@ -19,9 +22,16 @@ import { FolderPicker } from '@/components/ui/FolderPicker'
  */
 export function MemoryView() {
   const t = useT()
-  const m = useMemory()
+  // Everything but the draft, which changes on every keystroke: only the note's editor follows that.
+  const m = useMemory(useShallow(({ draft: _draft, ...rest }) => rest))
   const style = m.status?.graphStyle ?? DEFAULT_GRAPH_STYLE
   const folderSlots = useMemo(() => folderColors(m.notes), [m.notes])
+  // "Collapse all" has something to do while a folder that is there is open.
+  const anyOpen = useMemo(() => {
+    const dirs = new Set([...m.folders, ...m.notes.map((n) => (n.path.includes('/') ? n.path.slice(0, n.path.lastIndexOf('/')) : ''))])
+    return m.openFolders.some((d) => dirs.has(d))
+  }, [m.folders, m.notes, m.openFolders])
+  const templates = useMemo(() => m.notes.filter((n) => n.path.startsWith(`${TEMPLATES_FOLDER}/`)), [m.notes])
   const [browsing, setBrowsing] = useState(false)
   const desktop = isDesktop()
   // Desktop: native dialog. Browser: browse folders on the core's machine.
@@ -35,7 +45,21 @@ export function MemoryView() {
   // Flush pending edits when leaving the module.
   useEffect(() => () => void useMemory.getState().save(), [])
 
-  const seg = 'flex items-center gap-1.5 rounded px-2 py-1 font-sans text-[11px] font-medium transition-colors'
+  // ⌘⇧D: today's daily note — while Memory's pane has the focus.
+  const focused = usePaneFocused()
+  useEffect(() => {
+    if (!focused) return
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'd') {
+        e.preventDefault()
+        void useMemory.getState().openDaily()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [focused])
+
+  const seg = 'flex items-center gap-1.5 rounded-sm px-2 py-1 font-sans text-[11px] font-medium transition-colors'
 
   const header = m.status?.exists ? (
     <div className="flex items-center gap-3">
@@ -58,19 +82,34 @@ export function MemoryView() {
       </div>
       <button
         type="button"
-        onClick={() => m.startCreate('note', '')}
-        className="flex items-center gap-1.5 rounded-md border border-cyan/40 bg-cyan/[0.06] px-2.5 py-1 font-sans text-[12px] font-medium text-cyan transition-colors hover:bg-cyan/[0.12]"
+        title={t.memory.todayTitle}
+        onClick={() => void m.openDaily()}
+        className="flex items-center gap-1.5 rounded-md border border-hud/60 bg-surface/50 px-2.5 py-1 font-sans text-[12px] font-medium text-text-secondary transition-colors hover:border-cyan/40 hover:text-text-primary"
       >
-        <Plus size={14} strokeWidth={2} />
-        {t.memory.newNote}
+        <CalendarDays size={13} />
+        {t.memory.today}
       </button>
+      <div className="flex">
+        <button
+          type="button"
+          onClick={() => m.startCreate('note', '')}
+          className={cn(
+            'flex items-center gap-1.5 border border-cyan bg-cyan px-2.5 py-1 font-sans text-[12px] font-semibold text-void transition-colors hover:opacity-90',
+            templates.length ? 'rounded-l-md' : 'rounded-md'
+          )}
+        >
+          <Plus size={14} strokeWidth={2} />
+          {t.memory.newNote}
+        </button>
+        {templates.length > 0 && <NewFromTemplate templates={templates} onPick={(path) => m.startCreate('note', '', path)} />}
+      </div>
     </div>
   ) : undefined
 
   return (
     <Panel title={t.memory.title} corners flush className="min-h-0 flex-1" headerRight={header} bodyClassName="flex min-h-0 flex-col">
       {m.error && (
-        <div className="flex items-start gap-2 border-b border-danger/30 bg-danger/[0.06] px-3 py-2">
+        <div className="flex items-start gap-2 border-b border-danger/30 bg-danger/6 px-3 py-2">
           <AlertTriangle size={13} className="mt-0.5 shrink-0 text-danger" />
           <span className="min-w-0 flex-1 font-mono text-[11px] text-text-secondary">{m.error}</span>
           <button type="button" aria-label={t.common.dismiss} onClick={m.clearError} className="text-text-muted hover:text-text-primary">
@@ -97,31 +136,36 @@ export function MemoryView() {
               <BrainCircuit size={14} className="shrink-0 text-cyan" />
               <span className="min-w-0 flex-1" title={m.status.root}>
                 <span className="block truncate font-sans text-[12.5px] font-semibold text-text-primary">
-                  {m.status.name} <span className="font-normal text-text-muted">· {t.memory.notes(m.status.noteCount)}</span>
+                  {m.status.name}
                 </span>
-                <span className="block truncate font-mono text-[10px] text-text-muted">
+                <span className="block truncate font-mono text-[11px] text-text-muted">
                   {m.status.root.replace(/^\/Users\/[^/]+|^[A-Z]:\\Users\\[^\\]+/i, '~')}
                 </span>
               </span>
-              {desktop && (
-                <button
-                  type="button"
-                  onClick={() => void m.reveal()}
-                  title={t.memory.showInFinder}
-                  aria-label={t.memory.showVault}
-                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-elevated/60 hover:text-cyan"
-                >
-                  <FolderOpen size={14} />
-                </button>
-              )}
+              <DailySettings
+                daily={m.status.dailyNotes}
+                folders={m.folders}
+                templates={templates}
+                onChange={(daily) => void m.setDailyNotes(daily)}
+              />
               <button
                 type="button"
                 onClick={pick}
                 title={t.memory.openAnother}
                 aria-label={t.memory.openAnotherLabel}
-                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-elevated/60 hover:text-cyan"
+                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-elevated/60 hover:text-text-primary"
               >
                 <ArrowLeftRight size={13} />
+              </button>
+              <button
+                type="button"
+                onClick={m.collapseAll}
+                disabled={!anyOpen}
+                title={t.memory.collapseAll}
+                aria-label={t.memory.collapseAll}
+                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-muted transition-colors enabled:hover:bg-elevated/60 enabled:hover:text-text-primary disabled:opacity-40"
+              >
+                <CopyMinus size={13} />
               </button>
             </div>
             <NoteList
@@ -133,6 +177,9 @@ export function MemoryView() {
               folderSlots={folderSlots}
               style={style}
               creating={m.creating}
+              openFolders={m.openFolders}
+              onToggleFolder={m.toggleFolder}
+              onShowInFinder={desktop ? () => void m.reveal() : undefined}
               onSearch={m.search}
               onOpen={(p) => void m.open(p)}
               onStartCreate={m.startCreate}
@@ -154,14 +201,24 @@ export function MemoryView() {
                 onOpenGhost={(title) => void m.openOrCreate(title)}
               />
             ) : m.note ? (
-              <NoteEditor
+              <OpenNote
                 note={m.note}
                 notes={m.notes}
-                draft={m.draft}
+                templates={templates}
                 mode={m.mode}
+                source={m.source}
                 saving={m.saving}
+                conflict={m.conflict}
+                saveFailed={m.saveFailed}
+                onDiscard={m.discardDraft}
+                onLoadDisk={() => void m.loadDisk()}
+                onKeepMine={() => void m.save({ force: true })}
                 onDraft={m.setDraft}
                 onMode={m.setMode}
+                onSource={m.setSource}
+                onInsertTemplate={m.renderTemplate}
+                onAttach={m.attach}
+                loadImage={m.loadImage}
                 onSave={() => void m.save()}
                 onRename={(title) => void m.rename(title)}
                 onOpen={(p) => void m.open(p)}
@@ -190,6 +247,58 @@ export function MemoryView() {
         />
       )}
     </Panel>
+  )
+}
+
+/** The note with its draft. */
+function OpenNote(props: Omit<ComponentProps<typeof NoteEditor>, 'draft'>) {
+  const draft = useMemory((s) => s.draft)
+  return <NoteEditor {...props} draft={draft} />
+}
+
+/** The arrow next to "New note": start one from a template. */
+function NewFromTemplate({ templates, onPick }: { templates: NoteMeta[]; onPick: (path: string) => void }) {
+  const t = useT()
+  const [open, setOpen] = useState(false)
+  useEffect(() => {
+    if (!open) return
+    const close = () => setOpen(false)
+    window.addEventListener('mousedown', close)
+    return () => window.removeEventListener('mousedown', close)
+  }, [open])
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        title={t.memory.fromTemplate}
+        aria-label={t.memory.fromTemplate}
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+        className="flex h-full items-center rounded-r-md border border-l border-cyan border-l-void/30 bg-cyan px-1.5 text-void transition-colors hover:opacity-90"
+      >
+        <ChevronDown size={13} />
+      </button>
+      {open && (
+        <div role="menu" aria-label={t.memory.fromTemplate} className="absolute right-0 top-full z-30 mt-1 w-56 rounded-md border border-hud/60 bg-panel py-1 shadow-lg">
+          {templates.map((n) => (
+            <button
+              key={n.path}
+              type="button"
+              role="menuitem"
+              // Picks before the window's mousedown closes the menu.
+              onMouseDown={(e) => {
+                e.stopPropagation()
+                setOpen(false)
+                onPick(n.path)
+              }}
+              className="flex w-full px-3 py-1.5 text-left font-sans text-[12.5px] text-text-secondary transition-colors hover:bg-elevated/60 hover:text-text-primary"
+            >
+              <span className="truncate">{n.title}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -223,7 +332,7 @@ function VaultSetup({
           <button
             type="button"
             onClick={onCreate}
-            className="flex items-center gap-2 rounded-md border border-cyan/40 bg-cyan/[0.08] px-3.5 py-2 font-sans text-[13px] font-medium text-cyan transition-colors hover:bg-cyan/[0.14]"
+            className="flex items-center gap-2 rounded-md border border-cyan bg-cyan px-3.5 py-2 font-sans text-[13px] font-semibold text-void transition-colors hover:opacity-90"
           >
             <Sparkles size={14} />
             {t.memory.createVault}

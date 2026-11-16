@@ -1,6 +1,7 @@
 import { create } from 'zustand'
-import { errorMessage, ipc } from '@shared/ipc/client'
+import { errorMessage, ipc, type IpcError } from '@shared/ipc/client'
 import type {
+  DailyNotesSettings,
   GraphStyle,
   MemoryChanged,
   MemoryGraph,
@@ -9,13 +10,48 @@ import type {
   SearchHit,
   VaultStatus
 } from '@shared/types/memory'
+import { findNote } from './links'
 
 const AUTOSAVE_MS = 700
+const SOURCE_KEY = 'mindeck.memory.source'
 
 /** Inline "new note / new folder" input in the sidebar. `parent` '' = vault root. */
 export interface Creating {
   kind: 'note' | 'folder'
   parent: string
+  /** A new note starts from this template note. */
+  template?: string
+}
+
+/** The UI's wall-clock time without a zone ("2026-10-15T09:30:00") — daily notes and templates use the user's date. */
+export function localNow(d = new Date()): string {
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
+}
+
+/** Pasted pictures are named like Obsidian names them: "Pasted image 20261015093000.png". */
+export function pictureName(file: File, d = new Date()): string {
+  if (file.name && file.name !== 'image.png') return file.name
+  const ext = file.type.split('/')[1]?.replace('jpeg', 'jpg').replace('svg+xml', 'svg') || 'png'
+  return `Pasted image ${localNow(d).replace(/\D/g, '')}.${ext}`
+}
+
+/** A file's bytes as base64 (what `memory:attach` carries). */
+function base64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result).replace(/^data:[^,]*,/, ''))
+    reader.onerror = () => reject(reader.error ?? new Error('Could not read the picture'))
+    reader.readAsDataURL(file)
+  })
+}
+
+function loadSource(): boolean {
+  try {
+    return localStorage.getItem(SOURCE_KEY) === '1'
+  } catch {
+    return false
+  }
 }
 
 interface MemoryState {
@@ -26,13 +62,21 @@ interface MemoryState {
   graph?: MemoryGraph
   view: 'note' | 'graph'
   mode: 'edit' | 'preview'
+  /** Editing shows plain Markdown instead of Live Preview (remembered per device). */
+  source: boolean
 
   /** Open note as last loaded from disk. */
   note?: Note
   /** Editor text (the note body — frontmatter is never shown or edited here). */
   draft: string
   saving: boolean
+  /** The file moved on (or went) under the draft: the user decides, nothing is overwritten by itself. */
+  conflict: boolean
+  /** The draft could not be written (a read-only vault, a note too large): it stays until it can be, or the user lets it go. */
+  saveFailed: boolean
   creating: Creating | null
+  /** The folders open in the note list — none after a start; they stay open while Mindeck runs. */
+  openFolders: string[]
 
   query: string
   hits: SearchHit[]
@@ -47,15 +91,27 @@ interface MemoryState {
   /** Use an existing folder as the vault (the web UI's folder browser). */
   setVault: (path: string) => Promise<void>
   reveal: () => Promise<void>
+  /** Opens a note — and its folder in the note list, so it shows there (like VS Code's "Reveal in Explorer"). */
   open: (path: string, mode?: 'edit' | 'preview') => Promise<void>
+  toggleFolder: (dir: string) => void
+  /** Every folder closed, like VS Code's "Collapse All". */
+  collapseAll: () => void
   /** Follow a link by title: open the note, or create it (Obsidian behavior). */
   openOrCreate: (title: string) => Promise<void>
   setDraft: (body: string) => void
-  save: () => Promise<void>
-  startCreate: (kind: Creating['kind'], parent?: string) => void
+  /**
+   * Write the draft (`force`: over a file that moved on). False when it could
+   * not be written: it is still only here, so nothing may replace it.
+   */
+  save: (opts?: { force?: boolean }) => Promise<boolean>
+  /** Give up the draft for what the disk has. */
+  loadDisk: () => Promise<void>
+  /** Give up the draft, back to the text last read or written; asks nothing of the disk, so it always works. */
+  discardDraft: () => void
+  startCreate: (kind: Creating['kind'], parent?: string, template?: string) => void
   cancelCreate: () => void
   submitCreate: (name: string) => Promise<void>
-  createNote: (title: string, folder?: string) => Promise<void>
+  createNote: (title: string, folder?: string, template?: string) => Promise<void>
   rename: (title: string) => Promise<void>
   moveNote: (path: string, folder: string) => Promise<void>
   moveFolder: (folder: string, into: string) => Promise<void>
@@ -64,36 +120,102 @@ interface MemoryState {
   trash: (path: string) => Promise<void>
   setView: (view: 'note' | 'graph') => void
   setMode: (mode: 'edit' | 'preview') => void
+  setSource: (source: boolean) => void
   search: (query: string) => Promise<void>
   setGraphStyle: (style: GraphStyle) => Promise<void>
+  /** Today's daily note — created from its template the first time. */
+  openDaily: () => Promise<void>
+  setDailyNotes: (daily: DailyNotesSettings) => Promise<void>
+  /** A template filled in for the open note — for "Insert template". */
+  renderTemplate: (path: string) => Promise<string | null>
+  /** Save a pasted or dropped picture; returns what goes into `![[…]]`. */
+  attach: (file: File) => Promise<string | null>
+  /** A picture the open note shows, as a data: URL (null when it is not in the vault). */
+  loadImage: (target: string) => Promise<string | null>
   clearError: () => void
 }
 
 
 let saveTimer: number | undefined
 let searchSeq = 0
+let openSeq = 0
+let indexSeq = 0
+/** Writes run one after the other: each starts from the text and the time the one before left. */
+let writes: Promise<unknown> = Promise.resolve()
+/** Pictures by note + target; dropped on every vault change (a picture may have come or gone). */
+let images = new Map<string, Promise<string | null>>()
 
 export const useMemory = create<MemoryState>((set, get) => {
   const reloadIndex = async () => {
+    const seq = ++indexSeq
     const [status, notes, graph, folders] = await Promise.all([
       ipc('memory:status'),
       ipc('memory:list'),
       ipc('memory:graph'),
       ipc('memory:folders')
     ])
-    set({ status, notes, graph, folders })
+    // Overlapping reloads (a burst of vault changes): an older answer must not replace a newer one.
+    if (seq === indexSeq) set({ status, notes, graph, folders })
     return { status, notes }
   }
 
   const fail = (err: unknown) => set({ error: errorMessage(err), loading: false, saving: false })
+
+  /**
+   * The open note as the disk has it now: a clean editor follows. Unsaved text
+   * stays, on the version it was typed on, so that saving it notices the file moved on.
+   */
+  const follow = (path: string, fresh: Note) =>
+    set((s) => {
+      // Another note opened meanwhile: its text must not end up paired with this one (the next save would write it here).
+      if (s.note?.path !== path) return {}
+      return s.draft === s.note.body ? { note: fresh, draft: fresh.body, conflict: false, saveFailed: false } : { note: { ...fresh, body: s.note.body, modifiedAt: s.note.modifiedAt } }
+    })
 
   /** Re-read the open note (links/backlinks may have changed elsewhere). */
   const refreshNote = async () => {
     const { note } = get()
     if (!note) return
     const fresh = await ipc('memory:read', { path: note.path }).catch(() => undefined)
-    // Unsaved text in the editor wins over the refreshed body.
-    if (fresh) set((s) => ({ note: fresh, draft: s.draft === note.body ? fresh.body : s.draft }))
+    if (fresh) follow(note.path, fresh)
+  }
+
+  /** What the disk has for the open note now; it may be gone. */
+  const followOpen = async (change: MemoryChanged) => {
+    const { note } = get()
+    if (!note) return
+    const fresh = await ipc('memory:read', { path: note.path }).catch((err: IpcError) => (err.code === 'not-found' ? null : undefined))
+    // Our own rename/move may have opened the note under its new path meanwhile. A read that failed says nothing.
+    if (get().note?.path !== note.path || fresh === undefined) return
+    if (fresh) return follow(note.path, fresh)
+    // Gone: deleted, or renamed/moved outside this view's own actions. Unsaved text stays: saving it will ask.
+    if ((!change.paths || change.paths.includes(note.path)) && get().draft === get().note!.body) set({ note: undefined, draft: '' })
+  }
+
+  const writeDraft = async (force: boolean) => {
+    const { note, draft } = get()
+    if (!note || draft === note.body) return null
+    set({ saving: true })
+    const saved = await ipc('memory:writeBody', { path: note.path, body: draft, ...(force ? {} : { expectedMtime: Date.parse(note.modifiedAt) }) }).catch((err: IpcError) => {
+      // "Keep mine" for a note deleted meanwhile: it is written anew.
+      if (force && err.code === 'not-found') return ipc('memory:write', { path: note.path, raw: draft })
+      throw err
+    })
+    // From here on the disk has this text, at this time (another save, right behind this one, builds on it).
+    set((s) => (s.note?.path === note.path ? { note: { ...s.note, body: draft, modifiedAt: saved.modifiedAt }, conflict: false, saveFailed: false } : {}))
+    return { path: note.path, draft, modifiedAt: saved.modifiedAt }
+  }
+
+  /** A folder open in the note list (the root, '', is no folder). */
+  const reveal = (dir: string) => {
+    if (dir && !get().openFolders.includes(dir)) set((s) => ({ openFolders: [...s.openFolders, dir] }))
+  }
+
+  /** The draft is on disk (so something may replace it) — else the note comes up, with what stopped it and the way out. */
+  const saved = async () => {
+    if (await get().save()) return true
+    set({ view: 'note' })
+    return false
   }
 
   return {
@@ -101,9 +223,13 @@ export const useMemory = create<MemoryState>((set, get) => {
     folders: [],
     view: 'graph',
     mode: 'preview',
+    source: loadSource(),
     draft: '',
     saving: false,
+    conflict: false,
+    saveFailed: false,
     creating: null,
+    openFolders: [],
     query: '',
     hits: [],
     loading: false,
@@ -114,10 +240,13 @@ export const useMemory = create<MemoryState>((set, get) => {
         const { notes } = await reloadIndex()
         set({ loading: false })
         const { note } = get()
-        if (!note && notes.length) {
+        // Memory was off screen (it follows the vault only while it shows): the note may have moved on.
+        if (note) await followOpen({})
+        else if (notes.length) {
           const first = notes.find((n) => /^willkommen\.md$/i.test(n.path)) ?? notes[0]
           await get().open(first.path)
-          set({ view: 'graph' })
+          // The note opened by itself at the start: the folders stay closed until the user opens one.
+          set({ view: 'graph', openFolders: [] })
         }
       } catch (err) {
         fail(err)
@@ -125,23 +254,12 @@ export const useMemory = create<MemoryState>((set, get) => {
     },
 
     onChanged: async (change) => {
+      images = new Map()
       try {
         await reloadIndex()
-        const { note, query } = get()
+        const { query } = get()
         if (query) void get().search(query)
-        if (!note) return
-        const fresh = await ipc('memory:read', { path: note.path }).catch(() => undefined)
-        // Our own rename/move may have opened the note under its new path meanwhile.
-        if (get().note?.path !== note.path) return
-        const dirty = get().draft !== get().note?.body
-        if (!fresh) {
-          // Gone: deleted, or renamed/moved outside this view's own actions.
-          if (!change.paths || change.paths.includes(note.path)) set({ note: undefined, draft: '' })
-        } else if (!dirty) {
-          set({ note: fresh, draft: fresh.body }) // follow the file (external edit)
-        } else {
-          set({ note: { ...fresh, body: note.body } }) // keep the user's unsaved text
-        }
+        await followOpen(change)
       } catch (err) {
         fail(err)
       }
@@ -160,7 +278,7 @@ export const useMemory = create<MemoryState>((set, get) => {
 
     pickVault: async () => {
       try {
-        await get().save()
+        if (!(await saved())) return
         const status = await ipc('memory:pickVault')
         if (!status) return
         set({ note: undefined, draft: '', query: '', hits: [] })
@@ -172,7 +290,7 @@ export const useMemory = create<MemoryState>((set, get) => {
 
     setVault: async (path) => {
       try {
-        await get().save()
+        if (!(await saved())) return
         await ipc('memory:setVault', { path })
         set({ note: undefined, draft: '', query: '', hits: [] })
         await get().init()
@@ -190,23 +308,29 @@ export const useMemory = create<MemoryState>((set, get) => {
     },
 
     open: async (path, mode) => {
+      // Two quick clicks: the note clicked last wins, not the one answered last.
+      const seq = ++openSeq
       try {
-        await get().save()
+        if (!(await saved())) return
         const note = await ipc('memory:read', { path })
-        set({ note, draft: note.body, view: 'note', mode: mode ?? get().mode, error: undefined })
+        if (seq !== openSeq) return
+        set({ note, draft: note.body, view: 'note', mode: mode ?? get().mode, error: undefined, conflict: false, saveFailed: false })
+        reveal(note.path.includes('/') ? note.path.slice(0, note.path.lastIndexOf('/')) : '')
       } catch (err) {
         fail(err)
       }
     },
 
+    toggleFolder: (dir) => set((s) => ({ openFolders: s.openFolders.includes(dir) ? s.openFolders.filter((d) => d !== dir) : [...s.openFolders, dir] })),
+
+    collapseAll: () => set({ openFolders: [] }),
+
     openOrCreate: async (title) => {
-      const key = title.replace(/\.md$/i, '').toLowerCase()
-      const match = get()
-        .notes.filter((n) => n.title.toLowerCase() === key || n.path.replace(/\.md$/i, '').toLowerCase() === key)
-        .sort((a, b) => a.path.length - b.path.length)[0]
+      const match = findNote(title, get().notes)
       if (match) return get().open(match.path)
-      const slash = title.lastIndexOf('/')
-      return get().createNote(title.slice(slash + 1), slash > 0 ? title.slice(0, slash) : '')
+      const name = title.replace(/[#^].*$/, '').replace(/\.md$/i, '').trim()
+      const slash = name.lastIndexOf('/')
+      return get().createNote(name.slice(slash + 1), slash > 0 ? name.slice(0, slash) : '')
     },
 
     setDraft: (body) => {
@@ -215,29 +339,64 @@ export const useMemory = create<MemoryState>((set, get) => {
       saveTimer = window.setTimeout(() => void get().save(), AUTOSAVE_MS)
     },
 
-    save: async () => {
+    save: async ({ force = false } = {}) => {
       window.clearTimeout(saveTimer)
-      const { note, draft } = get()
-      if (!note || draft === note.body) return
-      set({ saving: true })
+      const write = writes.then(() => writeDraft(force))
+      writes = write.catch(() => {})
+      let written: Awaited<typeof write>
       try {
-        await ipc('memory:writeBody', { path: note.path, body: draft })
-        const fresh = await ipc('memory:read', { path: note.path })
-        // Keep typing that happened while the write was in flight.
-        set((s) => ({ note: fresh, draft: s.draft === draft ? fresh.body : s.draft, saving: false }))
+        written = await write
       } catch (err) {
-        fail(err)
+        if ((err as IpcError).code === 'conflict') set({ conflict: true, saveFailed: false, saving: false })
+        else {
+          set({ conflict: false, saveFailed: true })
+          fail(err)
+        }
+        return false
+      }
+      if (!written) return true
+      const { path, draft, modifiedAt } = written
+      // Links and backlinks as they are now; the text is on disk either way.
+      const fresh = await ipc('memory:read', { path }).catch(() => null)
+      // Another note was opened meanwhile (its draft must not land in this one), or a newer write landed.
+      // Else keep typing that happened while the write was in flight.
+      set((s) => (!fresh || s.note?.path !== path || s.note.modifiedAt !== modifiedAt ? { saving: false } : { note: fresh, draft: s.draft === draft ? fresh.body : s.draft, saving: false }))
+      return true
+    },
+
+    loadDisk: async () => {
+      const { note } = get()
+      if (!note) return
+      window.clearTimeout(saveTimer)
+      try {
+        const fresh = await ipc('memory:read', { path: note.path })
+        set((s) => (s.note?.path === note.path ? { note: fresh, draft: fresh.body, conflict: false, saveFailed: false } : {}))
+      } catch (err) {
+        // Deleted, and the user lets the text go with it.
+        if ((err as IpcError).code === 'not-found') set({ note: undefined, draft: '', conflict: false, saveFailed: false })
+        else fail(err)
       }
     },
 
-    startCreate: (kind, parent = '') => set({ creating: { kind, parent } }),
+    discardDraft: () => {
+      const { note } = get()
+      if (!note) return
+      window.clearTimeout(saveTimer)
+      set({ draft: note.body, conflict: false, saveFailed: false, error: undefined })
+    },
+
+    startCreate: (kind, parent = '', template) => {
+      // Inside a closed folder: it opens, so the name is typed where the note will be.
+      reveal(parent)
+      set({ creating: { kind, parent, ...(template ? { template } : {}) } })
+    },
     cancelCreate: () => set({ creating: null }),
 
     submitCreate: async (name) => {
       const creating = get().creating
       set({ creating: null })
       if (!creating || !name.trim()) return
-      if (creating.kind === 'note') return get().createNote(name.trim(), creating.parent)
+      if (creating.kind === 'note') return get().createNote(name.trim(), creating.parent, creating.template)
       try {
         await ipc('memory:createFolder', { parent: creating.parent, name: name.trim() })
         await reloadIndex()
@@ -246,10 +405,10 @@ export const useMemory = create<MemoryState>((set, get) => {
       }
     },
 
-    createNote: async (title, folder = '') => {
+    createNote: async (title, folder = '', template) => {
       try {
-        await get().save()
-        const meta = await ipc('memory:create', { title, folder })
+        if (!(await saved())) return
+        const meta = await ipc('memory:create', { title, folder, ...(template ? { template, now: localNow() } : {}) })
         await reloadIndex()
         await get().open(meta.path, 'edit')
       } catch (err) {
@@ -261,7 +420,7 @@ export const useMemory = create<MemoryState>((set, get) => {
       const { note } = get()
       if (!note || !title.trim() || title.trim() === note.title) return
       try {
-        await get().save()
+        if (!(await saved())) return
         const meta = await ipc('memory:rename', { path: note.path, title: title.trim() })
         await reloadIndex()
         await get().open(meta.path, get().mode)
@@ -272,7 +431,7 @@ export const useMemory = create<MemoryState>((set, get) => {
 
     moveNote: async (path, folder) => {
       try {
-        await get().save()
+        if (!(await saved())) return
         const meta = await ipc('memory:move', { path, folder })
         await reloadIndex()
         if (get().note?.path === path) await get().open(meta.path, get().mode)
@@ -283,7 +442,7 @@ export const useMemory = create<MemoryState>((set, get) => {
 
     moveFolder: async (folder, into) => {
       try {
-        await get().save()
+        if (!(await saved())) return
         const to = await ipc('memory:moveFolder', { folder, into })
         await reloadIndex()
         const open = get().note?.path
@@ -338,6 +497,15 @@ export const useMemory = create<MemoryState>((set, get) => {
       set({ mode })
     },
 
+    setSource: (source) => {
+      try {
+        localStorage.setItem(SOURCE_KEY, source ? '1' : '0')
+      } catch {
+        // storage unavailable — the choice lasts until reload
+      }
+      set({ source, mode: 'edit' })
+    },
+
     search: async (query) => {
       const seq = ++searchSeq
       set({ query })
@@ -363,6 +531,73 @@ export const useMemory = create<MemoryState>((set, get) => {
       }
     },
 
+    openDaily: async () => {
+      try {
+        if (!(await saved())) return
+        const meta = await ipc('memory:daily', { now: localNow() })
+        await reloadIndex()
+        await get().open(meta.path, 'edit')
+      } catch (err) {
+        fail(err)
+      }
+    },
+
+    setDailyNotes: async (daily) => {
+      try {
+        const saved = await ipc('memory:setDailyNotes', daily)
+        const cur = get().status
+        if (cur) set({ status: { ...cur, dailyNotes: saved } })
+      } catch (err) {
+        fail(err)
+      }
+    },
+
+    renderTemplate: async (path) => {
+      const { note } = get()
+      if (!note) return null
+      try {
+        return await ipc('memory:renderTemplate', { path, title: note.title, now: localNow() })
+      } catch (err) {
+        fail(err)
+        return null
+      }
+    },
+
+    attach: async (file) => {
+      try {
+        const { link } = await ipc('memory:attach', { name: pictureName(file), data: await base64(file) })
+        return link
+      } catch (err) {
+        fail(err)
+        return null
+      }
+    },
+
+    loadImage: (target) => {
+      const from = get().note?.path
+      const clean = target.trim()
+      // Inline data: pictures are safe as they are; anything with a scheme (http:, file:) never loads.
+      if (/^data:image\//i.test(clean)) return Promise.resolve(clean)
+      if (/^[a-z][a-z0-9+.-]*:/i.test(clean)) return Promise.resolve(null)
+      let decoded = clean
+      try {
+        decoded = decodeURI(clean)
+      } catch {
+        // a literal % in the name
+      }
+      const key = `${from ?? ''}|${decoded}`
+      if (!images.has(key)) {
+        images.set(
+          key,
+          ipc('memory:attachment', { target: decoded, ...(from ? { from } : {}) }).then(
+            (a) => a.dataUrl,
+            () => null
+          )
+        )
+      }
+      return images.get(key)!
+    },
+
     clearError: () => set({ error: undefined })
   }
 })
@@ -372,3 +607,12 @@ export function folderColors(notes: { folder: string }[]): Map<string, number> {
   const folders = [...new Set(notes.map((n) => n.folder))].sort((a, b) => a.localeCompare(b))
   return new Map(folders.map((f, i) => [f, i]))
 }
+
+// Unsaved text vetoes closing the window, whichever module is on screen; the desktop app then asks (main.ts).
+// A write started now could be refused with no one left to tell (the file moved on, a read-only vault): this window has the only copy.
+window.addEventListener('beforeunload', (e) => {
+  const { note, draft } = useMemory.getState()
+  if (!note || draft === note.body) return
+  e.preventDefault()
+  e.returnValue = ''
+})

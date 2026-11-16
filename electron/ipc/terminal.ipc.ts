@@ -9,4 +9,9 @@ export function registerTerminalIpc(router: Router, service: TerminalService): v
   router.register('terminal:write', ({ id, data }) => service.write(id, data))
   router.register('terminal:resize', ({ id, cols, rows }) => service.resize(id, cols, rows))
   router.register('terminal:kill', ({ id }) => service.kill(id))
+  router.register('terminal:shells', () => service.shells())
+  router.register('terminal:settings', () => service.settings())
+  router.register('terminal:configure', (patch) => service.configure(patch))
+  router.register('terminal:persist', (snapshot) => service.persist(snapshot))
+  router.register('terminal:restore', () => service.restore())
 }

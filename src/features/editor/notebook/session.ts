@@ -220,7 +220,7 @@ export class NotebookSession {
     }
     if (e.type === 'count') return this.commit((d) => updateCell(d, e.cell, (c) => ({ ...c, execution_count: e.count })), true)
     const clear = this.pendingClear.delete(e.cell)
-    this.commit((d) => updateCell(d, e.cell, (c) => ({ ...c, outputs: addOutput(clear ? [] : (c.outputs ?? []), e.output) })), true)
+    this.commit((d) => updateCell(d, e.cell, (c) => ({ ...c, outputs: addOutput(clear ? [] : (c.outputs ?? []), e.output, getT().notebook.outputCut) })), true)
   }
 
   /** The tab closed: the last outputs go into the buffer, the kernel stops. */

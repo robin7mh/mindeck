@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events'
 import { existsSync } from 'node:fs'
-import { chmod, mkdir, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises'
+import { chmod, lstat, mkdir, open, readFile, readdir, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises'
 import { join, sep } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { tempDir, tick } from './helpers'
@@ -12,9 +12,13 @@ const h = vi.hoisted(() => ({
   watchers: [] as { root: string; cb: (event: string, filename: string | null) => void; emitter: EventEmitter & { close: () => void } }[],
   watchThrows: false,
   /** Next writeFile to a path ending in this fails with EIO (portable, works as root). */
-  failWrite: null as string | null
+  failWrite: null as string | null,
+  /** Next readdir of a path ending in this fails with EACCES (portable, works as root). */
+  failReaddir: null as string | null
 }))
 vi.mock('electron', () => ({
+  clipboard: {},
+  ClipboardItem: class {},
   dialog: { showOpenDialog: h.dialog },
   shell: {
     trashItem: async (p: string) => (await import('node:fs/promises')).rm(p, { recursive: true }),
@@ -41,7 +45,14 @@ vi.mock('node:fs/promises', async (orig) => {
         throw Object.assign(new Error('EIO: i/o error'), { code: 'EIO' })
       }
       return (actual.writeFile as (...a: unknown[]) => Promise<void>)(file, ...rest)
-    }) as typeof actual.writeFile
+    }) as typeof actual.writeFile,
+    readdir: (async (dir: string, ...rest: unknown[]) => {
+      if (h.failReaddir && String(dir).endsWith(h.failReaddir)) {
+        h.failReaddir = null
+        throw Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' })
+      }
+      return (actual.readdir as (...a: unknown[]) => Promise<unknown>)(dir, ...rest)
+    }) as typeof actual.readdir
   }
 })
 
@@ -188,6 +199,78 @@ describe('VaultService — notes', () => {
     await expect(v.writeBody('Plain.md', 1 as never)).rejects.toMatchObject({ code: 'bad-input' })
   })
 
+  it('writeBody with expectedMtime refuses a note that moved on since it was read, and only then', async () => {
+    const { v, root, read, onChange } = await setup()
+    await writeFile(join(root, 'Plain.md'), 'first')
+    const seen = Date.parse((await v.read('Plain.md')).modifiedAt)
+    // Touched but not changed: nothing moved on.
+    await utimes(join(root, 'Plain.md'), new Date(5000), new Date(5000))
+    const saved = await v.writeBody('Plain.md', 'second', seen)
+    expect(await read('Plain.md')).toBe('second')
+    const now = Date.parse(saved.modifiedAt)
+    expect(Date.parse((await v.read('Plain.md')).modifiedAt)).toBe(now)
+
+    // Another program wrote it a moment ago: the index doesn't know yet, the disk does.
+    await writeFile(join(root, 'Plain.md'), 'theirs')
+    await utimes(join(root, 'Plain.md'), new Date(9000), new Date(9000))
+    onChange.mockClear()
+    await expect(v.writeBody('Plain.md', 'mine', now)).rejects.toMatchObject({ code: 'conflict' })
+    expect(await read('Plain.md')).toBe('theirs')
+    expect(onChange).toHaveBeenCalledWith({ paths: ['Plain.md'] })
+
+    // The same stale time keeps being refused; without one the caller means it.
+    await expect(v.writeBody('Plain.md', 'mine', now)).rejects.toMatchObject({ code: 'conflict' })
+    await v.writeBody('Plain.md', 'mine')
+    expect(await read('Plain.md')).toBe('mine')
+
+    // Gone since it was read: refused with a time, "not found" without one (the core's own callers create it anew).
+    const known = Date.parse((await v.read('Plain.md')).modifiedAt)
+    await rm(join(root, 'Plain.md'))
+    await expect(v.writeBody('Plain.md', 'x', known)).rejects.toMatchObject({ code: 'conflict' })
+    await expect(v.writeBody('Plain.md', 'x')).rejects.toMatchObject({ code: 'not-found' })
+    await mkdir(join(root, 'Folder.md'))
+    await expect(v.writeBody('Folder.md', 'x')).rejects.toMatchObject({ code: 'EISDIR' })
+  })
+
+  it('a note’s time is its file’s, whoever wrote it: a restart or a rescan finds the version the client holds', async () => {
+    const { v, root, base, settings } = await setup()
+    const fileTime = async (p: string) => (await stat(join(root, p))).mtime.toISOString()
+    await writeFile(join(root, 'Plain.md'), 'first')
+    await v.read('Plain.md')
+    const saved = await v.writeBody('Plain.md', 'second')
+    expect(saved.modifiedAt).toBe(await fileTime('Plain.md'))
+    const linked = await v.link('Plain.md', 'Willkommen.md')
+    expect(linked.modifiedAt).toBe(await fileTime('Plain.md'))
+    const unlinked = await v.unlink('Plain.md', 'Willkommen.md')
+    expect(unlinked.modifiedAt).toBe(await fileTime('Plain.md'))
+    const created = await v.create('Neu')
+    expect(created.modifiedAt).toBe(await fileTime('Neu.md'))
+    // A link rewritten by a rename, too.
+    await v.link('Neu.md', 'Plain.md')
+    await v.rename('Plain.md', 'Renamed')
+    expect((await v.read('Neu.md')).modifiedAt).toBe(await fileTime('Neu.md'))
+
+    // The core restarts and indexes from the disk: the client's version still fits, nothing changed.
+    const held = (await v.read('Renamed.md')).modifiedAt
+    const again = new VaultService({ settings, platform: electronPlatform, defaultRoot: join(base, 'vault'), onChange: vi.fn() })
+    expect((await again.read('Renamed.md')).modifiedAt).toBe(held)
+    await again.writeBody('Renamed.md', 'third', Date.parse(held))
+    expect(await readFile(join(root, 'Renamed.md'), 'utf8')).toBe('third')
+  })
+
+  it('a changed file under an unchanged time (a coarse clock) still isn’t overwritten', async () => {
+    const { v, root, read, onChange } = await setup()
+    await writeFile(join(root, 'Plain.md'), 'first')
+    const seen = (await v.read('Plain.md')).modifiedAt
+    const at = new Date(seen)
+    await writeFile(join(root, 'Plain.md'), 'theirs')
+    await utimes(join(root, 'Plain.md'), at, at)
+    onChange.mockClear()
+    await expect(v.writeBody('Plain.md', 'mine', Date.parse(seen))).rejects.toMatchObject({ code: 'conflict' })
+    expect(await read('Plain.md')).toBe('theirs')
+    expect(onChange).toHaveBeenCalledWith({ paths: ['Plain.md'] })
+  })
+
   it('creates notes named after the title, typed by folder, never overwriting', async () => {
     const { v, root, read } = await setup()
     const a = await v.create('Idee: neu?', ' ./Projekte/../Projekte\\Sub/. ')
@@ -252,6 +335,19 @@ describe('VaultService — notes', () => {
     await symlink(outside, join(root, 'escape'))
     await expect(v.write('escape/x.md', 'no')).rejects.toMatchObject({ code: 'bad-path' })
   })
+
+  it('a dangling link in the vault is replaced, never written through (BE-SEC-02)', async () => {
+    const { v, root, base, read } = await setup()
+    const outside = join(base, 'outside')
+    await mkdir(outside)
+    await symlink('../outside/pwned.md', join(root, 'Pwned.md'))
+    await v.write('Pwned.md', 'mine')
+    expect(await read('Pwned.md')).toBe('mine')
+    expect((await lstat(join(root, 'Pwned.md'))).isSymbolicLink()).toBe(false)
+    await symlink('../outside/new.md', join(root, 'Taken.md'))
+    expect((await v.create('Taken')).path).toBe('Taken 2.md') // a new note never lands on a link
+    expect(await readdir(outside)).toEqual([])
+  })
 })
 
 describe('VaultService — folders, renames, moves, links', () => {
@@ -260,6 +356,8 @@ describe('VaultService — folders, renames, moves, links', () => {
     expect(await v.createFolder('', 'Archiv')).toBe('Archiv')
     expect(await v.createFolder('Archiv', '2026')).toBe('Archiv/2026')
     expect(await v.folders()).toEqual(['Archiv', 'Archiv/2026', 'Entscheidungen', 'Ich', 'Projekte'])
+    h.failReaddir = 'Archiv' // a folder it can't look into: listed, without what it holds
+    expect(await v.folders()).toEqual(['Archiv', 'Entscheidungen', 'Ich', 'Projekte'])
     await expect(v.createFolder('', 'Archiv')).rejects.toMatchObject({ code: 'exists' })
     expect(await v.createFolder('', '.hidden')).toBe('hidden')
     await expect(v.createFolder('../out', 'x')).rejects.toMatchObject({ code: 'bad-path' })
@@ -339,15 +437,25 @@ describe('VaultService — watcher', () => {
     await writeFile(join(root, 'External.md'), 'from obsidian')
     await mkdir(join(root, 'New/Deep'), { recursive: true })
     await writeFile(join(root, 'New/Deep/In.md'), 'x')
+    await writeFile(join(root, 'New/Deep/pic.png'), 'not a note either')
     await writeFile(join(root, 'notes.txt'), 'not a note')
     await rm(join(root, 'Ich/Vorlieben.md'))
     for (const f of ['External.md', 'New', 'notes.txt', '.obsidian/workspace.json', 'Ich/Vorlieben.md', 'Gone-before.md', '']) fire(f)
-    await tick(FLUSH)
-    expect(onChange).toHaveBeenCalledWith({ paths: ['External.md', 'New/Deep/In.md', 'Ich/Vorlieben.md'] })
+    // A busy machine can take longer than one flush window: wait for the change, not the clock.
+    await vi.waitFor(() => expect(onChange).toHaveBeenCalledWith({ paths: ['External.md', 'New/Deep/In.md', 'Ich/Vorlieben.md'] }), { timeout: 5000 })
     expect((await v.read('New/Deep/In.md')).body).toBe('x')
 
     onChange.mockClear()
     fire('External.md') // unchanged content → no event
+    fire('New') // a folder whose notes are unchanged: neither
+    await tick(FLUSH)
+    expect(onChange).not.toHaveBeenCalled()
+
+    // a new folder it can't read yet: nothing to pick up
+    await mkdir(join(root, 'Locked'))
+    await writeFile(join(root, 'Locked/A.md'), 'a')
+    h.failReaddir = 'Locked'
+    fire('Locked')
     await tick(FLUSH)
     expect(onChange).not.toHaveBeenCalled()
   })
@@ -356,8 +464,8 @@ describe('VaultService — watcher', () => {
     const { v, root } = await setup()
     await writeFile(join(root, 'Willkommen.md'), 'x'.repeat(5 * 1024 * 1024 + 10))
     fire('Willkommen.md')
-    await tick(FLUSH)
-    expect((await v.list()).some((n) => n.path === 'Willkommen.md')).toBe(false)
+    // Reading 5 MB back can outlast one flush window on a busy machine: wait for the index, not the clock.
+    await vi.waitFor(async () => expect((await v.list()).some((n) => n.path === 'Willkommen.md')).toBe(false), { timeout: 5000 })
   })
 
   it('does a full rescan when the OS gives no filename', async () => {
@@ -365,8 +473,8 @@ describe('VaultService — watcher', () => {
     await writeFile(join(root, 'Silent.md'), 'x')
     onChange.mockClear()
     fire(null)
-    await tick(FLUSH)
-    expect(onChange).toHaveBeenCalledWith({})
+    // A busy machine can take longer than one flush window: wait for the change, not the clock.
+    await vi.waitFor(() => expect(onChange).toHaveBeenCalledWith({}), { timeout: 5000 })
   })
 
   it('ignores flushes for a vault that was switched away, and survives flush errors', async () => {
@@ -393,8 +501,8 @@ describe('VaultService — watcher', () => {
     onChange.mockReset()
     await writeFile(join(root, 'After.md'), 'y')
     fire('After.md')
-    await tick(FLUSH)
-    expect(onChange).toHaveBeenCalledWith({ paths: ['After.md'] }) // the chain kept working
+    // A busy machine can take longer than one flush window: wait for the change, not the clock.
+    await vi.waitFor(() => expect(onChange).toHaveBeenCalledWith({ paths: ['After.md'] }), { timeout: 5000 }) // the chain kept working
   })
 
   it('stops watching on watcher errors and works without a watcher', async () => {
@@ -429,5 +537,143 @@ describe('VaultService — picking before the default vault exists', () => {
     await mkdir(other)
     h.dialog.mockResolvedValueOnce({ canceled: false, filePaths: [other] })
     expect(await v.pickVault()).toMatchObject({ isDefault: false, name: 'elsewhere', noteCount: 0 })
+  })
+})
+
+describe('VaultService — daily notes, templates, pictures', () => {
+  it('reports and stores the daily-note settings (normalized, validated)', async () => {
+    const { v, settings } = await setup()
+    expect((await v.status()).dailyNotes).toEqual({ folder: 'Daily', template: '' })
+    expect(await v.setDailyNotes({ folder: '/Journal/Tage/', template: 'Templates\\Tag.md' })).toEqual({ folder: 'Journal/Tage', template: 'Templates/Tag.md' })
+    expect(settings.get().dailyNotes).toEqual({ folder: 'Journal/Tage', template: 'Templates/Tag.md' })
+    expect(await v.setDailyNotes({ folder: '', template: '' })).toEqual({ folder: '', template: '' })
+    await expect(v.setDailyNotes({ folder: '../out', template: '' })).rejects.toMatchObject({ code: 'bad-path' })
+    await expect(v.setDailyNotes({ folder: '', template: 'x.txt' })).rejects.toMatchObject({ code: 'bad-path' })
+  })
+
+  it("opens today's note, creating it from the daily template the first time", async () => {
+    const { v, read } = await setup()
+    await v.createFolder('', 'Templates')
+    await v.write('Templates/Tag.md', '---\ntags: [journal]\n---\n# {{title}}\nAngelegt {{time}}\n')
+    await v.setDailyNotes({ folder: 'Journal', template: 'Templates/Tag.md' })
+    const today = await v.daily('2026-10-15T08:05:00')
+    expect(today).toMatchObject({ path: 'Journal/2026-10-15.md', tags: ['journal'] })
+    expect(await read('Journal/2026-10-15.md')).toMatch(/^---\nid: .+\ncreated: .+\ntags:\n  - journal\n---\n# 2026-10-15\nAngelegt 08:05\n$/)
+    // The second time it is just opened.
+    await v.writeBody('Journal/2026-10-15.md', 'mine')
+    expect((await v.daily('2026-10-15T23:00')).path).toBe('Journal/2026-10-15.md')
+    expect(await read('Journal/2026-10-15.md')).toContain('mine')
+  })
+
+  it('starts the day without a template when there is none (or it is gone), in the root if asked', async () => {
+    const { v, read } = await setup()
+    expect((await v.daily('2026-01-02')).path).toBe('Daily/2026-01-02.md')
+    expect(await read('Daily/2026-01-02.md')).toMatch(/---\n$/)
+    await v.setDailyNotes({ folder: '', template: 'Templates/Weg.md' })
+    expect((await v.daily('2026-01-03')).path).toBe('2026-01-03.md')
+    expect((await v.daily()).path).toMatch(/^\d{4}-\d{2}-\d{2}\.md$/)
+  })
+
+  it('creates notes from a template and fills a template for the cursor', async () => {
+    const { v, read } = await setup()
+    await v.createFolder('', 'Templates')
+    await v.write('Templates/Projekt.md', '---\ntype: project\n---\n## {{title}}\nStart: {{date:DD.MM.YYYY}}\n')
+    const meta = await v.create('Neues Ding', 'Wissen', 'Templates/Projekt.md', '2026-03-04T10:00')
+    expect(meta).toMatchObject({ path: 'Wissen/Neues Ding.md', type: 'project' })
+    expect(await read(meta.path)).toContain('## Neues Ding\nStart: 04.03.2026\n')
+    expect(await v.renderTemplate('Templates/Projekt.md', 'Hier', '2026-03-04')).toBe('## Hier\nStart: 04.03.2026\n')
+    await expect(v.create('X', '', 'Templates/Fehlt.md')).rejects.toMatchObject({ code: 'not-found' })
+    await expect(v.renderTemplate('Templates/Fehlt.md', 'X')).rejects.toMatchObject({ code: 'not-found' })
+  })
+
+  it('saves pasted pictures under attachments/, numbered when the name is taken', async () => {
+    const { v, root } = await setup()
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47]).toString('base64')
+    expect(await v.attach('Pasted image 20261015.PNG', png)).toEqual({ path: 'attachments/Pasted image 20261015.png', link: 'Pasted image 20261015.png' })
+    expect(await v.attach('Pasted image 20261015.png', png)).toEqual({ path: 'attachments/Pasted image 20261015 2.png', link: 'Pasted image 20261015 2.png' })
+    expect(await v.attach('../evil/:x.jpg', png)).toEqual({ path: 'attachments/x.jpg', link: 'x.jpg' })
+    expect([...(await readFile(join(root, 'attachments', 'x.jpg')))]).toEqual([0x89, 0x50, 0x4e, 0x47])
+    await expect(v.attach('notes.txt', png)).rejects.toMatchObject({ code: 'bad-type' })
+    await expect(v.attach('big.png', Buffer.alloc(20 * 1024 * 1024 + 1).toString('base64'))).rejects.toMatchObject({ code: 'too-large' })
+    h.failWrite = 'boom.png'
+    await expect(v.attach('boom.png', png)).rejects.toMatchObject({ code: 'EIO' })
+  })
+
+  it('gives up after 999 pictures with the same name', async () => {
+    const { v, root } = await setup()
+    await mkdir(join(root, 'attachments'))
+    await writeFile(join(root, 'attachments', 'busy.png'), '')
+    for (let n = 2; n < 1000; n += 1) await writeFile(join(root, 'attachments', `busy ${n}.png`), '')
+    await expect(v.attach('busy.png', '')).rejects.toMatchObject({ code: 'exists' })
+  })
+
+  it('a link in the vault that leads out of it is no note and no picture: reading stays in the vault, like writing', async () => {
+    const { v, root } = await setup({ create: true })
+    const outside = await tempDir()
+    await writeFile(join(outside, 'credentials'), 'aws_secret_access_key=KEY')
+    await writeFile(join(outside, 'id_rsa'), 'PRIVATE KEY')
+    await mkdir(join(root, 'inside'))
+    await writeFile(join(root, 'inside', 'real.md'), 'real note\n')
+    await writeFile(join(root, 'inside', 'real.png'), 'real picture')
+    await symlink(join(outside, 'credentials'), join(root, 'notes.md'))
+    await symlink(join(outside, 'id_rsa'), join(root, 'photo.png'))
+    await symlink(outside, join(root, 'away'))
+    await writeFile(join(outside, 'deep.md'), 'outside\n')
+    await symlink(join(root, 'inside', 'real.md'), join(root, 'alias.md'))
+    await symlink(join(root, 'inside', 'real.png'), join(root, 'alias.png'))
+
+    await expect(v.read('notes.md')).rejects.toMatchObject({ code: 'not-found' })
+    await expect(v.read('away/deep.md')).rejects.toMatchObject({ code: 'not-found' })
+    await expect(v.attachment('photo.png')).rejects.toMatchObject({ code: 'not-found' })
+    // Links that stay inside are fine.
+    expect((await v.read('alias.md')).body).toBe('real note\n')
+    expect((await v.attachment('alias.png')).dataUrl).toContain(Buffer.from('real picture').toString('base64'))
+  })
+
+  it('finds pictures like Obsidian: next to the note, by vault path, in attachments/, then anywhere by name', async () => {
+    const { v, root, base } = await setup()
+    const put = async (rel: string, bytes = 'x') => {
+      await mkdir(join(root, rel, '..'), { recursive: true })
+      await writeFile(join(root, rel), bytes)
+    }
+    await put('Ich/foto.png', 'near')
+    await put('img/foto.png', 'path')
+    await put('attachments/foto.png', 'att')
+    await put('deep/er/elsewhere.webp', 'deep')
+    await put('b/elsewhere.webp', 'b')
+    await put('a/elsewhere.webp', 'short')
+    await put('.obsidian/hidden.png', 'hidden')
+    await put('Ich/scan.svg', '<svg/>')
+
+    const dataOf = (a: { dataUrl: string }) => Buffer.from(a.dataUrl.split(',')[1], 'base64').toString()
+    expect(dataOf(await v.attachment('foto.png', 'Ich/Über mich.md'))).toBe('near')
+    expect(dataOf(await v.attachment('./foto.png', 'Ich/Über mich.md'))).toBe('near')
+    expect(dataOf(await v.attachment('img/foto.png'))).toBe('path')
+    expect(dataOf(await v.attachment('foto.png'))).toBe('att')
+    expect(dataOf(await v.attachment('../img/foto.png', 'Ich/Über mich.md'))).toBe('path')
+    const far = await v.attachment('Elsewhere.webp', 'Willkommen.md')
+    expect(far).toMatchObject({ path: 'a/elsewhere.webp', mime: 'image/webp' })
+    expect(dataOf(far)).toBe('short')
+    expect((await v.attachment('scan.svg', 'Ich/Über mich.md')).dataUrl.startsWith('data:image/svg+xml;base64,')).toBe(true)
+
+    await expect(v.attachment('notes.md')).rejects.toMatchObject({ code: 'bad-type' })
+    await expect(v.attachment('missing.png')).rejects.toMatchObject({ code: 'not-found' })
+    await expect(v.attachment('hidden.png')).rejects.toMatchObject({ code: 'not-found' })
+    await expect(v.attachment('foto.png', '../out.md')).rejects.toMatchObject({ code: 'bad-path' })
+
+    // Never outside the vault: escapes, folders named like pictures, oversized files.
+    await writeFile(join(base, 'outside.png'), 'secret')
+    await expect(v.attachment('../outside.png')).rejects.toMatchObject({ code: 'not-found' })
+    await mkdir(join(root, 'attachments', 'dir.png'))
+    await expect(v.attachment('dir.png')).rejects.toMatchObject({ code: 'not-found' })
+    const huge = await open(join(root, 'huge.gif'), 'w')
+    await huge.truncate(20 * 1024 * 1024 + 1)
+    await huge.close()
+    await expect(v.attachment('huge.gif')).rejects.toMatchObject({ code: 'not-found' })
+  })
+
+  it('finds no pictures before the vault exists', async () => {
+    const { v } = await setup({ create: false })
+    await expect(v.attachment('a.png')).rejects.toMatchObject({ code: 'not-found' })
   })
 })

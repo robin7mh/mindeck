@@ -3,7 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const c = vi.hoisted(() => ({
   collect: vi.fn(),
   collectProcesses: vi.fn(),
-  currentUser: vi.fn()
+  currentUser: vi.fn(),
+  startSampling: vi.fn(),
+  stopSampling: vi.fn()
 }))
 vi.mock('../../../electron/main/services/system/collectors', () => c)
 
@@ -31,8 +33,12 @@ describe('SystemService', () => {
 
     await vi.advanceTimersByTimeAsync(2000)
     expect(send).toHaveBeenCalledTimes(3)
+    // The Windows sampler runs exactly while the timer does.
+    expect(c.startSampling).toHaveBeenCalledTimes(3)
+    expect(c.stopSampling).not.toHaveBeenCalled()
 
     s.setPaused(true)
+    expect(c.stopSampling).toHaveBeenCalledTimes(1)
     await vi.advanceTimersByTimeAsync(5000)
     expect(send).toHaveBeenCalledTimes(3)
 
@@ -71,6 +77,25 @@ describe('SystemService', () => {
     await flush()
     expect(send).not.toHaveBeenCalled()
     expect(await s.snapshot()).toEqual({ ts: 1, processes: [] })
+    s.dispose()
+  })
+
+  it('skips ticks while a sample is still in flight (a stuck `df`), then carries on', async () => {
+    let release: (v: unknown) => void = () => {}
+    c.collect.mockReturnValueOnce(new Promise((r) => (release = r)))
+    const send = vi.fn()
+    const s = new SystemService(send, 1000, 100)
+    s.subscribe()
+    await flush()
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(c.collect).toHaveBeenCalledTimes(1) // no pile-up behind the stuck one
+    expect(send).not.toHaveBeenCalled()
+    release({ ts: 0, processes: [] })
+    await flush()
+    expect(send).toHaveBeenCalledWith({ ts: 0, processes: [] })
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(c.collect).toHaveBeenCalledTimes(2)
+    expect(send).toHaveBeenCalledTimes(2)
     s.dispose()
   })
 

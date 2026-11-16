@@ -15,7 +15,7 @@ export function HudClock({ now }: { now: Date }) {
       >
         {hh}:{mm}
       </div>
-      <div className="mt-2 font-sans text-[18px] font-light tracking-[0.25em] text-cyan/80 tabular-nums">{ss}</div>
+      <div className="mt-2 font-sans text-[16px] font-medium tracking-[0.08em] text-text-muted tabular-nums">{ss}</div>
     </div>
   )
 }

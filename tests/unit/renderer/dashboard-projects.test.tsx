@@ -9,6 +9,7 @@ import { Dashboard } from '@/features/dashboard/components/Dashboard'
 import { ProjectsView } from '@/features/projects/components/ProjectsView'
 import { ProjectDetailPanel } from '@/features/projects/components/ProjectDetailPanel'
 import { useProjects } from '@/features/projects/store'
+import { oneGroup, tabKey, useEditor } from '@/features/editor/store'
 import { useTerminals } from '@/features/terminal/store'
 import { en } from '@/lib/i18n/en'
 const t = en.dashboard
@@ -124,10 +125,17 @@ describe('Dashboard', () => {
     fireEvent.click(screen.getByText(`${t.openGraph} →`))
     fireEvent.click(screen.getByLabelText(`Open ${t.brain}`))
     expect(onNavigate).toHaveBeenLastCalledWith('memory')
+    // the System tile opens the System module, like the others theirs
+    fireEvent.click(screen.getByLabelText(`Open ${t.system}`))
+    expect(onNavigate).toHaveBeenLastCalledWith('system')
 
     expect(screen.getByText(t.cpuHigh)).toBeInTheDocument()
-    expect(screen.getByText([t.ramHigh, t.diskHigh, t.batteryLow].join(' · '))).toBeInTheDocument()
+    expect(screen.getByText([t.ramHigh, t.diskHigh, t.batteryLow].join(' · '))).toHaveClass('text-cyan')
     expect(screen.getByText(t.battery)).toBeInTheDocument()
+    // Warnings too stay in the accent color: the dot (and its pulse) and every bar.
+    const system = screen.getByText(t.cpuHigh).parentElement!.parentElement!
+    expect(system.querySelector('.bg-amber')).toBeNull()
+    expect(system.querySelectorAll('.bg-cyan')).toHaveLength(6)
   })
 
   it('all clean, all good, charging; empty-state buttons navigate', async () => {
@@ -148,6 +156,44 @@ describe('Dashboard', () => {
     expect(screen.getByText(`${t.battery} ⚡`)).toBeInTheDocument()
     fireEvent.click(screen.getByText(new RegExp(t.noVault)))
     expect(onNavigate).toHaveBeenCalledWith('memory')
+  })
+
+  it('off screen it rests; back on screen it is as it was at once, then up to date in place', async () => {
+    let list = [proj('a', { git: { isRepo: true, branch: 'main', dirty: false } })]
+    let nextList: (v: Project[]) => void = () => {}
+    let held = false
+    const bridge = installBridge({
+      'projects:list': () => (held ? new Promise<Project[]>((r) => (nextList = r)) : list),
+      'projects:refresh': ({ id }: { id: string }) => list.find((p) => p.id === id),
+      'memory:status': () => ({ exists: true }),
+      'memory:list': () => [note('A/1.md', 'A')],
+      'memory:graph': () => ({ nodes: [], edges: [] }),
+      'system:snapshot': () => snap(10, 20, 30, { pct: 50, charging: false, hasBattery: true })
+    })
+    const calls = (channel: string) => bridge.invoke.mock.calls.filter(([c]) => c === channel).length
+    const view = render(<Dashboard onNavigate={vi.fn()} active />)
+    await act(settle)
+    expect(screen.getByText('Project a')).toBeInTheDocument()
+    expect([calls('projects:list'), calls('memory:status'), calls('system:subscribe')]).toEqual([1, 1, 1])
+
+    // off screen: the system stream ends, nothing is fetched
+    view.rerender(<Dashboard onNavigate={vi.fn()} active={false} />)
+    await act(settle)
+    expect(calls('system:unsubscribe')).toBe(1)
+    expect([calls('projects:list'), calls('memory:status'), calls('system:snapshot')]).toEqual([1, 1, 1])
+
+    // back: what it showed is there at once (no "Loading…"), while it fetches anew…
+    held = true
+    view.rerender(<Dashboard onNavigate={vi.fn()} active />)
+    await act(settle)
+    expect(screen.getByText('Project a')).toBeInTheDocument()
+    expect(screen.queryByText(t.loading)).toBeNull()
+    expect([calls('projects:list'), calls('memory:status'), calls('system:snapshot'), calls('system:subscribe')]).toEqual([2, 2, 2, 2])
+    // …and comes up to date in place
+    list = [proj('a', { git: { isRepo: true, branch: 'main', dirty: true } })]
+    await act(async () => nextList(list))
+    await act(settle)
+    expect(screen.getByText(`1 ${t.changed}`)).toBeInTheDocument()
   })
 
   it('no battery; empty project list button; ignores results after unmount', async () => {
@@ -252,7 +298,6 @@ describe('ProjectDetailPanel', () => {
     const shell = { id: 's1', title: 'a', cwd: '/a', cwdLabel: '~/a', shell: 'zsh', createdAt: '' }
     const bridge = installBridge({
       'projects:refresh': () => new Promise(() => {}),
-      'projects:openInEditor': () => undefined,
       'projects:openInGitHubDesktop': () => undefined,
       'projects:pull': () => undefined,
       'terminal:list': () => [],
@@ -283,8 +328,7 @@ describe('ProjectDetailPanel', () => {
     expect(screen.getByText('f')).toBeInTheDocument()
     expect(screen.queryByText('g')).toBeNull() // max 8 scripts
 
-    fireEvent.click(screen.getByText('VS Code'))
-    expect(bridge.invoke).toHaveBeenCalledWith('projects:openInEditor', { id: 'a' })
+    expect(screen.queryByText('VS Code')).toBeNull() // the project stays in Mindeck
 
     // Terminal, no shell in this project yet: opens one in Mindeck's own terminal — no extra Home shell.
     fireEvent.click(screen.getByText('Terminal'))
@@ -299,7 +343,7 @@ describe('ProjectDetailPanel', () => {
     expect(bridge.invoke).toHaveBeenCalledWith('projects:openInGitHubDesktop', { id: 'a' })
 
     expect(screen.getByText('Refreshing…').closest('button')).toBeDisabled()
-    expect(screen.getByText('Pull').closest('button')).toBeDisabled() // with an upstream; busy while re-detecting
+    expect(screen.queryByText('Pull')).toBeNull() // no git pull here, upstream or not
     expect(screen.getByText('Remove').closest('button')).toBeDisabled()
   })
 
@@ -356,11 +400,49 @@ describe('ProjectDetailPanel', () => {
     expect(useTerminals.getState().activeId).toBe('x4')
   })
 
+  it('removing a project with unsaved files asks first; its open files go with it', async () => {
+    const P = proj('rm')
+    const bridge = installBridge({ 'projects:remove': () => undefined, 'projects:refresh': () => P })
+    const initialEditor = useEditor.getState()
+    const editorTab = (projectId: string, path: string, dirty: boolean) => ({ id: tabKey(projectId, path), projectId, path, name: path, loading: false, content: 'x', revision: 1, dirty, saving: false, conflict: false, deleted: false })
+    useProjects.setState({ projects: [P], selectedId: P.id })
+    useEditor.setState({
+      projectId: 'other',
+      tabs: [editorTab(P.id, 'a.ts', true), editorTab(P.id, 'b.ts', false), editorTab('other', 'c.ts', true)],
+      sessions: { [P.id]: oneGroup([tabKey(P.id, 'a.ts'), tabKey(P.id, 'b.ts')]) },
+      ...oneGroup([tabKey('other', 'c.ts')])
+    })
+    const { rerender } = render(<ProjectDetailPanel project={P} onNavigate={vi.fn()} />)
+    await act(settle)
+
+    const removeButton = () => screen.getByRole('button', { name: 'Remove' })
+    fireEvent.click(removeButton())
+    expect(bridge.invoke).not.toHaveBeenCalledWith('projects:remove', { id: P.id })
+    expect(screen.getByRole('alertdialog')).toHaveTextContent('1 file')
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(screen.queryByRole('alertdialog')).toBeNull()
+
+    // Another project on screen: the question doesn't follow it.
+    fireEvent.click(removeButton())
+    rerender(<ProjectDetailPanel project={{ ...P, id: 'other' }} onNavigate={vi.fn()} />)
+    await act(settle)
+    expect(screen.queryByRole('alertdialog')).toBeNull()
+    rerender(<ProjectDetailPanel project={P} onNavigate={vi.fn()} />)
+    await act(settle)
+
+    fireEvent.click(removeButton())
+    fireEvent.click(screen.getByRole('button', { name: 'Remove and lose them' }))
+    await act(settle)
+    expect(bridge.invoke).toHaveBeenCalledWith('projects:remove', { id: P.id })
+    expect(useEditor.getState().tabs.map((t) => t.id)).toEqual([tabKey('other', 'c.ts')])
+    expect(useEditor.getState().sessions[P.id]).toBeUndefined()
+    useEditor.setState(initialEditor, true)
+  })
+
   it('dirty repo without upstream, no repo and no stack; remove', async () => {
     const bridge = installBridge({
       'projects:remove': () => undefined,
-      'projects:refresh': ({ id }: { id: string }) => proj(id),
-      'projects:pull': ({ id }: { id: string }) => proj(id)
+      'projects:refresh': ({ id }: { id: string }) => proj(id)
     })
     useProjects.setState({ githubDesktop: 'GitHub Desktop' })
     const { rerender } = render(<ProjectDetailPanel project={proj('d', { git: { isRepo: true, behind: 1, dirty: true } })} onNavigate={vi.fn()} />)
@@ -368,15 +450,11 @@ describe('ProjectDetailPanel', () => {
     expect(screen.getByText('detached')).toBeInTheDocument()
     expect(screen.getByText('1')).toBeInTheDocument()
     await act(settle)
-    fireEvent.click(screen.getByText('Pull'))
-    await act(settle)
-    expect(bridge.invoke).toHaveBeenCalledWith('projects:pull', { id: 'd' })
 
     expect(screen.queryByText('GitHub')).toBeNull() // no origin → no repo link
     rerender(<ProjectDetailPanel project={proj('n', { stack: { languages: [], frameworks: [], hasReadme: false, packageJson: { scripts: [] } } })} onNavigate={vi.fn()} />)
     expect(screen.getByText('no repo')).toBeInTheDocument()
     expect(screen.queryByText('GitHub Desktop')).toBeNull() // not a repo
-    expect(screen.queryByText('Pull')).toBeNull() // no upstream
     expect(screen.queryByText('Branch')).toBeNull()
     expect(screen.getByText('—')).toBeInTheDocument()
     expect(screen.getByText('none')).toBeInTheDocument()

@@ -7,7 +7,8 @@
 #
 #   npm run remote:bundle        → out/remote/mindeck-server-<version>-linux-<arch>.tar.gz
 
-FROM node:22-bullseye AS build
+# Pinned by digest, like the main Dockerfile: its node and modules run on the customers' hosts (Dependabot proposes the next one).
+FROM node:22-bullseye@sha256:959fa6e5c12f4b08f58808f953c7a6a05f1f72629b57ef3a648b8809362fdad9 AS build
 WORKDIR /app
 ENV ELECTRON_SKIP_BINARY_DOWNLOAD=1
 COPY package.json package-lock.json ./
@@ -16,6 +17,9 @@ RUN npm ci --no-audit --no-fund
 COPY . .
 ARG MINDECK_CLOUD_URL=
 ARG MINDECK_CLOUD_KEY=
+# The one server build that may follow the desktop's license (MINDECK_LICENSE=follower,
+# set by the desktop when it starts it) — see electron/main/services/cloud/config.ts.
+ENV MINDECK_FOLLOWER_BUILD=1
 RUN npm run web:build && npm run server:build && npm prune --omit=dev \
   # Renderer-only packages: bundled into out/web already.
   && rm -rf node_modules/monaco-editor node_modules/react node_modules/react-dom node_modules/framer-motion \

@@ -52,7 +52,7 @@ const CYBER: Record<string, [number, number]> = {
   '--border-hud-strong': [0.33, 0.388],
   '--text-primary': [0.57, 0.927],
   '--text-secondary': [0.23, 0.665],
-  '--text-muted': [0.16, 0.449]
+  '--text-muted': [0.16, 0.55]
 }
 
 /** Neutral dark backgrounds — they keep their greys whatever the accent. */
@@ -66,7 +66,7 @@ const NEUTRAL: Record<Exclude<Surface, 'cyber'>, Record<string, Rgb>> = {
     '--border-hud-strong': '64 70 82',
     '--text-primary': '232 234 238',
     '--text-secondary': '158 164 174',
-    '--text-muted': '104 110 120'
+    '--text-muted': '128 134 144'
   },
   graphite: {
     '--bg-void': '20 21 24',
@@ -77,7 +77,7 @@ const NEUTRAL: Record<Exclude<Surface, 'cyber'>, Record<string, Rgb>> = {
     '--border-hud-strong': '88 92 101',
     '--text-primary': '234 235 238',
     '--text-secondary': '164 168 176',
-    '--text-muted': '112 116 125'
+    '--text-muted': '138 142 150'
   }
 }
 

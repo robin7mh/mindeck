@@ -1,7 +1,21 @@
+import { mkdir, symlink, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
+import { tempDir } from './helpers'
 import { detectAgents, loginShellProbe, type Probe } from '../../../electron/main/services/agents/detect'
-import { claudeArgs, claudeEnv, HOOK_RELAY, hookSettings, MEMORY_READ_TOOLS, SYSTEM_HINT } from '../../../electron/main/services/agents/claudeLaunch'
-import { applyHook, toolRisk, toolSummary, toolTitle, type SessionState } from '../../../electron/main/services/agents/transcript'
+import {
+  claudeArgs,
+  claudeEnv,
+  HOOK_RELAY,
+  hookSettings,
+  MCP_BROWSER_READ_TOOLS,
+  MCP_TERMINAL_READ_TOOLS,
+  MCP_PLAN_TOOLS,
+  mcpConfig,
+  MEMORY_READ_TOOLS,
+  SYSTEM_HINT
+} from '../../../electron/main/services/agents/claudeLaunch'
+import { applyHook, approvalRisk, landings, planFromMarkdown, toolOf, reachesOutside, runsByItself, staysInside, toolPaths, toolRisk, toolSummary, toolTitle, type SessionState } from '../../../electron/main/services/agents/transcript'
 import type { ChatMessage, ToolCallPart } from '../../../src/shared/types/ai'
 import type { AgentSession } from '../../../src/shared/types/agents'
 import { journalBody, journalTitle, vaultJournal } from '../../../electron/main/services/agents/journal'
@@ -26,7 +40,7 @@ describe('detectAgents', () => {
     )
     expect(list).toEqual([
       { kind: 'claude-code', name: 'Claude Code', installed: true, version: '2.1.287', signedIn: true, account: 'Max plan', ready: true, hint: undefined },
-      { kind: 'codex', name: 'Codex', installed: true, version: '0.98.0', account: 'Your own sign-in', ready: true, hint: undefined },
+      { kind: 'codex', name: 'Codex', installed: true, version: '0.98.0', signedIn: false, account: 'Your own sign-in', ready: true, hint: undefined },
       { kind: 'gemini', name: 'Gemini CLI', installed: false, ready: false, hint: 'Not installed (gemini)' }
     ])
   })
@@ -47,6 +61,21 @@ describe('detectAgents', () => {
     expect((await detectAgents(probe({ "'/opt/my claude' --version": '3.0.0' }), '/opt/my claude'))[0]).toMatchObject({ installed: true, version: '3.0.0' })
   })
 
+  it('Codex and Gemini: signed in as far as they tell', async () => {
+    const home = await tempDir()
+    const answers = { 'codex --version': '1.0.0', 'gemini --version': '0.5.0', 'npx --version': '10.0.0' }
+    const [, codex, gemini] = await detectAgents(probe({ ...answers, 'codex login status': 'Logged in using ChatGPT' }), 'claude', home, {})
+    expect([codex.signedIn, gemini.signedIn]).toEqual([true, false])
+    // Codex 0.159 says it on stderr — stdout stays empty; the exit code is what counts.
+    expect((await detectAgents(probe({ ...answers, 'codex login status': '' }), 'claude', home, {}))[1].signedIn).toBe(true)
+    expect((await detectAgents(probe({ ...answers, 'codex login status': new Error('exit 1: Not logged in') }), 'claude', home, {}))[1].signedIn).toBe(false)
+    expect((await detectAgents(probe(answers), 'claude', home, { GEMINI_API_KEY: 'k' }))[2].signedIn).toBe(true)
+    expect((await detectAgents(probe(answers), 'claude', home, { GOOGLE_API_KEY: 'k' }))[2].signedIn).toBe(true)
+    await mkdir(join(home, '.gemini'))
+    await writeFile(join(home, '.gemini', 'oauth_creds.json'), '{}')
+    expect((await detectAgents(probe(answers), 'claude', home, {}))[2].signedIn).toBe(true)
+  })
+
   it('the default probe runs through a login shell', async () => {
     expect((await loginShellProbe('echo mindeck')).trim()).toBe('mindeck')
     await expect(loginShellProbe('exit 3')).rejects.toThrow()
@@ -61,17 +90,21 @@ describe('detectAgents', () => {
 })
 
 describe('Claude Code launch', () => {
-  const input = { sessionId: 's1', title: 'Fix login', hookUrl: 'http://127.0.0.1:9/hooks/s1', mcpUrl: 'http://127.0.0.1:9/mcp/s1', token: 'tok' }
+  const input = { sessionId: 's1', title: 'Fix login', settingsFile: '/data/agents/launch/s1/settings.json', mcpFile: '/data/agents/launch/s1/mcp.json' }
 
   it('new sessions: id, name, hooks, memory server, hint, read tools allowed, first prompt after --', () => {
     const args = claudeArgs({ ...input, prompt: '--looks like a flag' })
     expect(args.slice(0, 4)).toEqual(['--session-id', 's1', '--name', 'Fix login'])
-    expect(JSON.parse(args[args.indexOf('--settings') + 1])).toEqual(hookSettings(input.hookUrl, 'tok'))
-    expect(JSON.parse(args[args.indexOf('--mcp-config') + 1])).toEqual({
-      mcpServers: { mindeck: { type: 'http', url: input.mcpUrl, headers: { Authorization: 'Bearer tok' } } }
+    // Hooks and memory server come from files: the token they carry never is on the command line.
+    expect(args[args.indexOf('--settings') + 1]).toBe(input.settingsFile)
+    expect(args[args.indexOf('--mcp-config') + 1]).toBe(input.mcpFile)
+    expect(mcpConfig('http://127.0.0.1:9/mcp/s1', 'tok')).toEqual({
+      mcpServers: { mindeck: { type: 'http', url: 'http://127.0.0.1:9/mcp/s1', headers: { Authorization: 'Bearer tok' } } }
     })
     expect(args[args.indexOf('--append-system-prompt') + 1]).toBe(SYSTEM_HINT)
-    expect(args.slice(args.indexOf('--allowedTools') + 1, -2)).toEqual(MEMORY_READ_TOOLS)
+    // reading memory, the browser's shared tabs and the agents' own terminals runs unasked; everything else asks in Mindeck
+    expect(args.slice(args.indexOf('--allowedTools') + 1, -2)).toEqual([...MEMORY_READ_TOOLS, ...MCP_BROWSER_READ_TOOLS, ...MCP_TERMINAL_READ_TOOLS, ...MCP_PLAN_TOOLS])
+    expect(MCP_PLAN_TOOLS).toEqual(['mcp__mindeck__plan_update'])
     expect(args.slice(-2)).toEqual(['--', '--looks like a flag'])
   })
 
@@ -158,18 +191,26 @@ describe('hook events → chat, status and plan', () => {
 
   it('plan from TodoWrite and task hooks; notifications; session end', () => {
     const s = fresh()
-    applyHook(s, { hook_event_name: 'PreToolUse', tool_name: 'TodoWrite', tool_use_id: 'p', tool_input: { todos: [{ content: 'find bug', status: 'completed' }, { status: 'pending' }] } })
+    applyHook(s, {
+      hook_event_name: 'PreToolUse',
+      tool_name: 'TodoWrite',
+      tool_use_id: 'p',
+      tool_input: { todos: [{ content: 'find bug', status: 'completed' }, { content: 'fix it', status: 'in_progress' }, { status: 'pending' }] }
+    })
+    // its to-do list is worked through right away; the one in progress is marked
     expect(s.plan).toEqual([
-      { id: 'todo-0', text: 'find bug', done: true },
-      { id: 'todo-1', text: '', done: false }
+      { id: 'todo-0', text: 'find bug', done: true, active: false },
+      { id: 'todo-1', text: 'fix it', done: false, active: true },
+      { id: 'todo-2', text: '', done: false, active: false }
     ])
+    expect(s.planStatus).toBe('active')
     applyHook(s, { hook_event_name: 'PreToolUse', tool_name: 'TodoWrite', tool_use_id: 'q', tool_input: {} }) // malformed: plan kept
-    expect(s.plan).toHaveLength(2)
-    applyHook(s, { hook_event_name: 'TaskCreated', task_id: 't1', task_description: 'write test' })
-    applyHook(s, { hook_event_name: 'TaskCreated', task_id: 't1', task_description: 'write the test' })
+    expect(s.plan).toHaveLength(3)
+    applyHook(s, { hook_event_name: 'TaskCreated', task_id: 't1', task_subject: 'write test', task_description: 'with vitest' })
+    applyHook(s, { hook_event_name: 'TaskCreated', task_id: 't1', task_description: 'write the test' }) // no title: the description
     applyHook(s, { hook_event_name: 'TaskCreated', task_id: 't2' })
     applyHook(s, { hook_event_name: 'TaskCompleted', task_id: 't1' })
-    expect(s.plan.slice(2)).toEqual([
+    expect(s.plan.slice(3)).toEqual([
       { id: 't1', text: 'write the test', done: true },
       { id: 't2', text: '', done: false }
     ])
@@ -191,7 +232,265 @@ describe('hook events → chat, status and plan', () => {
     expect(s.status).toBe('ended')
   })
 
+  it('a plan written down: ExitPlanMode’s, or the numbered answer while planning first; tasks take over from it', () => {
+    // Planning first (the user's choice), it answers with a numbered plan — as in a real session.
+    const s: SessionState = { ...fresh(), mode: 'plan' }
+    const answer = [
+      'Hier ist ein 10-Punkte-Plan, nach Priorität geordnet.',
+      '',
+      '1. **Tests einführen:** Ausgerechnet „testing-games“ hat keinen einzigen Test.',
+      '2. **`lib/game.js` aufteilen:** Die Datei ist eine einzige Funktion mit 391 Zeilen.',
+      '   - eine Phaser.Scene-Klasse', // nested: not a step
+      '3. Gameplay-Bugs beheben',
+      '',
+      'Soll ich mit einem davon anfangen?'
+    ].join('\n')
+    applyHook(s, { hook_event_name: 'UserPromptSubmit', prompt: 'plan it' })
+    applyHook(s, { hook_event_name: 'Stop', last_assistant_message: answer })
+    expect(s.plan).toEqual([
+      { id: 'answer-0', text: 'Tests einführen', done: false },
+      { id: 'answer-1', text: 'lib/game.js aufteilen', done: false },
+      { id: 'answer-2', text: 'Gameplay-Bugs beheben', done: false }
+    ])
+    expect(s.planStatus).toBe('draft') // a proposal
+    // a later answer with one numbered line, or none, keeps it
+    applyHook(s, { hook_event_name: 'Stop', last_assistant_message: '1. only this' })
+    applyHook(s, { hook_event_name: 'Stop', last_assistant_message: '' })
+    expect(s.plan).toHaveLength(3)
+
+    // the plan it presents when it leaves plan mode (bullets, boxes, a link) — and that one a text doesn't replace
+    applyHook(s, {
+      hook_event_name: 'PreToolUse',
+      tool_name: 'ExitPlanMode',
+      tool_use_id: 'x',
+      tool_input: { plan: '## Refactor\n- [x] Read [the code](https://x.dev)\n- [ ] Extract `predictBallY`\n* Ship it\n- [ ] \n', planFilePath: '/p.md' }
+    })
+    expect(s.plan.map((p) => [p.id, p.text, p.done])).toEqual([
+      ['mode-0', 'Read the code', true],
+      ['mode-1', 'Extract predictBallY', false],
+      ['mode-2', 'Ship it', false]
+    ])
+    expect(s.planStatus).toBe('draft')
+    applyHook(s, { hook_event_name: 'Stop', last_assistant_message: '1. a\n2. b' })
+    expect(s.plan[0].id).toBe('mode-0')
+    applyHook(s, { hook_event_name: 'PreToolUse', tool_name: 'ExitPlanMode', tool_use_id: 'y', tool_input: {} }) // no plan in it: kept
+    expect(s.plan).toHaveLength(3)
+
+    // tasks are the live plan: what was only written down gives way
+    applyHook(s, { hook_event_name: 'TaskCreated', task_id: 't1', task_subject: 'Tests einführen' })
+    expect(s.plan).toEqual([{ id: 't1', text: 'Tests einführen', done: false }])
+    expect(s.planStatus).toBe('active')
+    // a plan that is through gives way to the next numbered answer
+    applyHook(s, { hook_event_name: 'TaskCompleted', task_id: 't1' })
+    applyHook(s, { hook_event_name: 'Stop', last_assistant_message: '1. next\n2. after' })
+    expect(s.plan.map((p) => p.id)).toEqual(['answer-0', 'answer-1'])
+
+    // not planning first (Claude Code says so, or the user didn't choose it): a numbered answer is just an answer
+    const free = fresh()
+    applyHook(free, { hook_event_name: 'Stop', last_assistant_message: answer })
+    expect(free.plan).toEqual([])
+    applyHook(free, { hook_event_name: 'Stop', last_assistant_message: answer, permission_mode: 'plan' })
+    expect(free.plan).toHaveLength(3)
+
+    // long steps are cut at a word
+    expect(planFromMarkdown(`1. ${'word '.repeat(40)}`, 'answer', true)[0].text).toMatch(/^word( word)+…$/)
+    expect(planFromMarkdown(`1. ${'x'.repeat(130)}`, 'answer', true)[0].text).toHaveLength(121)
+    // numbered steps first: the bullets under them (a "Verification" list) are no steps
+    expect(planFromMarkdown('## Plan\n1. **Tests:** add\n2. CI\n## Verifikation\n- npm test is green\n- check /pong', 'mode').map((p) => p.text)).toEqual(['Tests', 'CI'])
+    // a step's full stop goes, an ellipsis stays
+    expect(planFromMarkdown('1. Create a.txt containing a.\n2. Then see…\n3. Wait...', 'mode').map((p) => p.text)).toEqual(['Create a.txt containing a', 'Then see…', 'Wait...'])
+    // asked for numbered ones only, bullets alone make none
+    expect(planFromMarkdown('- a\n- b', 'answer', true)).toEqual([])
+  })
+
+  it('a plan’s life: proposed, approved (its steps handed over), marked as it goes, done — asked to catch up when it stops with work done and steps open', () => {
+    const s: SessionState = { ...fresh(), mode: 'plan' }
+    applyHook(s, { hook_event_name: 'UserPromptSubmit', prompt: 'plan it' })
+    const plan = '# Plan\n1. **Tests:** add them\n2. **CI:** set it up\n3. Docs\n## Verification\n- npm test is green'
+    applyHook(s, { hook_event_name: 'PreToolUse', tool_name: 'ExitPlanMode', tool_use_id: 'x1', tool_input: { plan } })
+    expect([s.plan.map((p) => p.text), s.planStatus]).toEqual([['Tests', 'CI', 'Docs'], 'draft'])
+    // turned down: still a proposal, nothing handed over
+    expect(applyHook(s, { hook_event_name: 'PostToolUseFailure', tool_name: 'ExitPlanMode', tool_use_id: 'x1', error: 'denied' }).reply).toBeUndefined()
+    expect(s.planStatus).toBe('draft')
+
+    // approved: carried out now — Claude Code gets the steps and how to mark them
+    applyHook(s, { hook_event_name: 'PreToolUse', tool_name: 'ExitPlanMode', tool_use_id: 'x2', tool_input: { plan } })
+    const approved = applyHook(s, { hook_event_name: 'PostToolUse', tool_name: 'ExitPlanMode', tool_use_id: 'x2', tool_response: { plan } })
+    expect(s.planStatus).toBe('active')
+    expect(approved.reply).toEqual({ hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: expect.stringContaining('1. Tests\n2. CI\n3. Docs') } })
+    expect(JSON.stringify(approved.reply)).toContain('mcp__mindeck__plan_update')
+    // handed over once: it is no proposal any more
+    expect(applyHook(s, { hook_event_name: 'PostToolUse', tool_name: 'ExitPlanMode', tool_use_id: 'x2' }).reply).toBeUndefined()
+
+    // it only talked and stops with steps open: no news — the turn is done
+    expect(applyHook(s, { hook_event_name: 'Stop', last_assistant_message: 'Starting.' })).toMatchObject({ attention: 'done', reply: undefined })
+
+    // it worked (an edit) and would stop with steps open: asked to catch up — the turn goes on, no "done" yet
+    applyHook(s, { hook_event_name: 'UserPromptSubmit', prompt: 'go' })
+    applyHook(s, { hook_event_name: 'PreToolUse', tool_name: 'Edit', tool_use_id: 'e1', tool_input: { file_path: 'a.test.ts' } })
+    applyHook(s, { hook_event_name: 'PostToolUse', tool_name: 'Edit', tool_use_id: 'e1' })
+    s.plan = s.plan.map((p, i) => ({ ...p, done: i === 0 }))
+    const stop = applyHook(s, { hook_event_name: 'Stop', last_assistant_message: 'All three are done.' })
+    expect(stop.attention).toBeUndefined()
+    expect(stop.reply).toEqual({ hookSpecificOutput: { hookEventName: 'Stop', additionalContext: expect.stringContaining('2. CI\n3. Docs') } })
+    expect(JSON.stringify(stop.reply)).not.toContain('1. Tests')
+    const turn = s.messages.at(-1)!
+    expect([s.status, turn.status, turn.parts.at(-1)]).toEqual(['working', 'streaming', { type: 'text', text: 'All three are done.' }])
+    // going on because of that, it stops for good — even with a step it left open
+    s.plan = s.plan.map((p, i) => ({ ...p, done: i < 2 }))
+    expect(applyHook(s, { hook_event_name: 'Stop', last_assistant_message: 'Docs stay open.', stop_hook_active: true })).toMatchObject({ attention: 'done', reply: undefined })
+    expect([s.status, turn.status]).toEqual(['idle', 'done'])
+
+    // every step done: nothing to catch up on
+    applyHook(s, { hook_event_name: 'UserPromptSubmit', prompt: 'docs too' })
+    applyHook(s, { hook_event_name: 'PreToolUse', tool_name: 'Write', tool_use_id: 'w1', tool_input: { file_path: 'README.md' } })
+    s.plan = s.plan.map((p) => ({ ...p, done: true }))
+    expect(applyHook(s, { hook_event_name: 'Stop', last_assistant_message: 'Done.' })).toMatchObject({ attention: 'done', reply: undefined })
+
+    // its own task list isn't a plan Mindeck asks about
+    const tasks = fresh()
+    applyHook(tasks, { hook_event_name: 'UserPromptSubmit', prompt: 'go' })
+    applyHook(tasks, { hook_event_name: 'TaskCreated', task_id: 't1', task_subject: 'a' })
+    applyHook(tasks, { hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_use_id: 'b1', tool_input: { command: 'make' } })
+    expect(applyHook(tasks, { hook_event_name: 'Stop', last_assistant_message: 'ok' }).reply).toBeUndefined()
+  })
+
+  it('a request without a tool id is about the open card of that tool — the one with its input first', () => {
+    const s = fresh()
+    applyHook(s, { hook_event_name: 'UserPromptSubmit', prompt: 'go' })
+    s.messages.at(-1)!.parts.push({ type: 'text', text: 'looking' })
+    applyHook(s, { hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_use_id: 'b0', tool_input: { command: 'ls' } })
+    applyHook(s, { hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_use_id: 'b0' }) // done: not open any more
+    applyHook(s, { hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_use_id: 'b1', tool_input: { command: 'npm test' } })
+    applyHook(s, { hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_use_id: 'b2', tool_input: { command: 'npm run build' } })
+    applyHook(s, { hook_event_name: 'PreToolUse', tool_name: 'Read', tool_use_id: 'r1', tool_input: { file_path: 'a' } })
+    expect(toolOf(s, { hook_event_name: 'PermissionRequest', tool_name: 'Bash', tool_input: { command: 'npm test' } })?.id).toBe('b1')
+    // nothing with that input: the latest open one of the tool
+    expect(toolOf(s, { hook_event_name: 'PermissionRequest', tool_name: 'Bash' })?.id).toBe('b2')
+    expect(toolOf(s, { hook_event_name: 'PermissionRequest', tool_name: 'Write' })).toBeUndefined()
+    // asked about, it is still the one
+    applyHook(s, { hook_event_name: 'PermissionRequest', tool_name: 'Bash', tool_input: { command: 'npm test' } })
+    expect(tool(s, 'b1').status).toBe('awaiting-approval')
+    expect(toolOf(s, { hook_event_name: 'PermissionRequest', tool_name: 'Bash', tool_input: { command: 'npm test' } })?.id).toBe('b1')
+    // none open: a card of its own
+    applyHook(s, { hook_event_name: 'PermissionRequest', tool_name: 'Write', tool_input: { file_path: 'b' } })
+    expect(s.messages.at(-1)!.parts.at(-1)).toMatchObject({ type: 'tool', name: 'Write', status: 'awaiting-approval' })
+    // its questions: the user's turn, the card goes on running
+    applyHook(s, { hook_event_name: 'PreToolUse', tool_name: 'AskUserQuestion', tool_use_id: 'q', tool_input: {} })
+    expect(applyHook(s, { hook_event_name: 'PermissionRequest', tool_name: 'AskUserQuestion', tool_input: {} }).attention).toBe('waiting')
+    expect([s.status, tool(s, 'q').status]).toEqual(['waiting', 'running'])
+  })
+
+  it('a Glob looks everywhere its braces say: every alternative counts, any .. in one leaves', () => {
+    const cwd = '/work/app'
+    for (const pattern of ['{.,../..}/**/*', '.{.,x}/secret', '**/../x', 'a/{b,{c,..}}/*', '{x,y}{a,b}/../*', '{.env,a.ts}', '{~/x,a}', '{/etc,src}/*'])
+      expect(staysInside('Glob', { pattern }, cwd), pattern).toBe(false)
+    for (const pattern of ['**/*.ts', '{src,lib}/**/*.{ts,tsx}', 'unbalanced{/*', 'a..b/*', '{1..3}/*'])
+      expect(staysInside('Glob', { pattern }, cwd), pattern).toBe(true)
+    // Past a limit it isn't written out, and asks.
+    expect(toolPaths('Glob', { pattern: '{a,b}'.repeat(8) })).toHaveLength(256)
+    expect(toolPaths('Glob', { pattern: '{a,b}'.repeat(9) })).toEqual(['..'])
+    // Its pattern is relative to its path; what starts elsewhere doesn't care.
+    expect(toolPaths('Glob', { pattern: 'x/*', path: 'src' })).toEqual(['src', 'src/x/*'])
+    expect(toolPaths('Glob', { pattern: '/etc/*', path: 'src' })).toEqual(['src', '/etc/*'])
+    expect(toolPaths('Glob', { pattern: '~/x', path: 'src' })).toEqual(['src', '~/x'])
+    expect(toolPaths('Glob', { path: 'src' })).toEqual(['src'])
+    expect(toolPaths('Grep', { pattern: '../..', path: 'src' })).toEqual(['src'])
+    expect(toolPaths('Read')).toEqual([])
+  })
+
+  it('files that run by themselves: however a path names them, inside the folder only', () => {
+    const cwd = '/work/app'
+    for (const path of ['.claude/settings.json', '/work/app/.mcp.json', 'sub/.git/hooks/x', '.GIT/config', '.Claude/x', '.git./hooks/x', '.git ./hooks/x', '.git::$INDEX_ALLOCATION/hooks/x', '.git.::$DATA', '.husky/pre-commit', '.githooks/pre-commit', '.devcontainer/x.json', '.vscode/tasks.json', '.gemini/settings.json', '.codex/config.toml', '.cursor/hooks.json', 'a\\.git\\x'])
+      expect(runsByItself(path, cwd), path).toBe(true)
+    for (const path of ['src/a.ts', '.github/x.yml', '.mcp.json.bak', 'git/x', 'claude/x', '.gitignore', 'vscode']) expect(runsByItself(path, cwd), path).toBe(false)
+    expect(runsByItself('.git/x')).toBe(true) // no folder to compare with: all of it counts
+    // The folder's own place doesn't count: a project somewhere under ~/.claude writes its files like any other.
+    expect(runsByItself('a.ts', '/home/me/.claude/skills/x')).toBe(false)
+    // They are a matter of changing them: reading one is reading.
+    expect(staysInside('Write', { file_path: '.claude/settings.json' }, cwd)).toBe(false)
+    expect(staysInside('NotebookEdit', { notebook_path: '.vscode/a.ipynb' }, cwd)).toBe(false)
+    expect(staysInside('Read', { file_path: '.claude/settings.json' }, cwd)).toBe(true)
+    expect(approvalRisk('Read', { file_path: '.claude/settings.json' }, cwd)).toBe('read')
+  })
+
+  it('where a path really lands, named from the folder: links followed, the nearest parent deciding, unknown is outside', async () => {
+    const home = await tempDir()
+    const real = await tempDir()
+    await mkdir(join(real, 'src'))
+    await writeFile(join(real, 'src/a.ts'), '')
+    await symlink(home, join(real, 'vendor'))
+    await symlink(join(home, 'not-yet'), join(real, 'dangling.md'))
+    await symlink('src', join(real, 'lib'))
+    await symlink('.claude', join(real, 'docs'))
+    await symlink('loop', join(real, 'loop'))
+    await symlink('.ssh', join(real, 'conf'))
+    expect(await landings(['src/a.ts', 'lib/a.ts', 'lib/new/b.ts', 'docs/settings.json', join(real, 'src/a.ts')], real)).toEqual(['src/a.ts', 'src/a.ts', 'src/new/b.ts', '.claude/settings.json', 'src/a.ts'])
+    expect(await landings(['vendor/.zshenv', 'vendor/new/deep', 'dangling.md'], real)).toEqual([join(home, '.zshenv'), join(home, 'new/deep'), join(home, 'not-yet')])
+    expect(await landings([], real)).toEqual([])
+    expect(await landings([real], real)).toEqual([''])
+    expect(await landings(['loop/x'], real)).toEqual(['..'])
+    // Outside as written: decided without asking the disk.
+    expect(await landings(['/etc/passwd', '../x', '~/.ssh/x', '.env'], real)).toEqual([])
+    // A folder that isn't there has no links.
+    expect(await landings(['a.ts'], join(real, 'gone'))).toEqual([])
+    // The folder itself may be reached by a link: its files are still inside.
+    await symlink(real, join(home, 'project'))
+    const viaLink = join(home, 'project')
+    expect(await landings(['src/a.ts', join(viaLink, 'lib/a.ts')], viaLink)).toEqual(['src/a.ts', 'src/a.ts'])
+    // What they mean for a grant and for how a look outside counts.
+    const lands = await landings(['vendor/.zshenv'], real)
+    expect(staysInside('Write', { file_path: 'vendor/.zshenv' }, real, lands)).toBe(false)
+    expect(approvalRisk('Read', { file_path: 'vendor/.zshenv' }, real, lands)).toBe('write')
+    expect(approvalRisk('Read', { file_path: 'lib/a.ts' }, real, await landings(['lib/a.ts'], real))).toBe('read')
+    expect(staysInside('Write', { file_path: 'docs/settings.json' }, real, await landings(['docs/settings.json'], real))).toBe(false)
+    // A link to keys inside the folder is keys.
+    expect(staysInside('Read', { file_path: 'conf/notes' }, real, await landings(['conf/notes'], real))).toBe(false)
+  })
+
+  it('approvals: looking outside the project or fetching from the web count as changes (BE-SEC-17)', () => {
+    const cwd = '/work/app'
+    expect(approvalRisk('Read', { file_path: '/work/app/src/a.ts' }, cwd)).toBe('read')
+    expect(approvalRisk('Read', { file_path: 'src/a.ts' }, cwd)).toBe('read')
+    expect(approvalRisk('Glob', { pattern: '**/*.ts' }, cwd)).toBe('read')
+    expect(approvalRisk('Read', { file_path: '/home/me/.ssh/id_ed25519' }, cwd)).toBe('write')
+    expect(approvalRisk('Read', { file_path: '~/.aws/credentials' }, cwd)).toBe('write')
+    expect(approvalRisk('Read', { file_path: '/work/app-other/x' }, cwd)).toBe('write') // a sibling, not inside
+    expect(approvalRisk('Grep', { pattern: 'x', path: '../../etc' }, cwd)).toBe('write')
+    expect(approvalRisk('Read', { file_path: '.env' }, cwd)).toBe('write') // keys and credentials, even inside
+    expect(approvalRisk('LS', { path: '/work/app' }, cwd)).toBe('read')
+    expect(approvalRisk('WebFetch', { url: 'https://example.com/?q=secret' }, cwd)).toBe('write')
+    expect(approvalRisk('WebSearch', { query: 'x' }, cwd)).toBe('read')
+    expect(approvalRisk('Bash', { command: 'ls' }, cwd)).toBe('execute')
+    expect(approvalRisk('Edit', { file_path: 'a.ts' }, cwd)).toBe('write')
+    expect(approvalRisk('Read')).toBe('read')
+    expect(approvalRisk('Glob', { pattern: '/home/me/.ssh/*' }, cwd)).toBe('write') // a Glob's pattern says where it looks
+    expect(approvalRisk('Glob', { pattern: '**/.env' }, cwd)).toBe('write')
+    expect(approvalRisk('Grep', { pattern: '/home/me/.ssh' }, cwd)).toBe('read') // a Grep's is what it looks for
+    expect(staysInside('Write', { file_path: 'src/a.ts' }, cwd)).toBe(true)
+    expect(staysInside('Write', { file_path: '/home/me/.zshenv' }, cwd)).toBe(false)
+    expect(staysInside('WebFetch', { url: 'https://example.com' }, cwd)).toBe(true)
+    expect(staysInside('Edit', undefined, cwd)).toBe(true)
+    // Without a folder to compare with, any absolute path reaches outside.
+    expect(reachesOutside('/etc/passwd')).toBe(true)
+    expect(reachesOutside('src/a.ts')).toBe(false)
+    expect(reachesOutside('/work/app/', '/work/app/')).toBe(false)
+    expect(reachesOutside('/work/app/x', '/work/app/')).toBe(false)
+    expect(reachesOutside('/etc/hosts', '/')).toBe(false) // a session at the disk's root: nothing is outside
+  })
+
   it('tool titles, risks and one-line summaries', () => {
+    // Mindeck's browser: reading shared tabs runs, acting asks; titled as the browser
+    expect(toolRisk('mcp__mindeck__browser_snapshot')).toBe('read')
+    expect(toolRisk('mcp__mindeck__browser_console')).toBe('read')
+    expect(toolRisk('mcp__mindeck__browser_click')).toBe('write')
+    expect(toolTitle('mcp__mindeck__browser_click')).toBe('Mindeck browser · click')
+    // Mindeck's terminals: reading the agents' own runs, starting a command is running one
+    expect(toolRisk('mcp__mindeck__terminal_read')).toBe('read')
+    expect(toolRisk('mcp__mindeck__terminal_run')).toBe('execute')
+    expect(toolRisk('mcp__mindeck__terminal_stop')).toBe('write')
+    expect(toolTitle('mcp__mindeck__terminal_run')).toBe('Mindeck terminal · run')
+    expect(toolTitle('mcp__mindeck__memory_read')).toBe('Mindeck memory · memory read')
     expect(['Read', 'Edit', 'Bash', 'mcp__mindeck__memory_search', 'mcp__mindeck__memory_append', 'mcp__github__create_pr', 'Whatever'].map(toolRisk)).toEqual([
       'read',
       'write',

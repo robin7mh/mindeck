@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { IPC_CHANNELS, IPC_EVENTS, type IpcChannel, type IpcEvent } from '@shared/ipc/contract'
 
 const channelAllowlist = new Set<string>(IPC_CHANNELS)
@@ -22,6 +22,7 @@ const api = {
       ipcRenderer.removeListener('window:maximized-changed', listener)
     }
   },
+  toggleFullScreen: () => ipcRenderer.send('window:toggle-fullscreen'),
   isFullScreen: (): Promise<boolean> => ipcRenderer.invoke('window:is-fullscreen'),
   onFullScreenChange: (cb: (isFull: boolean) => void): (() => void) => {
     const listener = (_: unknown, isFull: boolean) => cb(isFull)
@@ -31,6 +32,11 @@ const api = {
     }
   },
   platform: process.platform,
+
+  /** Files dragged out of Mindeck into Finder / Explorer / other apps (the OS drag, with the file's icon). */
+  startDrag: (paths: string[]) => ipcRenderer.send('files:start-drag', paths),
+  /** The path of a file dropped in from the OS (Electron no longer puts it on `File`). */
+  pathForFile: (file: File): string => webUtils.getPathForFile(file),
 
   /** Typed domain IPC. Channel is validated against the shared allowlist. */
   invoke: (channel: IpcChannel, payload?: unknown): Promise<unknown> => {

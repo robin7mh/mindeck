@@ -2,6 +2,7 @@ import { vi } from 'vitest'
 import { fireEvent, screen } from '@testing-library/react'
 import { setTransport } from '@shared/ipc/client'
 import type { Transport } from '@shared/ipc/transport'
+import { DEFAULT_TERMINAL_SETTINGS } from '@shared/types/terminal'
 
 type Route = (payload: never) => unknown
 
@@ -13,13 +14,22 @@ export const OPEN_CLOUD = {
   account: null,
   license: null,
   validUntil: null,
+  offlineUntil: null,
   online: true,
   webUrl: null,
   error: null
 }
 
 /** Answers every test bridge gives unless a test routes the channel itself. */
-const DEFAULT_ROUTES: Record<string, Route> = { 'cloud:status': () => OPEN_CLOUD, 'sftp:targets': () => [], 'remote:list': () => [] }
+const DEFAULT_ROUTES: Record<string, Route> = {
+  'cloud:status': () => OPEN_CLOUD,
+  'sftp:targets': () => [],
+  'remote:list': () => [],
+  // The Terminal: default settings, no shells found, nothing saved from a last run.
+  'terminal:settings': () => DEFAULT_TERMINAL_SETTINGS,
+  'terminal:shells': () => [],
+  'terminal:restore': () => null
+}
 
 /**
  * Installs a fake `window.mindeck` bridge. `routes` answer `invoke` per channel
@@ -100,7 +110,14 @@ export function installRemote(routes: Record<string, Route> = {}) {
       listeners.get(channel)!.add(cb)
       return () => listeners.get(channel)!.delete(cb)
     }),
-    emit: (channel: string, payload: unknown) => [...(listeners.get(channel) ?? [])].forEach((cb) => cb(payload))
+    emit: (channel: string, payload: unknown) => [...(listeners.get(channel) ?? [])].forEach((cb) => cb(payload)),
+    resyncs: new Set<() => void>(),
+    onResync: vi.fn((cb: () => void) => {
+      transport.resyncs.add(cb)
+      return () => transport.resyncs.delete(cb)
+    }),
+    /** The push channel is back after an outage. */
+    resync: () => [...transport.resyncs].forEach((cb) => cb())
   }
   setTransport(transport as unknown as Transport)
   return transport

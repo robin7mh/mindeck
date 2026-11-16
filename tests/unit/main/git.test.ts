@@ -1,8 +1,10 @@
 import { execFileSync } from 'node:child_process'
+import { EventEmitter } from 'node:events'
 import { existsSync } from 'node:fs'
-import { mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rm, symlink, truncate, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { PassThrough } from 'node:stream'
+import { describe, expect, it, vi } from 'vitest'
 import { tempDir } from './helpers'
 import { GitService, remoteWebUrl } from '../../../electron/main/services/git/GitService'
 
@@ -62,6 +64,21 @@ describe('GitService', () => {
     expect(await git.fileAt(dir, start.base, 'src/new.ts')).toBe('')
   })
 
+  it('new files too big to count, or gone before they are read, count as 0 lines', async () => {
+    const dir = await repo()
+    const start = (await git.baseline(dir))!
+    // A multi-GB dump is not read into memory (sparse here: big, but no disk used).
+    await writeFile(join(dir, 'dump.sql'), '')
+    await truncate(join(dir, 'dump.sql'), 5 * 1024 * 1024)
+    await symlink(join(dir, 'nowhere'), join(dir, 'broken-link'))
+    await writeFile(join(dir, 'small.txt'), 'a\nb\n')
+    expect(await git.changes(dir, start)).toEqual([
+      { path: 'broken-link', status: 'added', added: 0, removed: 0 },
+      { path: 'dump.sql', status: 'added', added: 0, removed: 0 },
+      { path: 'small.txt', status: 'added', added: 2, removed: 0 }
+    ])
+  })
+
   it('a clean tree uses HEAD; binary diffs count as 0 lines', async () => {
     const dir = await repo()
     await writeFile(join(dir, 'pic.bin'), Buffer.from([0, 9]))
@@ -70,7 +87,11 @@ describe('GitService', () => {
     const start = (await git.baseline(dir))!
     expect(start.base).toBe(sh(dir, 'rev-parse', 'HEAD').trim())
     await writeFile(join(dir, 'pic.bin'), Buffer.from([0, 8, 7]))
-    expect(await git.changes(dir, start)).toEqual([{ path: 'pic.bin', status: 'modified', added: 0, removed: 0 }])
+    await symlink(join(dir, 'nowhere'), join(dir, 'dangling')) // new, and nothing to read: 0 lines
+    expect(await git.changes(dir, start)).toEqual([
+      { path: 'dangling', status: 'added', added: 0, removed: 0 },
+      { path: 'pic.bin', status: 'modified', added: 0, removed: 0 }
+    ])
   })
 
   it('worktrees: add, apply into the project (new files too, a node_modules link left out), remove with the branch', async () => {
@@ -98,6 +119,54 @@ describe('GitService', () => {
     expect(existsSync(wt)).toBe(false)
     expect(sh(dir, 'branch', '--list', 'mindeck/test')).toBe('')
     await expect(git.removeWorktree(dir, wt, 'mindeck/test')).rejects.toMatchObject({ code: 'git' })
+    // its branch gone already: the worktree goes all the same
+    const wt2 = join(await tempDir(), 'wt2')
+    await git.addWorktree(dir, wt2, 'mindeck/two')
+    await git.removeWorktree(dir, wt2, 'mindeck/not-there')
+    expect(existsSync(wt2)).toBe(false)
+  })
+
+  it('a session in a subfolder of its repository sees that folder: its changes and old versions, nothing past it', async () => {
+    const dir = await repo()
+    await mkdir(join(dir, 'pkg'))
+    await mkdir(join(dir, 'other'))
+    await writeFile(join(dir, 'pkg', 'mine.txt'), 'mine\n')
+    await writeFile(join(dir, 'other', 'secret.txt'), 'SECRET\n')
+    sh(dir, 'add', '.')
+    sh(dir, 'commit', '-q', '-m', 'packages')
+    const pkg = join(dir, 'pkg')
+    const start = (await git.baseline(pkg))!
+    expect(await git.fileAt(pkg, start.base, 'mine.txt')).toBe('mine\n')
+    expect(await git.fileAt(pkg, start.base, 'other/secret.txt')).toBe('')
+    // A path is a path, whatever else it looks like to git.
+    expect(await git.fileAt(pkg, start.base, '/^packages')).toBe('')
+    await writeFile(join(pkg, 'mine.txt'), 'changed\n')
+    await writeFile(join(dir, 'other', 'secret.txt'), 'CHANGED\n')
+    expect((await git.changes(pkg, start)).map((c) => c.path)).toEqual(['mine.txt'])
+  })
+
+  it('applies a worktree byte for byte: text in any encoding, a large patch with multibyte characters', async () => {
+    const dir = await repo()
+    const latin1 = Buffer.from('M\xFCller\nGr\xFC\xDFe\n', 'latin1')
+    await writeFile(join(dir, 'old.txt'), latin1)
+    sh(dir, 'add', 'old.txt')
+    sh(dir, 'commit', '-q', '-m', 'latin-1')
+    const wt = join(await tempDir(), 'wt')
+    await git.addWorktree(dir, wt, 'mindeck/bytes')
+    const start = (await git.baseline(wt))!
+
+    const added = Buffer.from('Stra\xDFe\n', 'latin1')
+    const changed = Buffer.concat([latin1, Buffer.from('K\xF6ln\n', 'latin1')])
+    // Far more than one pipe chunk: a character across two of them must arrive whole.
+    const large = Buffer.from(`${'€uro '.repeat(400_000)}\n`)
+    await writeFile(join(wt, 'added.txt'), added)
+    await writeFile(join(wt, 'old.txt'), changed)
+    await writeFile(join(wt, 'large.txt'), large)
+
+    expect(await git.applyTo(dir, wt, start.base)).toBe(3)
+    expect(await readFile(join(dir, 'added.txt'))).toEqual(added)
+    expect(await readFile(join(dir, 'old.txt'))).toEqual(changed)
+    expect((await readFile(join(dir, 'large.txt'))).equals(large)).toBe(true)
   })
 
   it('refuses a patch that does not apply, touching nothing', async () => {
@@ -171,6 +240,20 @@ describe('GitService', () => {
     expect(remoteWebUrl('file:///srv/demo.git')).toBeUndefined()
   })
 
+  it('restricted unless the folder belongs to a trusted project: the repository’s hooks and filters stay off', async () => {
+    const dir = await repo()
+    await writeFile(join(dir, 'hook.sh'), '#!/bin/sh\ntouch "$(dirname "$0")/PWNED"\n')
+    sh(dir, 'config', 'filter.evil.clean', 'sh hook.sh; cat')
+    await writeFile(join(dir, '.gitattributes'), '* filter=evil\n')
+    await writeFile(join(dir, 'a.txt'), 'changed\n')
+    const restricted = new GitService({ trusted: () => false })
+    expect(await restricted.uncommitted(dir)).toBe(4) // a.txt, .gitattributes, hook.sh, old.txt
+    expect(await git.uncommitted(dir)).toBe(4) // no trust given: restricted
+    expect(existsSync(join(dir, 'PWNED'))).toBe(false)
+    expect(await new GitService({ trusted: (d) => d === dir }).uncommitted(dir)).toBeGreaterThan(0)
+    expect(existsSync(join(dir, 'PWNED'))).toBe(true)
+  })
+
   it('reports a missing git binary as an error', async () => {
     const saved = process.env.PATH
     process.env.PATH = ''
@@ -178,6 +261,31 @@ describe('GitService', () => {
       await expect(git.addWorktree(await tempDir(), '/x', 'b')).rejects.toMatchObject({ code: 'ENOENT' })
     } finally {
       process.env.PATH = saved
+    }
+  })
+
+  it('git leaving before it read the patch (EPIPE) is no uncaught error: its exit code says the patch failed', async () => {
+    const fakeGit = (_file: string, args: string[]) => {
+      const child = Object.assign(new EventEmitter(), { stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough() })
+      setImmediate(() => {
+        if (args.includes('diff')) child.stdout.write('a patch\n')
+        if (args.includes('apply')) {
+          child.stdin.emit('error', Object.assign(new Error('write EPIPE'), { code: 'EPIPE' }))
+          child.stderr.write('patch does not apply\n')
+        }
+        setImmediate(() => child.emit('close', args.includes('apply') ? 1 : 0))
+      })
+      return child
+    }
+    vi.resetModules()
+    vi.doMock('node:child_process', async (importOriginal) => ({ ...(await importOriginal<typeof import('node:child_process')>()), spawn: fakeGit }))
+    try {
+      const { GitService: Faked } = await import('../../../electron/main/services/git/GitService')
+      const dir = await tempDir()
+      await expect(new Faked().applyTo(dir, dir, 'base')).rejects.toMatchObject({ code: 'conflict', message: expect.stringContaining('patch does not apply') })
+    } finally {
+      vi.doUnmock('node:child_process')
+      vi.resetModules()
     }
   })
 })

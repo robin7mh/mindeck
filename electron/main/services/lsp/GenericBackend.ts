@@ -13,12 +13,14 @@ import type {
   LspRange,
   LspRename,
   LspSignature,
+  LspSymbol,
   LspTextEdit
 } from '@shared/types/lsp'
 import { LANGUAGES, languageOf, type LanguageInfo } from '@shared/types/languages'
 import { confine } from '../../lib/confine'
 import { shellCommand, shellEnv, shellQuote } from '../terminal/TerminalService'
 import { shellArgs } from '../../lib/shellArgs'
+import { spawnProgram } from '../../lib/executables'
 import { CATALOG, type ServerSpec } from '../tools/catalog'
 import { LspClient, type RpcProcess } from './LspClient'
 
@@ -34,6 +36,8 @@ type TextEdit = { range: Range; newText: string }
 type Location = { uri: string; range: Range } | { targetUri: string; targetRange: Range; targetSelectionRange?: Range }
 type Markup = string | { kind: string; value: string } | { language: string; value: string }
 type WorkspaceEdit = { changes?: Record<string, TextEdit[]>; documentChanges?: ({ textDocument: { uri: string }; edits: TextEdit[] } | { kind: string })[] }
+type DocumentSymbol = { name: string; detail?: string; kind: number; range: Range; selectionRange: Range; children?: DocumentSymbol[] }
+type SymbolInformation = { name: string; kind: number; location: { uri: string; range: Range } }
 type RawDiagnostic = { range: Range; message: string; severity?: number; code?: number | string; source?: string; tags?: number[] }
 type Item = {
   label: string
@@ -113,6 +117,7 @@ const CAPABILITIES = {
     hover: { contentFormat: ['markdown', 'plaintext'] },
     signatureHelp: { signatureInformation: { documentationFormat: ['markdown', 'plaintext'], parameterInformation: { labelOffsetSupport: true }, activeParameterSupport: true } },
     definition: { linkSupport: true },
+    documentSymbol: { hierarchicalDocumentSymbolSupport: true },
     references: {},
     rename: { prepareSupport: false },
     codeAction: { codeActionLiteralSupport: { codeActionKind: { valueSet: ['quickfix', 'refactor', 'source'] } } },
@@ -120,8 +125,13 @@ const CAPABILITIES = {
   }
 }
 
-/** Start a language server like the user's terminal would (their PATH — node, go, ruby …). */
-export function spawnServer(command: string, args: string[], cwd: string): RpcProcess {
+/**
+ * Start a language server like the user's terminal would (their PATH — node,
+ * go, ruby …). Windows: directly, without PowerShell (npm's `.cmd` shims
+ * through cmd.exe) — the server's path is known.
+ */
+export function spawnServer(command: string, args: string[], cwd: string, platform: NodeJS.Platform = process.platform): RpcProcess {
+  if (platform === 'win32') return spawnProgram(command, args, { cwd, env: shellEnv(), stdio: ['pipe', 'pipe', 'ignore'] }, platform)
   const { file } = shellCommand()
   const line = [command, ...args].map(shellQuote).join(' ')
   return spawn(file, shellArgs(line), { cwd, env: shellEnv(), stdio: ['pipe', 'pipe', 'ignore'] })
@@ -151,6 +161,8 @@ export interface ServerTools {
 
 export interface GenericOptions {
   resolveRoot: (projectId: string) => string | undefined
+  /** Whether the project is trusted (WorkspaceTrust): language servers run only for trusted ones. */
+  trusted?: (projectId: string) => boolean
   tools: ServerTools
   spawn?: (command: string, args: string[], cwd: string) => RpcProcess
   /** A server published new diagnostics for this project. */
@@ -298,6 +310,16 @@ export class GenericBackend {
     }
   }
 
+  /** The file's symbols — nested (DocumentSymbol), or flat as older servers send them (SymbolInformation). */
+  async symbols(projectId: string, path: string): Promise<LspSymbol[]> {
+    const result = await this.ask<(DocumentSymbol | SymbolInformation)[]>(projectId, path, 'textDocument/documentSymbol', (doc) => ({ textDocument: { uri: doc } }))
+    const convert = (s: DocumentSymbol | SymbolInformation): LspSymbol =>
+      'location' in s
+        ? { name: s.name, kind: s.kind, range: fromRange(s.location.range), selection: fromRange(s.location.range), children: [] }
+        : { name: s.name, detail: s.detail || undefined, kind: s.kind, range: fromRange(s.range), selection: fromRange(s.selectionRange), children: (s.children ?? []).map(convert) }
+    return (result ?? []).map(convert)
+  }
+
   /** Quick fixes the server offers for the diagnostics in a range. */
   async codeFixes(projectId: string, path: string, at: LspRange): Promise<LspCodeFix[]> {
     const found = await this.find(projectId, path)
@@ -319,6 +341,7 @@ export class GenericBackend {
   async executeCommand(projectId: string, languageId: string, command: string, args: unknown[]): Promise<unknown> {
     const lang = LANGUAGES.find((l) => l.id === languageId)!
     const session = await this.session(projectId, lang)
+    if (!session && !this.trusts(projectId)) throw coded('untrusted', 'Language servers run only in projects you trust')
     if (!session) throw coded('server-missing', `No ${lang.name} language server installed — Settings → Languages`)
     return session.client.request('workspace/executeCommand', { command, arguments: args }, INITIALIZE_TIMEOUT_MS)
   }
@@ -329,6 +352,17 @@ export class GenericBackend {
     await Promise.all(all.map((s) => s.client.dispose()))
   }
 
+  /** The project is no longer trusted: its servers stop. */
+  async forget(projectId: string): Promise<void> {
+    const gone = [...this.sessions].filter(([, s]) => s.projectId === projectId)
+    for (const [key] of gone) this.sessions.delete(key)
+    await Promise.all(gone.map(([, s]) => s.client.dispose()))
+  }
+
+  private trusts(projectId: string): boolean {
+    return this.opts.trusted?.(projectId) ?? false
+  }
+
   // --- sessions ---
 
   private key(projectId: string, lang: LanguageInfo): string {
@@ -336,6 +370,9 @@ export class GenericBackend {
   }
 
   private async session(projectId: string, lang: LanguageInfo): Promise<Session | undefined> {
+    // Restricted: no language server — they run the project's code (rust-analyzer
+    // its build scripts, jdtls its Gradle wrapper, Pyright the project's Python).
+    if (!this.trusts(projectId)) return undefined
     const key = this.key(projectId, lang)
     const existing = this.sessions.get(key)
     if (existing?.client.running) {

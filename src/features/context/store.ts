@@ -53,7 +53,9 @@ export const useContextStore = create<ContextState>((set) => {
   }
 })
 
+const IDLE: ContextEntry = { loading: false, indexing: false }
+
 /** Selector for one project's context entry (stable default). */
 export function useProjectContextEntry(projectId: string): ContextEntry {
-  return useContextStore((s) => s.byProject[projectId] ?? { loading: false, indexing: false })
+  return useContextStore((s) => s.byProject[projectId] ?? IDLE)
 }

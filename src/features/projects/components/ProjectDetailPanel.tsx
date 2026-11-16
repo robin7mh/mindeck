@@ -1,16 +1,15 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import {
   AppWindow,
-  ArrowDownToLine,
   GitBranch,
   GitCommitHorizontal,
   ArrowUp,
   ArrowDown,
-  Code2,
   RefreshCw,
   Trash2,
   FileText,
-  Package
+  Package,
+  X
 } from 'lucide-react'
 import type { Project } from '@shared/types/project'
 import type { ModuleId } from '@/types'
@@ -20,6 +19,7 @@ import { cn } from '@/lib/cn'
 import { useT } from '@/lib/i18n'
 import { repoLink } from '@/lib/repo'
 import { useSession } from '@/features/session/store'
+import { useEditor } from '@/features/editor/store'
 import { useProjects } from '../store'
 import { isDesktop } from '@shared/ipc/client'
 import { ActionButton } from './ActionButton'
@@ -37,7 +37,7 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
 
 export function ProjectDetailPanel({ project, onNavigate }: { project: Project; onNavigate: (module: ModuleId) => void }) {
   const t = useT()
-  const { refresh, pull, remove, openEditor, openInGitHubDesktop, githubDesktop, busyId } = useProjects()
+  const { refresh, remove, openInGitHubDesktop, githubDesktop, busyId } = useProjects()
   const busy = busyId === project.id
   const g = project.git
   const s = project.stack
@@ -45,10 +45,14 @@ export function ProjectDetailPanel({ project, onNavigate }: { project: Project; 
   // A paired browser gets shells only when the core allows remote shells.
   const shells = useSession((st) => desktop || st.info?.remoteTerminal === true)
   const repo = g?.webUrl ? repoLink(g.webUrl) : undefined
+  // Removing a project closes its files: unsaved edits are lost, so it asks first.
+  const unsaved = useEditor((st) => st.tabs.filter((x) => x.projectId === project.id && x.dirty).length)
+  const [confirmRemove, setConfirmRemove] = useState(false)
 
   // Git changes outside Mindeck (commits, pushes, a new remote): re-detect whenever a project is shown.
   useEffect(() => {
     void useProjects.getState().refresh(project.id)
+    setConfirmRemove(false)
   }, [project.id])
 
   return (
@@ -121,7 +125,7 @@ export function ProjectDetailPanel({ project, onNavigate }: { project: Project; 
                 {s.frameworks.map((f) => (
                   <span
                     key={f}
-                    className="rounded border border-hud/60 bg-elevated/40 px-1.5 py-0.5 text-[10px] text-text-secondary"
+                    className="rounded-sm border border-hud/60 bg-elevated/40 px-1.5 py-0.5 text-[10px] text-text-secondary"
                   >
                     {f}
                   </span>
@@ -142,7 +146,7 @@ export function ProjectDetailPanel({ project, onNavigate }: { project: Project; 
                 {s.packageJson.scripts.slice(0, 8).map((sc) => (
                   <span
                     key={sc}
-                    className="inline-flex items-center gap-1 rounded border border-hud/60 bg-elevated/40 px-1.5 py-0.5 text-[10px] text-text-secondary"
+                    className="inline-flex items-center gap-1 rounded-sm border border-hud/60 bg-elevated/40 px-1.5 py-0.5 text-[10px] text-text-secondary"
                   >
                     <Package size={10} className="text-text-muted" />
                     {sc}
@@ -158,21 +162,22 @@ export function ProjectDetailPanel({ project, onNavigate }: { project: Project; 
 
       {/* actions */}
       <div className="flex flex-wrap gap-2 border-t border-hud/50 px-4 py-3">
-        {/* Opening apps on the host only makes sense in the desktop window. */}
-        {desktop && <ActionButton icon={Code2} label="VS Code" onClick={() => openEditor(project.id)} />}
         {shells && <ProjectTerminalMenu projectId={project.id} onShow={() => onNavigate('terminal')} />}
         {repo && <ActionButton icon={repo.Icon} label={repo.label} title={t.projects.openRepo(g!.webUrl!)} href={g!.webUrl} />}
         {desktop && githubDesktop && g?.isRepo && (
           <ActionButton icon={AppWindow} label={githubDesktop} title={t.projects.openIn(githubDesktop)} onClick={() => openInGitHubDesktop(project.id)} />
         )}
-        {/* With an upstream: `git pull` right here — no terminal to stop for it. */}
-        {shells && (g?.ahead != null || g?.behind != null) && (
-          <ActionButton icon={ArrowDownToLine} label={t.projects.pull} title={t.projects.pullHint} onClick={() => void pull(project.id)} disabled={busy} />
-        )}
         <ActionButton icon={RefreshCw} label={busy ? t.projects.refreshing : t.projects.refresh} onClick={() => refresh(project.id)} disabled={busy} />
         <div className="flex-1" />
-        <ActionButton icon={Trash2} label={t.projects.remove} onClick={() => remove(project.id)} disabled={busy} danger />
+        <ActionButton icon={Trash2} label={t.projects.remove} onClick={() => (unsaved ? setConfirmRemove(true) : remove(project.id))} disabled={busy} danger />
       </div>
+      {confirmRemove && (
+        <div role="alertdialog" className="flex flex-wrap items-center gap-2 border-t border-danger/40 bg-danger/6 px-4 py-2">
+          <p className="mr-auto font-sans text-[12px] text-text-primary">{t.projects.removeUnsaved(unsaved)}</p>
+          <ActionButton icon={Trash2} label={t.projects.removeAnyway} onClick={() => remove(project.id)} disabled={busy} danger />
+          <ActionButton icon={X} label={t.common.cancel} onClick={() => setConfirmRemove(false)} />
+        </div>
+      )}
     </div>
   )
 }

@@ -1,12 +1,48 @@
-@import '@fontsource-variable/inter';
-@import '@fontsource/jetbrains-mono/400.css';
-@import '@fontsource/jetbrains-mono/500.css';
-@import '@fontsource/jetbrains-mono/700.css';
-@import '@xterm/xterm/css/xterm.css';
+@import 'tailwindcss' source(none);
 
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@config '../tailwind.config.ts';
+
+/*
+ * Tailwind CSS v3's defaults that v4 changed, so the app looks and behaves
+ * the same: borders without a color are gray-200 (the base layer below makes
+ * them --border-hud), placeholders gray-400, buttons show the pointer, and
+ * `hover:` also applies on touch screens (v4 limits it to devices that can hover).
+ */
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-gray-200, currentcolor);
+  }
+
+  input::placeholder,
+  textarea::placeholder {
+    color: var(--color-gray-400);
+  }
+
+  button:not(:disabled),
+  [role='button']:not(:disabled) {
+    cursor: pointer;
+  }
+}
+
+@custom-variant hover (&:hover);
+/* `focus-visible:` only while the keyboard moves around — not after a click and a typed key (lib/inputModality.ts). */
+@custom-variant focus-visible (&:focus-visible:not([data-input='pointer'] *));
+
+/*
+ * Corner radii of the modern design: small controls 6, buttons and inputs 9,
+ * cards and panels 14, the composer 16. Every `rounded-*` in the app follows.
+ */
+@theme {
+  --radius-xs: 0.25rem;
+  --radius-sm: 0.375rem;
+  --radius-md: 0.5625rem;
+  --radius-lg: 0.875rem;
+  --radius-xl: 1rem;
+}
 
 /*
  * SINGLE SOURCE OF TRUTH for color.
@@ -37,10 +73,10 @@
 
   --text-primary: 226 236 247;
   --text-secondary: 150 168 189;
-  --text-muted: 96 112 133;
+  --text-muted: 119 137 160; /* raised for 4.5:1 on every surface */
 
-  /* Strength of decorative glows (text-glow, HUD drop-shadows) — kept subtle. */
-  --glow: 0.4;
+  /* Decorative glows are off in the modern design (kept as a token for old call sites). */
+  --glow: 0;
 
   /* Memory graph palette — one hue per folder in colorful mode. */
   --graph-cyan: 56 214 232;
@@ -79,7 +115,7 @@
 
   --text-primary: 17 24 39;
   --text-secondary: 61 74 94;
-  --text-muted: 107 120 140;
+  --text-muted: 96 108 128;
 
   --glow: 0;
 
@@ -128,7 +164,18 @@
     background: rgb(var(--border-hud-strong) / 0.5);
   }
   ::-webkit-scrollbar-thumb:hover {
-    background: rgb(var(--accent-cyan) / 0.4);
+    background: rgb(var(--border-hud-strong) / 0.8);
+  }
+
+  /* One focus ring for everything reachable by keyboard — while the keyboard moves around (Tab): after a click, a
+     typed key (a shortcut, a letter) draws none (lib/inputModality.ts). */
+  :focus-visible:not([data-input='pointer'] *) {
+    outline: 2px solid rgb(var(--accent-cyan) / 0.8);
+    outline-offset: 2px;
+  }
+  /* …and not the browser's own ring either. */
+  [data-input='pointer'] :focus-visible {
+    outline: none;
   }
 
   ::selection {
@@ -138,22 +185,21 @@
 }
 
 @layer components {
-  /* Uppercase, tracked technical label — used across the UI. */
+  /* Small label — sentence case, no tracking (was: uppercase, letter-spaced). */
   .tech-label {
-    @apply font-sans text-[10px] font-medium uppercase leading-none text-text-muted;
-    letter-spacing: var(--tw-tracking, 0.18em);
-    letter-spacing: 0.18em;
+    @apply font-sans text-[12px] font-medium leading-none text-text-muted;
+    letter-spacing: 0;
   }
 
-  /* The one panel treatment. Reused everywhere to keep borders consistent. */
+  /* The one panel treatment: a calm card with a hairline border. */
   .panel {
-    @apply relative rounded-lg border bg-panel/70 backdrop-blur-sm;
-    border-color: rgb(var(--border-hud) / 0.7);
+    @apply relative rounded-lg border bg-panel;
+    border-color: rgb(var(--border-hud) / 0.45);
   }
 
   .panel-flush {
-    @apply relative rounded-lg border bg-panel/40;
-    border-color: rgb(var(--border-hud) / 0.5);
+    @apply relative rounded-lg border bg-panel/60;
+    border-color: rgb(var(--border-hud) / 0.4);
   }
 
   /* Rendered markdown (Memory preview). */
@@ -218,10 +264,10 @@
     @apply text-text-muted;
   }
   .md-prose .md-tag {
-    @apply rounded border border-hud/60 bg-elevated/50 px-1 py-px font-mono text-[11px] text-purple;
+    @apply rounded-sm border border-hud/60 bg-elevated/50 px-1 py-px font-mono text-[11px] text-purple;
   }
   .md-prose code {
-    @apply rounded bg-elevated/70 px-1 py-px font-mono text-[12px] text-text-primary;
+    @apply rounded-sm bg-elevated/70 px-1 py-px font-mono text-[12px] text-text-primary;
   }
   .md-prose pre {
     @apply overflow-x-auto rounded-md border border-hud/50 bg-surface/60 p-3;
@@ -245,6 +291,138 @@
   .md-prose input[type='checkbox'] {
     @apply mr-1.5 align-middle accent-cyan;
   }
+  /* Pictures in read mode come from the vault (filled in by the note view). */
+  .md-prose img {
+    @apply my-2 max-w-full rounded-sm border border-hud/40;
+  }
+  .md-prose img.missing {
+    @apply border-dashed px-2 py-1 font-mono text-[11px] text-text-muted;
+  }
+
+}
+
+/*
+ * The note editor (CodeMirror) — outside any layer: CodeMirror's own styles
+ * are unlayered and would beat every cascade layer.
+ */
+/* Live Preview looks like the read mode. */
+.note-editor .cm-editor {
+  @apply h-full bg-transparent font-sans text-[14px] leading-[1.75] text-text-primary;
+}
+.note-editor .cm-editor.cm-focused {
+  outline: none;
+}
+.note-editor .cm-scroller {
+  @apply px-5 py-4 font-sans;
+}
+.note-editor .cm-content {
+  @apply mx-auto max-w-3xl caret-cyan;
+}
+.note-editor .cm-cursor {
+  border-left-color: rgb(var(--accent-cyan));
+}
+.note-editor .cm-selectionBackground,
+.note-editor .cm-focused .cm-selectionBackground {
+  background: rgb(var(--accent-cyan) / 0.18) !important;
+}
+.note-editor .cm-placeholder {
+  @apply whitespace-pre-wrap text-text-muted/60;
+}
+.note-editor .cm-md-h1 {
+  @apply text-[22px] font-semibold text-text-primary;
+}
+.note-editor .cm-md-h2 {
+  @apply text-[18px] font-semibold text-text-primary;
+}
+.note-editor .cm-md-h3 {
+  @apply text-[15px] font-semibold text-text-primary;
+}
+.note-editor .cm-md-h4,
+.note-editor .cm-md-h5,
+.note-editor .cm-md-h6 {
+  @apply font-semibold text-text-primary;
+}
+.note-editor .cm-md-strong,
+.note-editor .cm-md-hl-strong {
+  @apply font-semibold text-text-primary;
+}
+.note-editor .cm-md-em,
+.note-editor .cm-md-hl-em {
+  @apply italic;
+}
+.note-editor .cm-md-strike,
+.note-editor .cm-md-hl-strike,
+.note-editor .cm-md-done {
+  @apply text-text-muted line-through;
+}
+.note-editor .cm-md-code,
+.note-editor .cm-md-hl-code {
+  @apply rounded-sm bg-elevated/70 px-1 font-mono text-[12.5px];
+}
+.note-editor .cm-md-codeblock {
+  @apply bg-surface/60 font-mono text-[12.5px] text-text-secondary;
+}
+.note-editor .cm-md-codeblock .cm-md-code {
+  @apply bg-transparent p-0;
+}
+.note-editor .cm-md-codeinfo {
+  @apply font-mono text-[10.5px] uppercase text-text-muted;
+}
+.note-editor .cm-md-quote {
+  @apply border-l-2 border-cyan/40 pl-3 text-text-muted;
+}
+.note-editor .cm-md-link,
+.note-editor .cm-md-wikilink,
+.note-editor .cm-md-hl-link {
+  @apply cursor-pointer text-cyan;
+}
+.note-editor .cm-md-link[data-live],
+.note-editor .cm-md-wikilink[data-live] {
+  @apply underline decoration-cyan/30 underline-offset-2 hover:decoration-cyan;
+}
+.note-editor .cm-md-unresolved {
+  @apply text-text-muted;
+}
+.note-editor .cm-md-tag,
+.note-editor .cm-md-hl-tag {
+  @apply rounded-sm border border-hud/60 bg-elevated/50 px-1 font-mono text-[12px] text-purple;
+}
+.note-editor .cm-md-hl-heading {
+  @apply font-semibold text-text-primary;
+}
+.note-editor .cm-md-hl-quote {
+  @apply text-text-muted;
+}
+.note-editor .cm-md-hl-mark {
+  @apply text-text-muted;
+}
+.note-editor .cm-md-bullet {
+  @apply mr-1 inline-block w-3 text-text-muted;
+}
+.note-editor .cm-md-checkbox {
+  @apply mr-1.5 cursor-pointer align-middle accent-cyan;
+}
+.note-editor .cm-md-hr {
+  @apply inline-block w-full border-t border-hud/60 align-middle;
+}
+.note-editor .cm-md-embed img {
+  @apply my-1 inline-block max-w-full rounded-sm border border-hud/40;
+}
+.note-editor .cm-md-embed-missing {
+  @apply rounded-sm border border-dashed border-hud/60 px-1.5 font-mono text-[11px] text-text-muted;
+}
+.note-editor .cm-tooltip-autocomplete {
+  @apply rounded-md border border-hud/60 bg-panel font-sans text-[12.5px] shadow-lg;
+}
+.note-editor .cm-tooltip-autocomplete ul li[aria-selected] {
+  @apply bg-cyan/10 text-text-primary;
+}
+.note-editor .cm-completionDetail {
+  @apply ml-2 font-mono text-[10px] not-italic text-text-muted;
+}
+
+
+@layer components {
   /* Assistant replies: the same prose, a little denser. */
   .chat-prose {
     @apply text-[13.5px] leading-[1.65];
@@ -259,20 +437,25 @@
     margin-bottom: 0;
   }
   .md-prose img {
-    @apply max-w-full rounded;
+    @apply max-w-full rounded-sm;
   }
 }
 
-@layer utilities {
-  .drag-region {
-    -webkit-app-region: drag;
+@utility drag-region {
+  -webkit-app-region: drag;
+}
+@utility no-drag {
+  -webkit-app-region: no-drag;
+}
+/* Scrolls (wheel, trackpad), but shows no scrollbar — for strips like the browser's tabs. */
+@utility no-scrollbar {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
   }
-  .no-drag {
-    -webkit-app-region: no-drag;
-  }
-  .text-glow-cyan {
-    text-shadow: 0 0 10px rgb(var(--accent-cyan) / calc(0.45 * var(--glow)));
-  }
+}
+@utility text-glow-cyan {
+  text-shadow: 0 0 10px rgb(var(--accent-cyan) / calc(0.45 * var(--glow)));
 }
 
 /* Respect users who prefer reduced motion — kill decorative loops. */
@@ -367,4 +550,54 @@
 }
 .monaco-editor .mindeck-ai-target {
   background: rgb(var(--accent-cyan) / 0.08);
+}
+
+/* Merge conflicts: current (ours) green, incoming (theirs) blue, the common base muted. */
+.monaco-editor .mindeck-conflict-current-marker {
+  background: rgb(var(--accent-green) / 0.32);
+}
+.monaco-editor .mindeck-conflict-current {
+  background: rgb(var(--accent-green) / 0.14);
+}
+.monaco-editor .mindeck-conflict-base {
+  background: rgb(var(--text-muted) / 0.14);
+}
+.monaco-editor .mindeck-conflict-separator {
+  background: rgb(var(--text-muted) / 0.24);
+}
+.monaco-editor .mindeck-conflict-incoming {
+  background: rgb(var(--accent-blue) / 0.14);
+}
+.monaco-editor .mindeck-conflict-incoming-marker {
+  background: rgb(var(--accent-blue) / 0.32);
+}
+
+/* Git blame: dimmed after the cursor's line, and the per-file column in front of every line. */
+.monaco-editor .mindeck-blame-inline {
+  color: rgb(var(--text-muted) / 0.75);
+  font-style: italic;
+  cursor: pointer;
+}
+.monaco-editor .mindeck-blame-line,
+.monaco-editor .mindeck-blame-hunk {
+  color: rgb(var(--text-muted));
+  background: rgb(var(--text-muted) / 0.08);
+  margin-right: 12px;
+  cursor: pointer;
+}
+.monaco-editor .mindeck-blame-hunk {
+  box-shadow: inset 0 1px 0 rgb(var(--text-muted) / 0.35);
+}
+
+/* Terminal: a finished command's mark at the margin of its prompt (shell integration). */
+.xterm .xterm-decoration.mindeck-command-mark {
+  width: 4px !important;
+  margin-left: -8px;
+  border-radius: 2px;
+}
+.xterm .xterm-decoration.mindeck-command-mark.is-ok {
+  background: rgb(var(--accent-green) / 0.7);
+}
+.xterm .xterm-decoration.mindeck-command-mark.is-error {
+  background: rgb(var(--accent-danger));
 }

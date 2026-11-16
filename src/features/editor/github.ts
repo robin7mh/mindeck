@@ -1,11 +1,11 @@
 import { create } from 'zustand'
 import { errorMessage, ipc } from '@shared/ipc/client'
-import type { GitHubStatus, MergeMethod, PullCreate, PullDetail, PullFilter, PullListState, PullSummary, ReviewAction } from '@shared/types/github'
+import type { GitHubStatus, MergeMethod, PublishRepo, PullCreate, PullDetail, PullFilter, PullListState, PullSummary, ReviewAction } from '@shared/types/github'
 import { useEditor } from './store'
 import { useScm } from './scm'
 
 /** Something done to a pull request (one at a time). */
-export type PullOp = 'checkout' | 'create' | 'merge' | 'comment' | 'review'
+export type PullOp = 'checkout' | 'create' | 'merge' | 'comment' | 'review' | 'publish'
 
 interface GitHubState {
   status?: GitHubStatus
@@ -20,6 +20,8 @@ interface GitHubState {
   error?: string
   /** The "create pull request" form is open. */
   creating: boolean
+  /** The "publish to GitHub" form is open (Source Control). */
+  publishing: boolean
 
   /** gh's state and the project's pull requests. */
   load: () => Promise<void>
@@ -35,10 +37,21 @@ interface GitHubState {
   comment: (body: string) => Promise<boolean>
   review: (action: ReviewAction, body: string) => Promise<boolean>
   setCreating: (on: boolean) => void
+  setPublishing: (on: boolean) => void
   /** Pushes the branch when GitHub doesn't have it yet, then opens the pull request. */
   create: (pr: PullCreate) => Promise<void>
+  /**
+   * A local repository → a new GitHub repository; the new one when it worked.
+   * Before the first commit, `first` commits every file — after writing
+   * `readme` as README.md, for an empty folder.
+   */
+  publish: (repo: PublishRepo, first?: { message: string; readme?: string }) => Promise<{ nameWithOwner: string; url: string } | undefined>
   clearError: () => void
 }
+
+/** Latest list / pull request asked for — older answers arriving later are dropped. */
+let listSeq = 0
+let openSeq = 0
 
 /** GitHub pull requests for the editor's project — the GitHub Pull Requests extension. */
 export const useGitHub = create<GitHubState>((set, get) => {
@@ -67,6 +80,7 @@ export const useGitHub = create<GitHubState>((set, get) => {
     pulls: [],
     loading: false,
     creating: false,
+    publishing: false,
 
     load: async () => {
       const projectId = project()
@@ -78,21 +92,23 @@ export const useGitHub = create<GitHubState>((set, get) => {
         set({ status })
         if (status.repo) await get().list()
       } catch (err) {
-        set({ error: errorMessage(err) })
+        if (project() === projectId) set({ error: errorMessage(err) })
       }
     },
 
     list: async () => {
       const projectId = project()
       if (!projectId) return
+      const seq = ++listSeq
       set({ loading: true })
       try {
         const pulls = await ipc('github:list', { projectId, filter: get().filter, state: get().state })
-        if (project() === projectId) set({ pulls })
+        // Only the latest list (filter / state switched meanwhile, another project).
+        if (seq === listSeq && project() === projectId) set({ pulls })
       } catch (err) {
-        set({ error: errorMessage(err) })
+        if (seq === listSeq && project() === projectId) set({ error: errorMessage(err) })
       } finally {
-        set({ loading: false })
+        if (seq === listSeq) set({ loading: false })
       }
     },
 
@@ -108,15 +124,18 @@ export const useGitHub = create<GitHubState>((set, get) => {
     open: async (number) => {
       const projectId = project()
       if (!projectId) return
+      const seq = ++openSeq
       set({ opening: number, creating: false })
       try {
         const detail = await ipc('github:view', { projectId, number })
+        // Another pull request (or project) was opened meanwhile: that one wins.
+        if (seq !== openSeq || project() !== projectId) return
         set({ detail })
         useScm.getState().closeDiff()
       } catch (err) {
-        set({ error: errorMessage(err) })
+        if (seq === openSeq && project() === projectId) set({ error: errorMessage(err) })
       } finally {
-        set({ opening: undefined })
+        if (seq === openSeq) set({ opening: undefined })
       }
     },
 
@@ -126,11 +145,13 @@ export const useGitHub = create<GitHubState>((set, get) => {
       const projectId = project()
       const number = get().detail?.number
       if (!projectId || !number) return
+      // Another pull request or project by the time the answer comes: it's no longer about what is shown.
+      const current = () => project() === projectId && get().detail?.number === number
       try {
         const diff = await ipc('github:fileDiff', { projectId, number, path })
-        useScm.setState({ diff: { ...diff, title: `${path} (#${number})` } })
+        if (current()) useScm.setState({ diff: { ...diff, title: `${path} (#${number})` } })
       } catch (err) {
-        set({ error: errorMessage(err) })
+        if (current()) set({ error: errorMessage(err) })
       }
     },
 
@@ -167,6 +188,7 @@ export const useGitHub = create<GitHubState>((set, get) => {
     },
 
     setCreating: (creating) => set({ creating }),
+    setPublishing: (publishing) => set({ publishing }),
 
     create: async (pr) => {
       let created: { number: number } | undefined
@@ -182,6 +204,20 @@ export const useGitHub = create<GitHubState>((set, get) => {
       await get().open(created!.number)
     },
 
+    publish: async (repo, first) => {
+      let made: { nameWithOwner: string; url: string } | undefined
+      const ok = await act('publish', async (projectId) => {
+        if (first?.readme !== undefined) await ipc('files:write', { projectId, path: 'README.md', content: first.readme })
+        if (first) await ipc('scm:commit', { projectId, message: first.message, all: true })
+        made = await ipc('github:publish', { projectId, ...repo })
+      })
+      // A first commit may have landed even when publishing failed.
+      await Promise.all([useScm.getState().refresh(), useEditor.getState().refreshTree()])
+      if (!ok) return undefined
+      if (get().status) void get().load()
+      return made
+    },
+
     clearError: () => set({ error: undefined })
   }
 })
@@ -189,6 +225,6 @@ export const useGitHub = create<GitHubState>((set, get) => {
 /** A new project: its pull requests (once the pane has loaded them). */
 useEditor.subscribe((s, prev) => {
   if (s.projectId === prev.projectId) return
-  useGitHub.setState({ creating: false, detail: undefined })
+  useGitHub.setState({ creating: false, publishing: false, detail: undefined })
   if (useGitHub.getState().status) void useGitHub.getState().load()
 })

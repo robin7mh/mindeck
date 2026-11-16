@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import {
   CHANNEL_ACCESS,
   type IpcChannel,
@@ -5,11 +6,13 @@ import {
   type IpcResult
 } from '@shared/ipc/contract'
 import { parseRequest } from '@shared/ipc/schemas'
+import type { DeviceRole } from '@shared/types/server'
 
-/** Who is calling: the desktop window over IPC, or a paired remote client. */
+/** Who is calling: the desktop window over IPC, or a paired remote client (and its role). */
 export interface CallContext {
   transport: 'ipc' | 'remote'
   deviceId?: string
+  role?: DeviceRole
 }
 
 export type Handler<K extends IpcChannel> = (
@@ -19,6 +22,15 @@ export type Handler<K extends IpcChannel> = (
 
 type AnyHandler = (req: unknown, ctx: CallContext) => unknown
 
+/**
+ * An error a device should not read as it is: the OS's own (`ENOENT: no such
+ * file or directory, open '/Users/robin/…'` — paths, user names), or something
+ * thrown that is no error at all. Mindeck's own errors are written for people.
+ */
+function internal(e: { code?: string; message?: string; syscall?: string } | null | undefined): boolean {
+  return typeof e?.message !== 'string' || !!e.syscall || /^E[A-Z0-9_]+$/.test(e.code ?? '')
+}
+
 function fail(code: string, message: string): IpcResult<never> {
   return { ok: false, error: { code, message } }
 }
@@ -27,14 +39,22 @@ function fail(code: string, message: string): IpcResult<never> {
  * The one dispatch point for every contract channel — used by the desktop IPC
  * bridge and by the HTTP API alike. Per call it checks, in order: the channel
  * exists, Mindeck is licensed (or the channel is license-free), the caller's
- * transport may use it (CHANNEL_ACCESS), the payload
- * matches its schema; then runs the handler and wraps the result in IpcResult.
- * Errors never escape as throws.
+ * transport and role may use it (CHANNEL_ACCESS, with remote shells as the
+ * core allows them), the payload matches its
+ * schema, a remote call passes the guard (shared folders); then runs the
+ * handler (a remote call's answer trimmed to what the device may see) and
+ * wraps the result in IpcResult. Errors never escape as throws.
  */
 export interface RouterOptions {
   remoteTerminal: () => boolean
   /** License gate: false → the channel is refused until Mindeck is licensed. */
   licensed?: (channel: IpcChannel) => boolean
+  /** Checks a remote call's validated payload (throws a coded error to refuse it). */
+  guard?: (channel: IpcChannel, payload: unknown, ctx: CallContext) => Promise<void> | void
+  /** A remote call's answer as the device may see it (lists trimmed to its projects). */
+  shape?: (channel: IpcChannel, data: unknown, ctx: CallContext) => Promise<unknown> | unknown
+  /** Sees each remote call that went through, with its answer (the activity log, the desktop's "in use" sign). */
+  observe?: (channel: IpcChannel, payload: unknown, data: unknown, ctx: CallContext) => void
 }
 
 export class Router {
@@ -67,15 +87,35 @@ export class Router {
       if (access === 'terminal' && !this.opts.remoteTerminal()) {
         return fail('remote-terminal-disabled', 'Remote shells are disabled on this Mindeck core')
       }
+      if (access === 'admin' && ctx.role !== 'admin') {
+        return fail('admin-only', `${channel} needs a device with the admin role (or the Mindeck desktop app)`)
+      }
+      if (access === 'trusted' && ctx.role !== 'admin' && !this.opts.remoteTerminal()) {
+        return fail('remote-terminal-disabled', `${channel} needs remote shells on this Mindeck core, or a device with the admin role`)
+      }
     }
 
     const parsed = parseRequest(key, payload)
     if (!parsed.ok) return fail('bad-request', parsed.message)
 
     try {
-      return { ok: true, data: await handler(parsed.data, ctx) }
+      if (ctx.transport !== 'remote') return { ok: true, data: await handler(parsed.data, ctx) }
+      await this.opts.guard?.(key, parsed.data, ctx)
+      const data = await handler(parsed.data, ctx)
+      try {
+        this.opts.observe?.(key, parsed.data, data, ctx)
+      } catch (err) {
+        console.error(`[router] observing ${channel}:`, err)
+      }
+      return { ok: true, data: this.opts.shape ? await this.opts.shape(key, data, ctx) : data }
     } catch (err) {
-      const e = err as { code?: string; message?: string }
+      const e = err as { code?: string; message?: string; syscall?: string }
+      if (ctx.transport === 'remote' && internal(e)) {
+        // The details go to the log; the device gets a reference to quote.
+        const ref = randomUUID().slice(0, 8)
+        console.error(`[router] ${channel} failed (ref ${ref}):`, err)
+        return fail(e?.code ?? 'error', `Something went wrong on the Mindeck core (ref ${ref})`)
+      }
       return fail(e?.code ?? 'error', e?.message ?? String(err))
     }
   }

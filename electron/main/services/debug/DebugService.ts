@@ -6,6 +6,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import WebSocket from 'ws'
 import type { DebugAction, DebugBreakpoint, DebugFrame, DebugOutput, DebugSession, DebugVariable } from '@shared/types/debug'
 import { confine } from '../../lib/confine'
+import type { NodeLauncher } from '../../lib/nodeProcess'
 import { shellCommand, shellEnv, shellQuote } from '../terminal/TerminalService'
 import { shellArgs } from '../../lib/shellArgs'
 import { LANGUAGES, isTypeScriptFile, languageOf } from '@shared/types/languages'
@@ -96,9 +97,11 @@ const variable = (name: string, o: Remote): DebugVariable => ({
 })
 
 /** Inspector chatter on stderr that isn't the program's. */
-const NOISE = /^(Debugger listening on|Debugger attached\.|Waiting for the debugger to disconnect|For help, see: https:\/\/nodejs\.org)/
+const NOISE = /^(Debugger listening on|Debugger attached\.|Debugger ending on|Waiting for the debugger to disconnect|For help, see: https:\/\/nodejs\.org)/
 
 const MAX_PROPERTIES = 500
+/** How long a stopped program may take to exit before it is killed outright. */
+const STOP_GRACE_MS = 3000
 
 interface Running {
   session: DebugSession
@@ -118,6 +121,8 @@ export interface DebugOptions {
   connect?: (url: string) => Promise<Cdp>
   /** Where a language's debugger is installed (Settings → Languages). */
   tools?: { locate: (language: string, part: 'debugger') => Promise<string | undefined> }
+  /** How a debug adapter written in JavaScript runs as a Node program (Platform.node). */
+  node?: NodeLauncher
   /** Start a language's debug adapter (tests script one). */
   adapter?: (language: string, ctx: AdapterContext) => Promise<{ transport: DapTransport; launch: DapLaunch }>
   /** Build what runs (compiled languages, the user's build step). */
@@ -224,7 +229,15 @@ export class DebugService {
     run.proc.kill()
     await new Promise<void>((resolve) => {
       if (run.proc.exitCode !== null || run.proc.signalCode !== null) return resolve()
-      run.proc.once('exit', () => resolve())
+      // A program that handles SIGTERM and doesn't exit would block every next start forever.
+      const force = setTimeout(() => {
+        run.proc.kill('SIGKILL')
+        resolve()
+      }, STOP_GRACE_MS)
+      run.proc.once('exit', () => {
+        clearTimeout(force)
+        resolve()
+      })
     })
   }
 
@@ -315,6 +328,7 @@ export class DebugService {
       output: (stream, text) => dap && output(stream, text),
       module: req.module,
       goTest: req.goTest,
+      node: this.opts.node,
       command: (command, args) => this.opts.lsp!.executeCommand(req.projectId, language, command, args)
     })
     dap = new DapSession(new DapClient(transport), launch, { id, projectId: req.projectId, program: req.program, root, publish: this.opts.publish })
@@ -357,11 +371,16 @@ export class DebugService {
     cdp.on('Debugger.scriptParsed', (p: { scriptId: string; url: string }) => run.scripts.set(p.scriptId, p.url))
     cdp.on('Debugger.paused', (p: PausedEvent) => void this.paused(run, p))
     cdp.on('Debugger.resumed', () => this.update(run, { status: 'running', frames: [], reason: undefined, exception: undefined }))
-    await cdp.send('Runtime.enable')
-    await cdp.send('Debugger.enable')
-    await cdp.send('Debugger.setPauseOnExceptions', { state: 'uncaught' })
-    await this.applyBreakpoints(run, breakpoints)
-    await cdp.send('Runtime.runIfWaitingForDebugger')
+    try {
+      await cdp.send('Runtime.enable')
+      await cdp.send('Debugger.enable')
+      await cdp.send('Debugger.setPauseOnExceptions', { state: 'uncaught' })
+      await this.applyBreakpoints(run, breakpoints)
+      await cdp.send('Runtime.runIfWaitingForDebugger')
+    } catch (err) {
+      // The program ended (or the inspector closed) while attaching — nobody awaits this: no unhandled rejection.
+      if (run.session.status !== 'exited') this.update(run, { error: (err as Error).message })
+    }
   }
 
   private async applyBreakpoints(run: Running, breakpoints: DebugBreakpoint[]): Promise<void> {

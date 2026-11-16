@@ -19,6 +19,8 @@ const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'build', 'out', 'cove
 const MAX_FILES = 3000
 /** What a run keeps of the runner's output. */
 const MAX_OUTPUT = 200_000
+/** How often that output reaches the clients while it streams: every state carries all of it. */
+const OUTPUT_PUSH_MS = 100
 
 const slash = (p: string) => p.split(sep).join('/')
 const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -259,11 +261,13 @@ export class TestService {
       const framework: TestFramework | undefined = JS_TEST.test(path) ? js : GO_TEST.test(path) ? (frameworks.includes('go') ? 'go' : undefined) : frameworks.includes('pytest') ? 'pytest' : undefined
       if (!framework) continue
       const text = await readFile(join(root, path), 'utf8')
-      const children = framework === 'pytest' ? pyTests(path, text) : framework === 'go' ? goTests(path, text) : await jsTests(path, text, framework)
+      const children = await (framework === 'pytest' ? pyTests(path, text) : framework === 'go' ? goTests(path, text) : jsTests(path, text, framework))
       if (children.length) tests.push({ id: path, name: path, kind: 'file', framework, path, children })
     }
     const old = this.projects.get(projectId)
-    this.projects.set(projectId, { root, frameworks, tests, run: old?.run, state: old?.state ?? { projectId, running: false, results: {}, output: '' } })
+    // Updated in place: a run in progress holds this object — a copy would keep "running" (and busy) forever.
+    if (old) Object.assign(old, { root, frameworks, tests })
+    else this.projects.set(projectId, { root, frameworks, tests, state: { projectId, running: false, results: {}, output: '' } })
     return tests
   }
 
@@ -275,7 +279,8 @@ export class TestService {
   /** Run every test, or one file / suite / test. */
   async run(projectId: string, id?: string): Promise<TestRunState> {
     const p = this.projects.get(projectId) ?? (await this.discover(projectId), this.projects.get(projectId)!)
-    if (p.run) throw coded('busy', 'Tests are running already')
+    // `running` is set before the first await below (the process only later): two quick runs can't both start.
+    if (p.run || p.state.running) throw coded('busy', 'Tests are running already')
     const target = id ? find(p.tests, id) : undefined
     if (id && !target) throw coded('not-found', `No test ${id}`)
     const scope = target ? [target] : p.tests
@@ -372,9 +377,18 @@ export class TestService {
       const proc = (this.opts.start ?? spawnInShell)(command, args, p.root)
       p.run = proc
       let stdout = ''
+      let push: NodeJS.Timeout | undefined
       const append = (text: string) => {
         p.state = { ...p.state, output: (p.state.output + text).slice(-MAX_OUTPUT) }
-        this.opts.publish(p.state)
+        push ??= setTimeout(() => {
+          push = undefined
+          this.opts.publish(p.state)
+        }, OUTPUT_PUSH_MS)
+      }
+      const finish = () => {
+        clearTimeout(push)
+        push = undefined
+        resolve(stdout)
       }
       append(`$ ${[command, ...args].join(' ')}\n`)
       proc.stdout?.on('data', (d: Buffer) => {
@@ -384,9 +398,9 @@ export class TestService {
       proc.stderr?.on('data', (d: Buffer) => append(d.toString()))
       proc.on('error', (err) => {
         append(`${err.message}\n`)
-        resolve(stdout)
+        finish()
       })
-      proc.on('close', () => resolve(stdout))
+      proc.on('close', finish)
     })
   }
 

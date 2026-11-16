@@ -1,7 +1,22 @@
 import { chmod, mkdir, readFile, readdir, realpath, stat, symlink, utimes, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { basename, dirname, join } from 'node:path'
+import { describe, expect, it, vi } from 'vitest'
 import { tempDir } from './helpers'
+
+// The real confine(), with a hook to change the disk right after its check (a race with another program).
+const race = vi.hoisted(() => ({ afterConfine: undefined as undefined | ((abs: string) => Promise<void>) }))
+vi.mock('../../../electron/main/lib/confine', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../../../electron/main/lib/confine')>()
+  return {
+    confine: async (root: string, rel: string) => {
+      const abs = await real.confine(root, rel)
+      const hook = race.afterConfine
+      race.afterConfine = undefined
+      await hook?.(abs)
+      return abs
+    }
+  }
+})
 import { FilesService, MAX_EDIT_BYTES } from '../../../electron/main/services/files/FilesService'
 
 async function project(files: Record<string, string | Buffer>) {
@@ -66,6 +81,12 @@ describe('FilesService', () => {
     expect(text.mtimeMs).toBe((await stat(join(root, 'a.ts'))).mtimeMs)
     expect(await service.read('p', 'img.png')).toMatchObject({ unsupported: 'binary', size: 4 })
     expect((await service.read('p', 'img.png')).content).toBeUndefined()
+    // Text in another encoding: shown as UTF-8 every non-ASCII byte would be lost, and the next save would make that final.
+    await writeFile(join(root, 'latin1.sql'), Buffer.from('-- Gr\xFC\xDFe aus K\xF6ln\n', 'latin1'))
+    expect(await service.read('p', 'latin1.sql')).toMatchObject({ unsupported: 'encoding' })
+    expect((await service.read('p', 'latin1.sql')).content).toBeUndefined()
+    await writeFile(join(root, 'utf8.sql'), '-- Grüße aus Köln €\n')
+    expect((await service.read('p', 'utf8.sql')).content).toBe('-- Grüße aus Köln €\n')
 
     await writeFile(join(root, 'big.txt'), Buffer.alloc(MAX_EDIT_BYTES + 1, 'a'))
     expect(await service.read('p', 'big.txt')).toMatchObject({ unsupported: 'too-large' })
@@ -109,6 +130,34 @@ describe('FilesService', () => {
     await expect(service.write('p', 'dir', 'x')).rejects.toMatchObject({ code: 'not-a-file' })
     await expect(service.write('p', 'dir/x/y', 'x')).rejects.toMatchObject({ code: 'ENOTDIR' })
     await expect(service.write('p', '../evil.ts', 'x')).rejects.toMatchObject({ code: 'outside-project' })
+    // A dangling link pointing outside must not create its target.
+    const outside = join(await tempDir('mindeck-outside-'), 'planted.sh')
+    await symlink(outside, join(root, 'trap.sh'))
+    await expect(service.write('p', 'trap.sh', 'x')).rejects.toMatchObject({ code: 'outside-project' })
+    await expect(stat(outside)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('a dangling link planted right after the path was checked is still not written through', async () => {
+    const { service } = await project({})
+    const outside = join(await tempDir('mindeck-outside-'), 'planted.sh')
+    race.afterConfine = (abs) => symlink(outside, abs)
+    await expect(service.write('p', 'late.sh', 'x')).rejects.toMatchObject({ code: 'outside-project', message: 'late.sh is a link to nowhere' })
+    await expect(stat(outside)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('never writes through a dangling link to outside the project (BE-SEC-02)', async () => {
+    const { root, service } = await project({ 'docs/readme.md': '' })
+    const elsewhere = await tempDir()
+    await symlink(join(elsewhere, 'autostart', 'x.desktop'), join(root, 'docs', 'setup.md'))
+    await symlink(join('..', '..', basename(elsewhere), 'pwned.txt'), join(root, 'docs', 'notes.txt')) // relative, like one checked into a repo
+    await expect(service.write('p', 'docs/setup.md', '[Desktop Entry]')).rejects.toMatchObject({ code: 'outside-project' })
+    await expect(service.write('p', 'docs/notes.txt', 'x')).rejects.toMatchObject({ code: 'outside-project' })
+    await expect(service.create('p', 'docs/setup.md', 'file')).rejects.toMatchObject({ code: 'outside-project' })
+    expect(await readdir(elsewhere)).toEqual([])
+    // one that stays inside is written through, as before
+    await symlink('readme.md', join(root, 'docs', 'alias.md'))
+    await service.write('p', 'docs/alias.md', 'hi')
+    expect(await readFile(join(root, 'docs', 'readme.md'), 'utf8')).toBe('hi')
   })
 
   it('creates files and folders (with parents); refuses taken names and the project folder', async () => {

@@ -1,11 +1,23 @@
 import { EventEmitter } from 'node:events'
-import { chmod, mkdir, realpath, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, realpath, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { tempDir, tick } from './helpers'
 import { detect, goResults, goTests, jestResults, jsTests, junitResults, localBin, pyTests, TestService, tidyMessage, type TestOptions } from '../../../electron/main/services/tests/TestService'
 import type { TestRunState } from '@shared/types/tests'
+
+// Pass-through fs that refuses to list one folder — the same everywhere, root (CI containers, where a
+// chmod 000 changes nothing) or not.
+const fsDeny = vi.hoisted(() => ({ dir: undefined as string | undefined }))
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const real = await importOriginal<typeof import('node:fs/promises')>()
+  const readdir = ((path: string, ...rest: never[]) =>
+    path === fsDeny.dir
+      ? Promise.reject(Object.assign(new Error(`EACCES: permission denied, scandir '${path}'`), { code: 'EACCES' }))
+      : (real.readdir as (...a: unknown[]) => unknown)(path, ...rest)) as typeof real.readdir
+  return { ...real, readdir }
+})
 
 describe('finding tests without running them', () => {
   it('JS / TS: describe / it / test, nested, with .only / .skip / .each and template names', async () => {
@@ -276,6 +288,36 @@ async function project() {
 }
 
 describe('TestService', () => {
+  it('a chatty runner reaches the clients in batches: every state carries up to 200 KB of output, on the main thread', async () => {
+    const root = await project()
+    const chunk = Buffer.from('x'.repeat(1000))
+    const { service, published } = harness(root, (_command, _args, proc) => {
+      for (let i = 0; i < 400; i += 1) proc.stdout.emit('data', chunk)
+      proc.stderr.emit('data', chunk)
+      proc.emit('close', 0)
+    })
+    await service.discover('p')
+    const state = await service.run('p')
+    expect(published.length).toBeLessThan(20)
+    expect(state.output.length).toBeGreaterThan(400_000 / 4) // capped, but all there at the end
+    expect(published.at(-1)!.output).toBe(state.output)
+  })
+
+  it('a slow runner\'s output still shows while it runs', async () => {
+    const root = await project()
+    let close!: () => void
+    const { service, published } = harness(root, (_command, _args, proc) => {
+      proc.stdout.emit('data', Buffer.from('first line\n'))
+      close = () => proc.emit('close', 0)
+    })
+    await service.discover('p')
+    const run = service.run('p', 'src/a.test.ts')
+    await vi.waitFor(() => expect(published.at(-1)?.output).toContain('first line'))
+    expect(published.at(-1)?.running).toBe(true)
+    close()
+    await run
+  })
+
   it('finds the tests by file, skipping dependencies, build output and hidden folders', async () => {
     const root = await project()
     const { service } = harness(root)
@@ -296,7 +338,7 @@ describe('TestService', () => {
     await writeFile(join(root, 'go.mod'), 'module m\n')
     await mkdir(join(root, 'locked'))
     await writeFile(join(root, 'locked/a_test.go'), 'func TestA(t *testing.T) {}\n')
-    await chmod(join(root, 'locked'), 0o000)
+    fsDeny.dir = join(root, 'locked')
     await mkdir(join(root, 'many'))
     await Promise.all(Array.from({ length: 3001 }, (_, i) => writeFile(join(root, 'many', `t${i}_test.go`), `func TestN${i}(t *testing.T) {}\n`)))
     try {
@@ -304,8 +346,24 @@ describe('TestService', () => {
       expect(items).toHaveLength(3000)
       expect(items.every((i) => i.path.startsWith('many/'))).toBe(true)
     } finally {
-      await chmod(join(root, 'locked'), 0o755)
+      fsDeny.dir = undefined
     }
+  })
+
+  it('a run is one at a time; finding the tests again during a run does not leave it busy for good', async () => {
+    const root = await project()
+    // The first runner keeps going until told; every later one ends right away.
+    let finish: (() => void) | undefined
+    const h = harness(root, (_c, _a, proc) => (h.procs.length === 1 ? void (finish = () => proc.emit('close', 0)) : void proc.emit('close', 0)))
+    await h.service.discover('p')
+    const running = h.service.run('p')
+    await expect(h.service.run('p')).rejects.toMatchObject({ code: 'busy' })
+    for (let i = 0; i < 200 && !finish; i++) await new Promise((r) => setTimeout(r, 5))
+    await h.service.discover('p')
+    finish!()
+    await running
+    expect(h.service.state('p').running).toBe(false)
+    await expect(h.service.run('p')).resolves.toMatchObject({ running: false })
   })
 
   it('runs everything: each runner with its report; tests it never reported settle as skipped', async () => {
@@ -454,8 +512,11 @@ describe('TestService', () => {
       ['go', 'test', '-json', '-run', '^(TestC)$', './pkg'],
       ['go', 'test', '-json', '-run', '^TestC$', './pkg']
     ])
-    // A go.mod without a module line still reads.
+    // A go.mod without a module line still reads; one that can't be read is no module either.
     await writeFile(join(root, 'go.mod'), '')
+    expect((await h.service.run('p', 'pkg::TestC')).results['pkg::TestC'].state).toBe('skipped')
+    await rm(join(root, 'go.mod'))
+    await mkdir(join(root, 'go.mod'))
     expect((await h.service.run('p', 'pkg::TestC')).results['pkg::TestC'].state).toBe('skipped')
   })
 

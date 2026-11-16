@@ -4,6 +4,7 @@
 // Pure module (no DOM/Node/Electron) so it compiles under every tsconfig.
 
 import type { ChatMessage } from './ai'
+import type { ComposerImage, ComposerRef } from './composer'
 
 export type AgentKind = 'claude-code' | 'codex' | 'gemini'
 
@@ -32,6 +33,21 @@ export interface PlanItem {
   id: string
   text: string
   done: boolean
+  /** The step the agent is working on now. */
+  active?: boolean
+}
+
+/** draft: proposed, waiting for the user's yes · active: being carried out (finished once every step is done). */
+export type PlanStatus = 'draft' | 'active'
+
+/** Where a plan stands, as Mindeck shows it: proposed, being worked on, paused (the agent stopped with steps open) or done. */
+export type PlanPhase = 'draft' | 'working' | 'paused' | 'done'
+
+export function planPhase(session: { plan: PlanItem[]; planStatus?: PlanStatus; status: SessionStatus }): PlanPhase | undefined {
+  if (!session.plan.length) return undefined
+  if (session.planStatus === 'draft') return 'draft'
+  if (session.plan.every((p) => p.done)) return 'done'
+  return session.status === 'working' || session.status === 'approval' || session.status === 'starting' ? 'working' : 'paused'
 }
 
 export interface FileChange {
@@ -53,9 +69,25 @@ export interface SessionBranch {
   uncommitted: number
 }
 
+/** A model or mode the agent offers for a session. */
+export interface SessionOption {
+  id: string
+  name: string
+  description?: string
+}
+
+/** A slash command the agent offers (`/name`). */
+export interface AgentCommand {
+  name: string
+  description: string
+  /** What goes after the name, when it takes input. */
+  hint?: string
+}
+
 export interface AgentSession {
   id: string
   kind: AgentKind
+  /** '' (and `projectName` '') for a session without a project. */
   projectId: string
   projectName: string
   title: string
@@ -72,10 +104,22 @@ export interface AgentSession {
   /** The PTY running the agent (Claude Code), for "Terminal ▸" — ACP agents have none. */
   terminalId?: string
   plan: PlanItem[]
+  /** Where the plan stands — unset: being carried out. */
+  planStatus?: PlanStatus
   /** Vault notes the agent read or wrote through Mindeck's memory tools. */
   notes: string[]
   /** The session's journal note in the vault. */
   journal?: string
+  /** The model it runs (an id from `models`); unset = the agent's default. */
+  model?: string
+  models?: SessionOption[]
+  /** Claude Code: its permission mode · ACP agents: their session mode. */
+  mode?: string
+  modes?: SessionOption[]
+  /** Slash commands the agent offers. */
+  commands?: AgentCommand[]
+  /** The agent takes images in a message. */
+  images?: boolean
   createdAt: string
   updatedAt: string
   error?: string
@@ -87,12 +131,29 @@ export interface AgentSessionDetail extends AgentSession {
 
 export interface CreateSessionRequest {
   kind: AgentKind
-  projectId: string
+  /** None: the agent works in an empty folder of its own (~/Mindeck/chats). */
+  projectId?: string
   title?: string
   /** Own git worktree (parallel work) instead of the project folder. */
   isolated?: boolean
   /** First message, sent once the agent is up. */
   prompt?: string
+  /** Claude Code: `--model` and `--permission-mode` from the start. */
+  model?: string
+  mode?: string
+}
+
+/** A message for the agent: its text, what the user referenced with `@`, and images. */
+export interface AgentInput {
+  text: string
+  refs?: ComposerRef[]
+  images?: ComposerImage[]
+}
+
+/** Switch the session's model or mode (Claude Code's permission mode applies from its next start). */
+export interface SessionConfigure {
+  model?: string
+  mode?: string
 }
 
 export interface AgentMessageUpdate {

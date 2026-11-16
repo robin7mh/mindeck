@@ -3,7 +3,7 @@ import { EventEmitter } from 'node:events'
 import { realpath, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { tempDir } from './helpers'
 import { WebSocketServer } from 'ws'
 import { connectCdp, describe as describeValue, DebugService, launchNode, nodeCommand, type Cdp } from '../../../electron/main/services/debug/DebugService'
@@ -213,7 +213,8 @@ describe('DebugService edge cases', () => {
       { name: 'g', value: '(getter)', type: 'accessor' },
       { name: 'v', value: '1', type: 'number' }
     ])
-    proc.stderr.write('ne\nWaiting for the debugger to disconnect...\n')
+    // Node's inspector chatter, whichever order it ends in, stays out of the program's output.
+    proc.stderr.write('ne\nDebugger ending on ws://x/2\nWaiting for the debugger to disconnect...\n')
     await new Promise((r) => setTimeout(r, 10))
     expect(cdp.closed).toBe(1)
     proc.stderr.write('tail without newline')
@@ -234,6 +235,63 @@ describe('DebugService edge cases', () => {
     await stopping
     expect(service.session()?.status).toBe('exited')
     service.dispose()
+  })
+
+  it('a program that ignores SIGTERM is killed outright after a grace period', async () => {
+    const root = await tempDir()
+    await writeFile(join(root, 'a.js'), '')
+    const { proc } = fakeRun()
+    const signals: (string | undefined)[] = []
+    proc.kill = (signal?: string) => (signals.push(signal), true)
+    const service = new DebugService({ resolveRoot: () => root, publish: () => {}, launch: () => proc as never })
+    await service.start({ projectId: 'p', program: 'a.js', breakpoints: [] })
+    vi.useFakeTimers({ toFake: ['setTimeout'] })
+    try {
+      let stopped = false
+      const stopping = service.stop().then(() => (stopped = true))
+      await vi.advanceTimersByTimeAsync(2999)
+      expect([signals, stopped]).toEqual([[undefined], false])
+      await vi.advanceTimersByTimeAsync(1)
+      await stopping
+      expect(signals).toEqual([undefined, 'SIGKILL'])
+    } finally {
+      vi.useRealTimers()
+    }
+    proc.emit('exit', null) // the SIGKILL lands
+    expect(service.session()?.status).toBe('exited')
+  })
+
+  it('an inspector that fails while attaching says why — unless the program already ended', async () => {
+    const root = await tempDir()
+    await writeFile(join(root, 'a.js'), '')
+    const sessions: DebugSession[] = []
+    const { cdp, proc } = fakeRun((method) => {
+      if (method === 'Debugger.enable') throw new Error('Inspector closed')
+      return {}
+    })
+    const service = new DebugService({ resolveRoot: () => root, publish: (c, p) => c === 'debug:session' && sessions.push(p as DebugSession), launch: () => proc as never, connect: async () => cdp })
+    await service.start({ projectId: 'p', program: 'a.js', breakpoints: [] })
+    proc.stderr.write('Debugger listening on ws://x/1\n')
+    await new Promise((r) => setTimeout(r, 10))
+    expect(sessions[sessions.length - 1]).toMatchObject({ status: 'starting', error: 'Inspector closed' })
+    service.dispose()
+
+    // The program ran to its end while Mindeck attached: an exit, not an error.
+    const late = fakeRun((method) => {
+      if (method === 'Runtime.enable') {
+        late.proc.emit('exit', 0)
+        throw new Error('WebSocket closed')
+      }
+      return {}
+    })
+    const after: DebugSession[] = []
+    const quick = new DebugService({ resolveRoot: () => root, publish: (c, p) => c === 'debug:session' && after.push(p as DebugSession), launch: () => late.proc as never, connect: async () => late.cdp })
+    await quick.start({ projectId: 'p', program: 'a.js', breakpoints: [] })
+    late.proc.stderr.write('Debugger listening on ws://x/1\n')
+    await new Promise((r) => setTimeout(r, 10))
+    expect(after[after.length - 1]).toMatchObject({ status: 'exited', exitCode: 0 })
+    expect(after.some((s) => s.error)).toBe(false)
+    quick.dispose()
   })
 
   it('a program that opens the inspector in its worker (Vitest): no --inspect-brk for the program itself', async () => {
@@ -274,6 +332,33 @@ describe('DebugService edge cases', () => {
     expect(sessions[sessions.length - 1].frames[0].path).toBeUndefined() // the folder itself is no file
     Object.assign(proc, { signalCode: 'SIGTERM' })
     await service.stop()
+  })
+})
+
+describe('DebugService · an inspector that refuses', () => {
+  it('a refused resume at the start or a breakpoint that won\'t go is no error', async () => {
+    const root = await tempDir()
+    await writeFile(join(root, 'a.js'), '')
+    const sent: string[] = []
+    const { cdp, proc } = fakeRun((method) => {
+      sent.push(method)
+      if (method === 'Debugger.setBreakpointByUrl') return { breakpointId: `bp-${sent.length}` }
+      if (method === 'Debugger.removeBreakpoint' || method === 'Debugger.resume') throw new Error('gone')
+      return {}
+    })
+    const sessions: DebugSession[] = []
+    const service = new DebugService({ resolveRoot: () => root, publish: (c, p) => c === 'debug:session' && sessions.push(p as DebugSession), launch: () => proc as never, connect: async () => cdp })
+    await service.start({ projectId: 'p', program: 'a.js', breakpoints: [{ path: 'a.js', line: 1 }] })
+    proc.stderr.write('Debugger listening on ws://x/1\n')
+    await new Promise((r) => setTimeout(r, 10))
+    cdp.emit('Debugger.paused', { reason: 'Break on start', callFrames: [] })
+    await new Promise((r) => setTimeout(r, 10))
+    expect(sent).toContain('Debugger.resume')
+    await service.setBreakpoints('p', [{ path: 'a.js', line: 2 }])
+    expect(sent.filter((m) => m === 'Debugger.removeBreakpoint')).toHaveLength(1)
+    expect(sent.filter((m) => m === 'Debugger.setBreakpointByUrl')).toHaveLength(2)
+    expect(sessions.at(-1)?.error).toBeUndefined()
+    service.dispose()
   })
 })
 

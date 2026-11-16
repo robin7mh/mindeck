@@ -4,10 +4,11 @@ import { installBridge, installRemote } from './bridge'
 import type { Note, VaultStatus } from '@shared/types/memory'
 
 // Children are covered by their own tests — here they only expose their props.
-const seen = vi.hoisted(() => ({ list: {} as Record<string, unknown>, graph: {} as Record<string, unknown>, editor: {} as Record<string, unknown> }))
+const seen = vi.hoisted(() => ({ list: {} as Record<string, unknown>, graph: {} as Record<string, unknown>, editor: {} as Record<string, unknown>, listRenders: 0 }))
 vi.mock('@/features/memory/components/NoteList', () => ({
   NoteList: (p: Record<string, unknown>) => {
     seen.list = p
+    seen.listRenders += 1
     return <div>NOTE-LIST</div>
   }
 }))
@@ -26,6 +27,7 @@ vi.mock('@/features/memory/components/NoteEditor', () => ({
 }))
 
 import { MemoryView } from '@/features/memory/components/MemoryView'
+import { PaneContext } from '@/features/workspace/pane'
 import { useMemory } from '@/features/memory/store'
 
 const initial = useMemory.getState()
@@ -37,6 +39,7 @@ const status = (over: Partial<VaultStatus> = {}): VaultStatus => ({
   exists: true,
   noteCount: 3,
   graphStyle: { mode: 'single', color: 'pink' },
+  dailyNotes: { folder: 'Daily', template: '' },
   ...over
 })
 const note = { path: 'A.md', title: 'A', body: '' } as Note
@@ -46,7 +49,8 @@ function spyActions() {
   const names = [
     'init', 'onChanged', 'save', 'setGraphStyle', 'setView', 'startCreate', 'clearError', 'createVault', 'pickVault',
     'reveal', 'setVault', 'search', 'open', 'cancelCreate', 'submitCreate', 'moveNote', 'moveFolder', 'openOrCreate', 'setDraft',
-    'setMode', 'rename', 'link', 'unlink', 'trash'
+    'setMode', 'rename', 'link', 'unlink', 'trash', 'openDaily', 'setDailyNotes', 'setSource', 'renderTemplate', 'attach', 'loadImage', 'loadDisk', 'discardDraft',
+    'toggleFolder', 'collapseAll'
   ] as const
   const spies = Object.fromEntries(names.map((n) => [n, vi.fn(async () => {})])) as Record<(typeof names)[number], ReturnType<typeof vi.fn>>
   useMemory.setState(spies as never)
@@ -69,6 +73,17 @@ describe('MemoryView', () => {
     expect(screen.queryByText('Loading memory…')).toBeNull()
     unmount()
     expect(a.save).toHaveBeenCalled()
+  })
+
+  it('typing reaches the editor without drawing the note list again', () => {
+    installBridge()
+    spyActions()
+    useMemory.setState({ status: status(), view: 'note', note, notes: [], draft: '' })
+    render(<MemoryView />)
+    const before = seen.listRenders
+    act(() => useMemory.setState({ draft: 'typed' }))
+    expect((seen.editor as { draft: string }).draft).toBe('typed')
+    expect(seen.listRenders).toBe(before)
   })
 
   it('in a browser: no Finder button, the vault is chosen with the folder browser', async () => {
@@ -124,10 +139,14 @@ describe('MemoryView', () => {
     expect(a.setView).toHaveBeenCalledWith('graph')
     fireEvent.click(screen.getByText('New note'))
     expect(a.startCreate).toHaveBeenCalledWith('note', '')
-    fireEvent.click(screen.getByLabelText('Show vault in Finder'))
+    // the vault in the Finder: a tool over the notes now, not in the vault's line
+    expect(screen.queryByLabelText('Show vault in Finder')).toBeNull()
     fireEvent.click(screen.getByLabelText('Open another vault'))
-    expect(a.reveal).toHaveBeenCalled()
     expect(a.pickVault).toHaveBeenCalled()
+    // "Collapse all" sits in the vault's line, right of it — with no folder open, nothing to do
+    const collapse = screen.getByRole('button', { name: 'Collapse all folders' })
+    expect(screen.getByLabelText('Open another vault').nextElementSibling).toBe(collapse)
+    expect(collapse).toBeDisabled()
 
     const g = seen.graph as { onOpen(p: string): void; onOpenGhost(t: string): void; style: unknown }
     expect(g.style).toEqual({ mode: 'single', color: 'pink' })
@@ -137,6 +156,10 @@ describe('MemoryView', () => {
     expect(a.openOrCreate).toHaveBeenCalledWith('Ghost')
 
     const l = seen.list as Record<string, (...args: string[]) => void>
+    l.onShowInFinder()
+    expect(a.reveal).toHaveBeenCalled()
+    l.onToggleFolder('X')
+    expect(a.toggleFolder).toHaveBeenCalledWith('X')
     l.onOpen('B.md')
     l.onSubmitCreate('Neu')
     l.onMoveNote('A.md', 'X')
@@ -145,6 +168,22 @@ describe('MemoryView', () => {
     expect(a.submitCreate).toHaveBeenCalledWith('Neu')
     expect(a.moveNote).toHaveBeenCalledWith('A.md', 'X')
     expect(a.moveFolder).toHaveBeenCalledWith('X', 'Y')
+  })
+
+  it('collapse all: on while a folder that is there is open — not for one gone', () => {
+    installBridge()
+    const a = spyActions()
+    const notes = [{ path: 'Ich/A.md', title: 'A', folder: 'Ich', tags: [], modifiedAt: '', linkCount: 0 }, { path: 'Root.md', title: 'Root', folder: '', tags: [], modifiedAt: '', linkCount: 0 }]
+    useMemory.setState({ status: status(), view: 'graph', graph: { nodes: [], edges: [] }, notes, folders: ['Leer'], openFolders: ['Weg'] })
+    render(<MemoryView />)
+    const collapse = screen.getByRole('button', { name: 'Collapse all folders' })
+    expect(collapse).toBeDisabled() // only a folder that's gone is "open"
+    act(() => useMemory.setState({ openFolders: ['Ich'] })) // a folder of a note
+    expect(collapse).toBeEnabled()
+    act(() => useMemory.setState({ openFolders: ['Leer'] })) // an empty folder
+    expect(collapse).toBeEnabled()
+    fireEvent.click(collapse)
+    expect(a.collapseAll).toHaveBeenCalled()
   })
 
   it('note view: the editor and its callbacks; default style; Windows home shortening', () => {
@@ -163,6 +202,12 @@ describe('MemoryView', () => {
 
     const e = seen.editor as Record<string, (...args: string[]) => void>
     e.onSave()
+    e.onLoadDisk()
+    expect(a.loadDisk).toHaveBeenCalled()
+    e.onDiscard()
+    expect(a.discardDraft).toHaveBeenCalled()
+    e.onKeepMine()
+    expect(a.save).toHaveBeenCalledWith({ force: true })
     e.onRename('B')
     e.onOpen('C.md')
     e.onOpenOrCreate('D')
@@ -189,5 +234,81 @@ describe('MemoryView', () => {
     act(() => useMemory.setState({ graph: { nodes: [], edges: [] } }))
     rerender(<MemoryView />)
     expect((seen.graph as { activeId?: string }).activeId).toBe('A.md')
+  })
+})
+
+describe('MemoryView · daily notes and templates', () => {
+  const meta = (path: string) => ({ path, title: path.replace(/^.*\//, '').replace(/\.md$/, ''), folder: '', tags: [], modifiedAt: '', linkCount: 0 })
+
+  it('opens today with the button and ⌘⇧D (not with plain ⌘D)', () => {
+    const a = spyActions()
+    useMemory.setState({ status: status(), view: 'graph', graph: { nodes: [], edges: [] }, notes: [] })
+    const { unmount } = render(<MemoryView />)
+    expect(screen.queryByLabelText('New note from template')).toBeNull() // no templates yet
+    fireEvent.click(screen.getByText('Today'))
+    fireEvent.keyDown(window, { key: 'D', metaKey: true, shiftKey: true })
+    fireEvent.keyDown(window, { key: 'd', ctrlKey: true, shiftKey: true })
+    fireEvent.keyDown(window, { key: 'd', metaKey: true })
+    fireEvent.keyDown(window, { key: 'x', metaKey: true, shiftKey: true })
+    expect(a.openDaily).toHaveBeenCalledTimes(3)
+    unmount()
+    fireEvent.keyDown(window, { key: 'd', metaKey: true, shiftKey: true })
+    expect(a.openDaily).toHaveBeenCalledTimes(3)
+    // Next to another module, without the focus: not Memory's key.
+    render(
+      <PaneContext.Provider value={{ focused: false }}>
+        <MemoryView />
+      </PaneContext.Provider>
+    )
+    fireEvent.keyDown(window, { key: 'd', metaKey: true, shiftKey: true })
+    expect(a.openDaily).toHaveBeenCalledTimes(3)
+  })
+
+  it('starts a note from a template and hands templates and editor actions to the editor', () => {
+    const a = spyActions()
+    const notes = [meta('Templates/Projekt.md'), meta('Templates/Tag.md'), meta('Plan.md')]
+    useMemory.setState({ status: status(), view: 'note', note, notes, source: true })
+    render(<MemoryView />)
+    fireEvent.click(screen.getByLabelText('New note from template'))
+    expect(screen.getByRole('menu', { name: 'New note from template' })).toBeInTheDocument()
+    fireEvent.mouseDown(document.body) // a click elsewhere closes it
+    expect(screen.queryByRole('menu')).toBeNull()
+    fireEvent.click(screen.getByLabelText('New note from template'))
+    fireEvent.mouseDown(screen.getByRole('menuitem', { name: 'Tag' }))
+    expect(a.startCreate).toHaveBeenCalledWith('note', '', 'Templates/Tag.md')
+    expect(screen.queryByRole('menu')).toBeNull()
+
+    const e = seen.editor as Record<string, unknown>
+    expect((e.templates as { path: string }[]).map((n) => n.path)).toEqual(['Templates/Projekt.md', 'Templates/Tag.md'])
+    expect(e.source).toBe(true)
+    expect(e.onSource).toBe(a.setSource)
+    expect(e.onInsertTemplate).toBe(a.renderTemplate)
+    expect(e.onAttach).toBe(a.attach)
+    expect(e.loadImage).toBe(a.loadImage)
+  })
+
+  it('sets where daily notes go and their template', async () => {
+    installBridge()
+    const a = spyActions()
+    useMemory.setState({ status: status({ dailyNotes: { folder: 'Journal', template: '' } }), view: 'graph', graph: { nodes: [], edges: [] }, notes: [meta('Templates/Tag.md')], folders: ['Ich', 'Templates'] })
+    render(<MemoryView />)
+    fireEvent.click(screen.getByRole('button', { name: 'Daily notes' }))
+    const dialog = screen.getByRole('dialog', { name: 'Daily notes' })
+    expect(dialog).toHaveTextContent('Notes in “Templates/” are templates')
+    fireEvent.click(screen.getByRole('combobox', { name: 'Folder for daily notes' }))
+    expect(screen.getAllByRole('option').map((o) => o.textContent)).toEqual(['Vault root', 'Journal', 'Ich', 'Templates'])
+    fireEvent.click(screen.getByRole('option', { name: 'Ich' }))
+    expect(a.setDailyNotes).toHaveBeenCalledWith({ folder: 'Ich', template: '' })
+    // Picking in the (portaled) menu kept the panel open.
+    fireEvent.click(screen.getByRole('combobox', { name: 'Template' }))
+    fireEvent.mouseDown(screen.getByRole('option', { name: 'Tag' }))
+    fireEvent.click(screen.getByRole('option', { name: 'Tag' }))
+    expect(a.setDailyNotes).toHaveBeenCalledWith({ folder: 'Journal', template: 'Templates/Tag.md' })
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    fireEvent.mouseDown(document.body)
+    expect(screen.queryByRole('dialog')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Daily notes' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Daily notes' }))
+    expect(screen.queryByRole('dialog')).toBeNull()
   })
 })

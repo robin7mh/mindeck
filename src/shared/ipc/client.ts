@@ -7,9 +7,31 @@ import { bridgeTransport, type Transport } from './transport'
 
 let remote: Transport | null = null
 
+interface RemoteSub {
+  bind: (transport: Transport) => () => void
+  off: () => void
+}
+/** Subscriptions made in a browser — re-bound whenever the transport changes (re-pairing, reconnect). */
+const remoteSubs = new Set<RemoteSub>()
+const noop = () => {}
+
 /** Install (or clear) the network transport — called by the web session. */
 export function setTransport(transport: Transport | null): void {
   remote = transport
+  for (const sub of remoteSubs) {
+    sub.off()
+    sub.off = transport ? sub.bind(transport) : noop
+  }
+}
+
+/** A subscription on whichever transport is current, now and after every change. */
+function follow(bind: RemoteSub['bind']): () => void {
+  const sub: RemoteSub = { bind, off: remote ? bind(remote) : noop }
+  remoteSubs.add(sub)
+  return () => {
+    remoteSubs.delete(sub)
+    sub.off()
+  }
 }
 
 /** True inside the Electron window (native dialogs, window controls, …). */
@@ -33,9 +55,20 @@ export class IpcError extends Error {
   }
 }
 
+/** Words the client's own failures (offline, bad response, no core) in the UI's language; undefined keeps the message. */
+export type ErrorLocalizer = (code: string, message: string) => string | undefined
+let localize: ErrorLocalizer = () => undefined
+
+/** Installed once by the UI (src/lib/i18n): this file stays free of the UI's dictionaries. */
+export function setErrorLocalizer(fn: ErrorLocalizer): void {
+  localize = fn
+}
+
 /** Human-readable message for anything thrown (IpcError is an Error too). */
 export function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err)
+  if (!(err instanceof Error)) return String(err)
+  const code = (err as { code?: unknown }).code
+  return (typeof code === 'string' && localize(code, err.message)) || err.message
 }
 
 type Req<K extends IpcChannel> = IpcChannels[K]['request']
@@ -52,22 +85,32 @@ export async function ipc<K extends IpcChannel>(
 ): Promise<Res<K>> {
   const transport = currentTransport()
   if (!transport) {
-    throw new IpcError('no-bridge', 'Not connected to a Mindeck core')
+    throw new IpcError('no-bridge', localize('no-bridge', '') ?? 'Not connected to a Mindeck core')
   }
   const res = (await transport.invoke(channel, args[0])) as IpcResult<Res<K>>
-  if (!res.ok) throw new IpcError(res.error.code, res.error.message)
+  if (!res.ok) throw new IpcError(res.error.code, localize(res.error.code, res.error.message) ?? res.error.message)
   return res.data
 }
 
 /**
- * Subscribe to a push event. Returns an unsubscribe function. No-ops (returns
- * a noop unsubscribe) without a transport so callers stay simple.
+ * Run `cb` whenever the push channel reconnected after an outage (web UI,
+ * phone): events of the gap are gone, so reload what they would have changed.
+ * Never fires on the desktop, whose bridge cannot drop events.
+ */
+export function onResync(cb: () => void): () => void {
+  return window.mindeck?.invoke ? noop : follow((transport) => transport.onResync?.(cb) ?? noop)
+}
+
+/**
+ * Subscribe to a push event. Returns an unsubscribe function. In a browser the
+ * subscription outlives the current transport: it is bound to whichever core
+ * the session pairs with next (and stays idle while there is none).
  */
 export function onEvent<K extends IpcEvent>(
   channel: K,
   cb: (payload: IpcEvents[K]) => void
 ): () => void {
-  const transport = currentTransport()
-  if (!transport) return () => {}
-  return transport.on(channel, (payload) => cb(payload as IpcEvents[K]))
+  const bridge = window.mindeck
+  if (bridge?.invoke) return bridgeTransport(bridge).on(channel, (payload) => cb(payload as IpcEvents[K]))
+  return follow((transport) => transport.on(channel, (payload) => cb(payload as IpcEvents[K])))
 }

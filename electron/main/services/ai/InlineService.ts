@@ -1,6 +1,7 @@
 import type { Effort, InlineCompleteRequest, InlineDelta, InlineEditRequest } from '@shared/types/ai'
 import type { AiService } from './AiService'
 import { aiError } from './llm'
+import type { CallContext } from '../../../ipc/router'
 
 const COMPLETE_SYSTEM = `You are the code completion engine of the Mindeck editor. You get one file with a <CURSOR/> marker where the user is typing.
 
@@ -70,12 +71,16 @@ export class InlineService {
     }
   }
 
-  /** The new text for the selection; what is written so far goes out as `ai:inlineDelta`. */
-  async edit(req: InlineEditRequest): Promise<string> {
+  /**
+   * The new text for the selection; what is written so far goes out as
+   * `ai:inlineDelta` — to the paired device that asked (`ctx`) only, it is its code.
+   */
+  async edit(req: InlineEditRequest, ctx?: CallContext): Promise<string> {
     const model = await this.deps.ai.model()
     const file = fileBlock(req.path, req.language, `${req.before}<SELECTION>${req.selection}</SELECTION>${req.after}`)
+    const device = ctx?.transport === 'remote' ? { device: ctx.deviceId ?? '' } : {}
     const text = await this.run(req.requestId, model, 'medium', EDIT_SYSTEM, `${file}\n\n<instruction>\n${req.instruction}\n</instruction>`, EDIT_TOKENS, (delta) =>
-      this.deps.publish({ requestId: req.requestId, text: delta }), 'edit'
+      this.deps.publish({ requestId: req.requestId, text: delta, ...device }), 'edit'
     )
     return unfence(text)
   }
@@ -85,10 +90,12 @@ export class InlineService {
   }
 
   private async run(requestId: string, model: string, effort: Effort, system: string, user: string, maxTokens: number, onText: (delta: string) => void = () => {}, kind?: 'edit'): Promise<string> {
-    const provider = await this.deps.ai.provider()
+    // Registered before the first await: a cancel (or a newer suggestion) while the provider resolves still stops it.
     const abort = new AbortController()
     this.running.set(requestId, abort)
     try {
+      const provider = await this.deps.ai.provider()
+      if (abort.signal.aborted) throw aiError('cancelled', 'Cancelled')
       const turn = await provider.stream({ model, effort, system, messages: [{ role: 'user', blocks: [{ type: 'text', text: user }] }], tools: [], webTools: false, maxTokens, signal: abort.signal, kind }, onText)
       if (turn.stopReason === 'refusal') throw aiError('refused', 'The model declined this request')
       return turn.message.blocks.map((b) => (b.type === 'text' ? b.text : '')).join('')

@@ -1,3 +1,4 @@
+import { isUtf8 } from 'node:buffer'
 import { lstat, mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { dirname, join, relative, sep } from 'node:path'
 import ignore from 'ignore'
@@ -62,6 +63,8 @@ export class FilesService {
     if (info.size > MAX_EDIT_BYTES) return { ...meta, unsupported: 'too-large' }
     const buf = await readFile(abs)
     if (buf.subarray(0, SNIFF_BYTES).includes(0)) return { ...meta, unsupported: 'binary' }
+    // Text in another encoding (Latin-1, Windows-1252): decoded as UTF-8 its bytes are gone, for good with the next save.
+    if (!isUtf8(buf)) return { ...meta, unsupported: 'encoding' }
     return { ...meta, content: buf.toString('utf8') }
   }
 
@@ -95,6 +98,9 @@ export class FilesService {
     if (current && expectedMtime !== undefined && current.mtimeMs !== expectedMtime) {
       throw coded('conflict', `${path} changed on disk since it was opened`)
     }
+    // "Missing" but present as an entry = a dangling symlink: writing would create
+    // its target, wherever it points (confine only sees the link's folder).
+    if (!current && (await this.exists(abs))) throw coded('outside-project', `${path} is a link to nowhere`)
     if (!current) await mkdir(dirname(abs), { recursive: true })
     await writeFile(abs, content, 'utf8')
     const info = await stat(abs)
