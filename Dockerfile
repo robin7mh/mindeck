@@ -14,7 +14,7 @@
 # front of it): a rebuild gets the same bytes. To update, take the new digest of
 # the tag (`docker buildx imagetools inspect node:22-bookworm`) — Dependabot
 # proposes it (.github/dependabot.yml).
-FROM node:22-bookworm@sha256:0e5f906573693feaa1e21057ebdcfdb5bd5021f050b2dc7c9deceb629c7da2a8 AS build
+FROM node:26-bookworm@sha256:b7087bc4d973034b30854b378ba107f9fab622b47514cb7e2592e41b8bab8d49 AS build
 WORKDIR /app
 ENV ELECTRON_SKIP_BINARY_DOWNLOAD=1
 COPY package.json package-lock.json ./
@@ -28,7 +28,7 @@ ARG MINDECK_CLOUD_URL=
 ARG MINDECK_CLOUD_KEY=
 RUN npm run web:build && npm run server:build && npm prune --omit=dev
 
-FROM node:22-bookworm-slim@sha256:c3de60bf2f9dd0ac6370e6117950ff62d6e339527e7472301c9c78a017978392
+FROM node:26-bookworm-slim@sha256:5df79989ed685e09f0a98019db4cebfb22fb9df1a53c0161664a011f7ff6b0f1
 WORKDIR /app
 # git for project detection (and the opt-in remote terminal). Overridable,
 # e.g. --build-arg APT_PACKAGES= where no Debian mirror is reachable.
