@@ -22,7 +22,7 @@ let knownName: string | undefined
 
 /**
  * Core: the personal HUD. Greeting, date and a calm clock, plus three tiles
- * with real data only — projects (live git state), the brain (vault), and a
+ * with real data only — projects (live git state), the memory (vault), and a
  * one-line system verdict. Everything links into its module. It stays mounted
  * off screen (`active` false): the clock and the system stream rest, and the
  * tiles bring themselves up to date in place when it is back — nothing loads
@@ -66,7 +66,7 @@ export function Dashboard({ onNavigate, active = true }: { onNavigate: (id: Modu
 
         <div className="grid w-full max-w-5xl grid-cols-1 gap-4 pane-md:grid-cols-3">
           <ProjectsTile onNavigate={onNavigate} active={active} />
-          <BrainTile onNavigate={onNavigate} active={active} />
+          <MemoryTile onNavigate={onNavigate} active={active} />
           <SystemTile onNavigate={onNavigate} active={active} />
         </div>
       </div>
@@ -226,7 +226,7 @@ function ProjectsTile({ onNavigate, active }: { onNavigate: (id: ModuleId) => vo
   )
 }
 
-function BrainTile({ onNavigate, active }: { onNavigate: (id: ModuleId) => void; active: boolean }) {
+function MemoryTile({ onNavigate, active }: { onNavigate: (id: ModuleId) => void; active: boolean }) {
   const t = useT()
   const [state, setState] = useState<{ exists: boolean; notes: NoteMeta[]; links: number }>()
 
@@ -252,7 +252,7 @@ function BrainTile({ onNavigate, active }: { onNavigate: (id: ModuleId) => void;
   }, [state])
 
   return (
-    <Tile icon={BrainCircuit} title={t.dashboard.brain} onOpen={() => onNavigate('memory')}>
+    <Tile icon={BrainCircuit} title={t.dashboard.memory} onOpen={() => onNavigate('memory')}>
       {!state ? (
         <p className="font-sans text-[13px] text-text-muted">{t.dashboard.loading}</p>
       ) : !state.exists ? (
@@ -262,22 +262,24 @@ function BrainTile({ onNavigate, active }: { onNavigate: (id: ModuleId) => void;
       ) : (
         <>
           <BigNumber value={state.notes.length} label={`${t.dashboard.notes} · ${state.links} ${t.dashboard.links}`} />
-          <div className="mt-4 grid grid-cols-2 gap-x-3 gap-y-2">
+          {/* The biggest folders as equal tiles: a strip in the folder's color, its name and count. */}
+          <div className="mt-auto grid grid-cols-2 gap-2 pt-4">
             {folders.map(([folder, count]) => (
-              <span key={folder} className="flex items-center gap-1.5">
-                <span className="h-2 w-2 shrink-0 rounded-[3px]" style={{ background: slotColor(slots.get(folder)!) }} />
-                <span className="min-w-0 flex-1 truncate font-sans text-[12.5px] text-text-secondary">{folder}</span>
-                <span className="font-sans text-[12px] text-text-muted tabular-nums">{count}</span>
-              </span>
+              <button
+                key={folder}
+                type="button"
+                title={folder}
+                onClick={() => onNavigate('memory')}
+                className="group/folder relative flex min-w-0 items-center justify-between gap-2 overflow-hidden rounded-md border border-hud/35 bg-elevated/25 py-[11px] pl-3.5 pr-3 text-left transition-colors hover:border-hud/70 hover:bg-elevated/60"
+              >
+                <span className="absolute inset-y-2.5 left-0 w-[3px] rounded-r-full" style={{ background: slotColor(slots.get(folder)!) }} />
+                <span className="truncate font-sans text-[12.5px] leading-5 text-text-secondary transition-colors group-hover/folder:text-text-primary">
+                  {folder}
+                </span>
+                <span className="font-sans text-[15px] font-semibold leading-5 tracking-[-0.01em] text-text-primary tabular-nums">{count}</span>
+              </button>
             ))}
           </div>
-          <button
-            type="button"
-            onClick={() => onNavigate('memory')}
-            className="mt-auto self-start pt-4 font-sans text-[13px] text-text-secondary transition-colors hover:text-text-primary"
-          >
-            {t.dashboard.openGraph} →
-          </button>
         </>
       )}
     </Tile>

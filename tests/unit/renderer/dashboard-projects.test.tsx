@@ -121,9 +121,14 @@ describe('Dashboard', () => {
     expect(onNavigate).toHaveBeenCalledTimes(2)
 
     expect(screen.getByText(`${t.notes} · 2 ${t.links}`)).toBeInTheDocument()
-    expect(screen.getByText('A')).toBeInTheDocument()
-    fireEvent.click(screen.getByText(`${t.openGraph} →`))
-    fireEvent.click(screen.getByLabelText(`Open ${t.brain}`))
+    // the biggest folders are tiles with their counts (the root note is in none)
+    const folderA = screen.getByTitle('A')
+    expect(folderA).toHaveTextContent('A2')
+    expect(screen.getByTitle('B')).toHaveTextContent('B1')
+    fireEvent.click(folderA)
+    expect(onNavigate).toHaveBeenLastCalledWith('memory')
+    onNavigate.mockClear()
+    fireEvent.click(screen.getByLabelText(`Open ${t.memory}`))
     expect(onNavigate).toHaveBeenLastCalledWith('memory')
     // the System tile opens the System module, like the others theirs
     fireEvent.click(screen.getByLabelText(`Open ${t.system}`))
