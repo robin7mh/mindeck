@@ -2032,9 +2032,6 @@ agents: {
     desktopWindow: 'Desktop-Fenster',
     pairedBrowser: 'Browser (gekoppelt)',
 
-    search: 'Einstellungen durchsuchen',
-    searchPlaceholder: 'Suchen, z. B. „Minimap“',
-    noHits: 'Keine Einstellung gefunden.',
     saved: 'Änderungen werden sofort gespeichert.',
     navLabel: 'Bereiche der Einstellungen',
     navGroups: { app: 'App', work: 'Arbeiten', data: 'Daten & Geräte', help: 'Hilfe' },
@@ -2043,53 +2040,43 @@ agents: {
     sections: {
       general: {
         title: 'Allgemein & Aussehen',
-        intro: 'Sprache und wie Mindeck auf diesem Gerät aussieht.',
-        keywords: 'allgemein aussehen sprache deutsch english englisch darstellung theme modus dunkel hell system akzent farbe akzentfarbe hintergrund graphit schwarz cyber fenster schließen beenden hintergrund einrichtung assistent'
+        intro: 'Sprache und wie Mindeck auf diesem Gerät aussieht.'
       },
       ai: {
         title: 'KI & Agents',
-        intro: 'Der eingebaute Assistent und deine eigenen Coding-Agents.',
-        keywords: 'ki ai assistent modell claude opus sonnet haiku gründlichkeit aufwand effort guthaben api schlüssel key anthropic vorschläge tippen coding agents claude code codex gemini berechtigungen freigaben chat enter senden benachrichtigungen push handy anmelden konto'
+        intro: 'Der eingebaute Assistent und deine eigenen Coding-Agents.'
       },
       editor: {
         title: 'Editor',
-        intro: 'Wie der Editor aussieht und was beim Speichern passiert.',
-        keywords: 'editor schrift schriftgröße einrückung tab tabulator leerzeichen umbrechen zeilen formatieren speichern prettier eslint minimap sticky scroll vim'
+        intro: 'Wie der Editor aussieht und was beim Speichern passiert.'
       },
       languages: {
         title: 'Sprachen & Debugger',
-        intro: 'Autovervollständigung, Fehleranzeige und Debugging pro Programmiersprache. Läuft auf diesem Computer, wie in VS Code.',
-        keywords: 'sprachen sprachserver language server lsp debugger debuggen python go rust c++ java php ruby swift kotlin lua yaml shell bash docker dockerfile c# typescript installieren'
+        intro: 'Autovervollständigung, Fehleranzeige und Debugging pro Programmiersprache. Läuft auf diesem Computer, wie in VS Code.'
       },
       terminal: {
         title: 'Terminal',
-        intro: 'Aussehen, Verhalten und welche Shell standardmäßig startet.',
-        keywords: 'terminal shell zsh bash fish powershell profil profile ssh repl schrift cursor blinkt kopieren markieren wiederherstellen shell-integration zeilenhöhe verlauf scrollback puffer gpu webgl'
+        intro: 'Aussehen, Verhalten und welche Shell standardmäßig startet.'
       },
       browser: {
         title: 'Browser',
-        intro: 'Der eingebaute Browser für Doku, Live Server und Agents.',
-        keywords: 'browser suchmaschine google duckduckgo suchvorschläge links tabs vertikal seitlich lesezeichen neuer tab werbung tracker adblock schadsoftware malware logins cookies agents downloads speicherort import verlauf löschen tastenkürzel'
+        intro: 'Der eingebaute Browser für Doku, Live Server und Agents.'
       },
       remote: {
         title: 'Handy & Fernzugriff',
-        intro: 'Nutze Mindeck vom Handy oder einem anderen Computer aus.',
-        keywords: 'handy mobil fernzugriff geräte koppeln kopplung qr code heimnetz netzwerk lan wlan überall unterwegs cloud relay wach schlafen terminals shells ordner freigegeben admin mitglied rolle port https tls zertifikat fingerabdruck api server'
+        intro: 'Nutze Mindeck vom Handy oder einem anderen Computer aus.'
       },
       memory: {
         title: 'Gedächtnis',
-        intro: 'Wo deine Notizen und das Wissen der Agents gespeichert werden.',
-        keywords: 'gedächtnis vault notizen obsidian ordner speicherort finder'
+        intro: 'Wo deine Notizen und das Wissen der Agents gespeichert werden.'
       },
       migrate: {
         title: 'Von VS Code umziehen',
-        intro: 'Mindeck übernimmt Einstellungen, Tastenkürzel und Snippets. VS Code selbst bleibt unverändert, das Mindeck-Design auch.',
-        keywords: 'vs code vscode cursor vscodium windsurf umziehen umzug import übernehmen einstellungen tastenkürzel snippets erweiterungen'
+        intro: 'Mindeck übernimmt Einstellungen, Tastenkürzel und Snippets. VS Code selbst bleibt unverändert, das Mindeck-Design auch.'
       },
       about: {
         title: 'Über & Diagnose',
-        intro: 'Version und Hilfe, wenn etwas nicht klappt.',
-        keywords: 'über version core host client logs diagnose support absturz schlüsselbund keyring'
+        intro: 'Version und Hilfe, wenn etwas nicht klappt.'
       }
     },
     groups: {

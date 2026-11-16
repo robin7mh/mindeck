@@ -295,6 +295,7 @@ describe('Settings navigation', () => {
     expect(openTitle()).toBe('General & appearance')
     expect(navButton('general')).toHaveAttribute('aria-current', 'page')
     expect(screen.getByText(/^Changes are saved right away\.\s*Mindeck 1\.2\.3$/)).toBeInTheDocument()
+    expect(screen.queryByRole('searchbox')).toBeNull() // the navigation is short enough to see at a glance
 
     show('memory')
     await act(settle)
@@ -322,39 +323,6 @@ describe('Settings navigation', () => {
     }
   })
 
-  it('the search keeps the sections that match every word; Enter opens the first, Escape clears it', async () => {
-    installBridge(settingsCore())
-    await renderSettings()
-    const search = screen.getByRole('searchbox', { name: S.search })
-    fireEvent.change(search, { target: { value: 'Minimap' } })
-    expect(navTitles()).toEqual(['Editor'])
-    expect(nav().getAllByRole('group').map((g) => g.getAttribute('aria-label'))).toEqual(['Work']) // groups without a hit are gone
-    fireEvent.change(search, { target: { value: 'https certificate' } })
-    expect(navTitles()).toEqual(['Phone & remote access'])
-
-    fireEvent.change(search, { target: { value: 'https minimap' } })
-    expect(navTitles()).toEqual([])
-    expect(screen.getByText('No setting found.')).toBeInTheDocument()
-    fireEvent.keyDown(search, { key: 'Enter' }) // nothing to open
-    expect(openTitle()).toBe('General & appearance')
-
-    fireEvent.change(search, { target: { value: '  font ' } })
-    expect(navTitles()).toEqual(['Editor', 'Terminal'])
-    expect(screen.queryByText('No setting found.')).toBeNull()
-    fireEvent.keyDown(search, { key: 'Enter' })
-    await act(settle)
-    expect(openTitle()).toBe('Editor')
-    expect(useSettings.getState().query).toBe('  font ') // the search stays as typed
-
-    fireEvent.keyDown(search, { key: 'Escape' })
-    expect(search).toHaveValue('')
-    expect(navTitles()).toEqual(ALL_SECTIONS)
-    fireEvent.keyDown(search, { key: 'Escape' }) // empty already: nothing changes
-    fireEvent.keyDown(search, { key: 'a' })
-    expect(search).toHaveValue('')
-    expect(openTitle()).toBe('Editor')
-  })
-
   it('a paired browser does not see what only the desktop window can set', async () => {
     installRemote(settingsCore())
     useSettings.setState({ section: 'browser' })
@@ -364,10 +332,6 @@ describe('Settings navigation', () => {
     expect(openTitle()).toBe('General & appearance')
     expect(navButton('general')).toHaveAttribute('aria-current', 'page')
     expect(screen.queryByRole('combobox', { name: 'Search engine' })).toBeNull()
-    for (const query of ['vs code', 'zsh', 'adblock']) {
-      fireEvent.change(screen.getByRole('searchbox', { name: S.search }), { target: { value: query } })
-      expect(screen.getByText('No setting found.')).toBeInTheDocument()
-    }
   })
 
   it('a badge on AI & agents while the assistant needs signing in', async () => {

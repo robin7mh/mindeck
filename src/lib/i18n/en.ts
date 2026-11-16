@@ -2059,9 +2059,6 @@ agents: {
     pairedBrowser: 'Browser (paired)',
 
     // The settings' navigation and sections.
-    search: 'Search settings',
-    searchPlaceholder: 'Search, e.g. “minimap”',
-    noHits: 'No setting found.',
     saved: 'Changes are saved right away.',
     navLabel: 'Settings sections',
     navGroups: { app: 'App', work: 'Work', data: 'Data & devices', help: 'Help' },
@@ -2070,53 +2067,43 @@ agents: {
     sections: {
       general: {
         title: 'General & appearance',
-        intro: 'Language and how Mindeck looks on this device.',
-        keywords: 'general appearance language german english deutsch theme mode dark light system accent color colour background surface graphite black cyber window close quit background setup assistant'
+        intro: 'Language and how Mindeck looks on this device.'
       },
       ai: {
         title: 'AI & agents',
-        intro: 'The built-in assistant and your own coding agents.',
-        keywords: 'ai assistant model claude opus sonnet haiku effort credit api key anthropic suggestions typing inline coding agents claude code codex gemini permissions approvals grants chat enter send notifications push phone sign in account'
+        intro: 'The built-in assistant and your own coding agents.'
       },
       editor: {
         title: 'Editor',
-        intro: 'How the editor looks and what happens on save.',
-        keywords: 'editor font size indentation tab spaces wrap lines format save prettier eslint minimap sticky scroll vim'
+        intro: 'How the editor looks and what happens on save.'
       },
       languages: {
         title: 'Languages & debuggers',
-        intro: 'Completion, errors and debugging per programming language. Runs on this computer, like in VS Code.',
-        keywords: 'languages language server lsp debugger debug python go rust c++ java php ruby swift kotlin lua yaml shell bash docker dockerfile c# typescript install'
+        intro: 'Completion, errors and debugging per programming language. Runs on this computer, like in VS Code.'
       },
       terminal: {
         title: 'Terminal',
-        intro: 'Look, behaviour and which shell starts by default.',
-        keywords: 'terminal shell zsh bash fish powershell profile ssh repl font cursor blink copy select restore shell integration line height scrollback buffer gpu webgl'
+        intro: 'Look, behaviour and which shell starts by default.'
       },
       browser: {
         title: 'Browser',
-        intro: 'The built-in browser for docs, the Live Server and agents.',
-        keywords: 'browser search engine google duckduckgo suggestions links tabs vertical side bookmarks new tab ads trackers adblock malware logins cookies agents downloads folder import history clear shortcuts'
+        intro: 'The built-in browser for docs, the Live Server and agents.'
       },
       remote: {
         title: 'Phone & remote access',
-        intro: 'Use Mindeck from your phone or another computer.',
-        keywords: 'phone mobile remote access devices pair pairing qr code home network lan wifi anywhere away cloud relay awake sleep terminals shells folders shared admin member role port https tls certificate fingerprint api server'
+        intro: 'Use Mindeck from your phone or another computer.'
       },
       memory: {
         title: 'Memory',
-        intro: 'Where your notes and the agents’ knowledge are kept.',
-        keywords: 'memory vault notes obsidian folder location finder'
+        intro: 'Where your notes and the agents’ knowledge are kept.'
       },
       migrate: {
         title: 'Move over from VS Code',
-        intro: 'Mindeck takes over your editor settings, keybindings and snippets. VS Code itself stays untouched, and so does Mindeck’s design.',
-        keywords: 'vs code vscode cursor vscodium windsurf move migrate import take over settings keybindings shortcuts snippets extensions'
+        intro: 'Mindeck takes over your editor settings, keybindings and snippets. VS Code itself stays untouched, and so does Mindeck’s design.'
       },
       about: {
         title: 'About & diagnostics',
-        intro: 'The version, and help when something doesn’t work.',
-        keywords: 'about version core host client logs diagnostics support crash keyring'
+        intro: 'The version, and help when something doesn’t work.'
       }
     },
     groups: {

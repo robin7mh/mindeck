@@ -26,11 +26,3 @@ export const SECTION_ICONS: Record<SectionId, LucideIcon> = {
 
 /** What only the desktop window can set (a paired browser doesn't see them). */
 export const DESKTOP_ONLY: readonly SectionId[] = ['terminal', 'browser', 'migrate']
-
-/** Whether a section matches the search: every word of it in the section's title or keywords. */
-export function matches(id: SectionId, query: string, s: Dict['settings']): boolean {
-  const words = query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean)
-  if (!words.length) return true
-  const text = `${s.sections[id].title} ${s.sections[id].keywords}`.toLocaleLowerCase()
-  return words.every((w) => text.includes(w))
-}

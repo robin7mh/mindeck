@@ -87,10 +87,7 @@ export function canManage(devices: Device[], desktop = isDesktop(), me = myDevic
 interface SettingsState {
   /** The section open in the settings — kept while Mindeck runs, so it is there again when they come back. */
   section: SectionId
-  /** What the settings' search holds. */
-  query: string
   setSection: (section: SectionId) => void
-  setQuery: (query: string) => void
   server?: ServerStatus
   devices: Device[]
   grants: PermissionGrant[]
@@ -115,9 +112,7 @@ export const useSettings = create<SettingsState>((set, get) => {
   const fail = (err: unknown) => set({ error: errorMessage(err), busy: false })
   return {
     section: 'general',
-    query: '',
     setSection: (section) => set({ section }),
-    setQuery: (query) => set({ query }),
     devices: [],
     grants: [],
     projects: [],

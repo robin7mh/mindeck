@@ -1,5 +1,5 @@
 import { useEffect, type ReactNode } from 'react'
-import { AlertTriangle, Search, X } from 'lucide-react'
+import { AlertTriangle, X } from 'lucide-react'
 import { isDesktop } from '@shared/ipc/client'
 import { Panel } from '@/components/ui/Panel'
 import { cn } from '@/lib/cn'
@@ -7,7 +7,7 @@ import { useT } from '@/lib/i18n'
 import { useSession } from '@/features/session/store'
 import { useAssistant } from '@/features/agents/store'
 import { liveReach, useSettings } from '../store'
-import { DESKTOP_ONLY, NAV, SECTION_ICONS, matches, type SectionId } from '../sections'
+import { DESKTOP_ONLY, NAV, SECTION_ICONS, type SectionId } from '../sections'
 import { AboutSection } from './sections/AboutSection'
 import { AiSection } from './sections/AiSection'
 import { BrowserSection } from './sections/BrowserSection'
@@ -25,10 +25,10 @@ function Badge({ tone, children }: { tone: 'ok' | 'warn'; children: ReactNode })
 }
 
 /**
- * Settings: a navigation of sections in four groups (with a search over
- * them) and the open section beside it — one page each, made of titled groups
- * of rows. Below the container's medium width the navigation runs across the
- * top. Every change is saved as it is made.
+ * Settings: a navigation of sections in four groups and the open section
+ * beside it — one page each, made of titled groups of rows. Below the
+ * container's medium width the navigation runs across the top. Every change
+ * is saved as it is made.
  */
 export function SettingsView({ onOpenAccount }: { onOpenAccount?: () => void }) {
   const t = useT()
@@ -37,8 +37,6 @@ export function SettingsView({ onOpenAccount }: { onOpenAccount?: () => void }) 
   const load = useSettings((st) => st.load)
   const error = useSettings((st) => st.error)
   const clearError = useSettings((st) => st.clearError)
-  const query = useSettings((st) => st.query)
-  const setQuery = useSettings((st) => st.setQuery)
   const setSection = useSettings((st) => st.setSection)
   const chosen = useSettings((st) => st.section)
   const server = useSettings((st) => st.server)
@@ -52,7 +50,7 @@ export function SettingsView({ onOpenAccount }: { onOpenAccount?: () => void }) 
 
   const available = (id: SectionId) => desktop || !DESKTOP_ONLY.includes(id)
   const section: SectionId = available(chosen) ? chosen : 'general'
-  const nav = NAV.map(({ group, sections }) => ({ group, sections: sections.filter((id) => available(id) && matches(id, query, s)) })).filter((g) => g.sections.length)
+  const nav = NAV.map(({ group, sections }) => ({ group, sections: sections.filter(available) })).filter((g) => g.sections.length)
   const badges: Partial<Record<SectionId, ReactNode>> = {
     ...(ai && !ai.configured ? { ai: <Badge tone="warn">{s.badgeSignIn}</Badge> } : {}),
     ...(liveReach(server) !== 'off' ? { remote: <Badge tone="ok">{s.badgeOn}</Badge> } : {})
@@ -92,23 +90,7 @@ export function SettingsView({ onOpenAccount }: { onOpenAccount?: () => void }) 
       )}
       <div className="@container flex min-h-0 flex-1">
         <div className="flex min-h-0 w-full flex-col @3xl:flex-row">
-          <aside className="flex shrink-0 flex-col gap-1 border-b border-hud/45 bg-panel px-3 py-3 @3xl:w-[248px] @3xl:overflow-y-auto @3xl:border-b-0 @3xl:border-r @3xl:pb-5 @3xl:pt-4">
-            <div className="relative mx-0.5">
-              <Search size={15} aria-hidden className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-text-muted" />
-              <input
-                type="search"
-                aria-label={s.search}
-                placeholder={s.searchPlaceholder}
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && nav[0]) setSection(nav[0].sections[0])
-                  if (e.key === 'Escape' && query) setQuery('')
-                }}
-                className="h-9 w-full rounded-md border border-hud/60 bg-surface pl-8 pr-3 font-sans text-[13px] text-text-primary outline-hidden transition-colors placeholder:text-text-muted focus:border-cyan/70"
-              />
-            </div>
-            {nav.length === 0 && <p className="mx-2.5 my-2 font-sans text-[13px] text-text-secondary">{s.noHits}</p>}
+          <aside className="flex shrink-0 flex-col gap-1 border-b border-hud/45 bg-panel px-3 py-3 @3xl:w-[248px] @3xl:overflow-y-auto @3xl:border-b-0 @3xl:border-r @3xl:pb-5 @3xl:pt-1">
             <nav aria-label={s.navLabel} className="flex gap-0.5 overflow-x-auto @3xl:flex-col @3xl:overflow-visible">
               {nav.map(({ group, sections }) => (
                 <div key={group} role="group" aria-label={s.navGroups[group]} className="flex shrink-0 gap-0.5 @3xl:flex-col">
