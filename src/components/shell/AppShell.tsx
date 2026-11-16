@@ -18,6 +18,7 @@ import { useAssistant } from '@/features/agents/store'
 import { useAgents } from '@/features/agents/sessions'
 import { useMemory } from '@/features/memory/store'
 import { SettingsView } from '@/features/settings/components/SettingsView'
+import { useSettings } from '@/features/settings/store'
 import { SystemView } from '@/features/system/components/SystemView'
 import { LogsView } from '@/features/logs/components/LogsView'
 import { AccountView } from '@/features/account/components/AccountView'
@@ -101,7 +102,10 @@ export function AppShell() {
         show('agents')
         useAgents.getState().openDialog(getT().browser.agentPrompt(tab.title || tab.url, tab.url))
       },
-      settings: () => show('settings'),
+      settings: () => {
+        useSettings.getState().setSection('browser')
+        show('settings')
+      },
       // A click into a page focuses the browser's pane.
       focused: () => show('browser'),
       // A workspace key pressed in a page: the workspace acts on it as if the UI had it.
@@ -146,10 +150,19 @@ export function AppShell() {
     }
     if (id === 'projects') return <ProjectsView onNavigate={show} />
     if (id === 'memory') return <MemoryView />
-    if (id === 'agents') return <AgentsView onOpenNote={openNote} onOpenSettings={() => show('settings')} />
+    if (id === 'agents')
+      return (
+        <AgentsView
+          onOpenNote={openNote}
+          onOpenSettings={() => {
+            useSettings.getState().setSection('ai')
+            show('settings')
+          }}
+        />
+      )
     if (id === 'system') return <SystemView />
     if (id === 'logs') return <LogsView />
-    if (id === 'settings') return <SettingsView />
+    if (id === 'settings') return <SettingsView onOpenAccount={() => show('account')} />
     if (id === 'account') return <AccountView />
     if (id === 'files') return <FilesView onNavigate={show} />
     if (id === 'terminal') return shellsOff ? <RemoteShellsOff /> : <TerminalView onNavigate={show} />

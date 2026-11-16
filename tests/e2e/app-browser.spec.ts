@@ -4,7 +4,7 @@ import type { Page } from '@playwright/test'
 import type { IpcResult } from '@shared/ipc/contract'
 import type { BrowserState, HistoryEntry } from '@shared/types/browser'
 import { expect, test } from './fixtures'
-import { localSite, pressInMain } from './helpers'
+import { localSite, openSettings, pressInMain } from './helpers'
 
 /** Type an address into the bar of the tab on screen. */
 async function go(page: Page, address: string) {
@@ -46,7 +46,7 @@ test('browser: bookmark (⌘D), history page, tab search, private tab, shield, s
     await app.evaluate(({ dialog }, path) => {
       dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [path] })) as typeof dialog.showOpenDialog
     }, downloads)
-    await page.getByTitle('Settings', { exact: true }).click()
+    await openSettings(page, 'Browser')
     await page.getByRole('button', { name: 'Choose…' }).click()
     await expect(page.getByText(downloads, { exact: true })).toBeVisible()
 

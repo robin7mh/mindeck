@@ -16,7 +16,7 @@ import { Omnibox } from '@/features/browser/components/Omnibox'
 import { Viewport } from '@/features/browser/components/Viewport'
 import { TabStrip } from '@/features/browser/components/TabStrip'
 import { BrowserView } from '@/features/browser/components/BrowserView'
-import { BrowserCard } from '@/features/settings/components/BrowserCard'
+import { BrowserSection } from '@/features/settings/components/sections/BrowserSection'
 import { DEFAULT_BROWSER_SETTINGS, type BrowserSuggestion } from '@shared/types/browser'
 
 const initialBrowser = useBrowser.getState()
@@ -577,7 +577,7 @@ describe('the browser module · library pieces', () => {
   })
 })
 
-describe('BrowserCard · library settings', () => {
+describe('BrowserSection · library settings', () => {
   it('turns suggestions and the bookmarks bar on and off, and imports from another browser', async () => {
     const settings = DEFAULT_BROWSER_SETTINGS
     const { sent } = bridge({
@@ -585,14 +585,14 @@ describe('BrowserCard · library settings', () => {
       'browser:configure': (p: object) => ({ ...settings, ...p }),
       'browser:importSources': () => []
     })
-    render(<BrowserCard />)
+    render(<BrowserSection />)
     fireEvent.click(await screen.findByRole('switch', { name: 'Search suggestions' }))
     await settle()
     fireEvent.click(screen.getByRole('switch', { name: 'Show bookmarks bar' }))
     await settle()
     expect(sent('browser:configure')).toEqual([{ searchSuggestions: true }, { bookmarksBar: false }])
     expect(useBrowser.getState().settings.bookmarksBar).toBe(false)
-    fireEvent.click(screen.getByRole('button', { name: 'Import from another browser…' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Import…' }))
     expect(await screen.findByRole('dialog', { name: 'Import from another browser' })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Close' }))
     expect(screen.queryByRole('dialog')).toBeNull()

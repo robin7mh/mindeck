@@ -13,7 +13,6 @@ vi.mock('@/features/terminal/components/XtermPane', () => ({
 }))
 
 import { Onboarding } from '@/features/onboarding/components/Onboarding'
-import { OnboardingCard } from '@/features/onboarding/components/OnboardingCard'
 import { loadOnboarding, useOnboarding } from '@/features/onboarding/store'
 import { BROWSER_IMPORT_CHANNEL, browserImportStep, fillBrowserImportSlot, type StepProps } from '@/features/onboarding/slots'
 import { guides, untilDone, type Machine } from '@/features/onboarding/guides'
@@ -22,6 +21,7 @@ import { useProjects } from '@/features/projects/store'
 import { useSession } from '@/features/session/store'
 import { useTerminals } from '@/features/terminal/store'
 import { useLocale } from '@/lib/i18n'
+import { GeneralSection } from '@/features/settings/components/sections/GeneralSection'
 
 const KEY = 'mindeck.onboarding'
 
@@ -401,16 +401,21 @@ describe('Onboarding', () => {
 })
 
 describe('Settings → Setup', () => {
-  it('starts the setup again (desktop window only)', () => {
-    installBridge()
+  it('starts the setup again (desktop window only)', async () => {
+    installBridge({ 'desktop:status': () => ({ platform: 'darwin', logsDir: '/l', secretsEncrypted: true, closeBehavior: 'ask' }) })
     act(() => useOnboarding.setState({ open: false, done: true, step: 'done' }))
-    const { unmount } = render(<OnboardingCard />)
-    fireEvent.click(screen.getByRole('button', { name: /Run the setup again/ }))
+    const { unmount } = render(<GeneralSection />)
+    const row = (await screen.findByText('Run the setup again')).parentElement!.parentElement!
+    expect(row).toHaveTextContent('Language, coding agents, the first project and moving over from VS Code — step by step.')
+    fireEvent.click(within(row).getByRole('button', { name: 'Start setup' }))
     expect(useOnboarding.getState()).toMatchObject({ open: true, step: 'welcome' })
     unmount()
     delete (window as { mindeck?: unknown }).mindeck
     installRemote()
-    const { container } = render(<OnboardingCard />)
-    expect(container).toBeEmptyDOMElement()
+    render(<GeneralSection />)
+    await settle()
+    expect(screen.getByRole('heading', { name: 'General & appearance' })).toBeInTheDocument()
+    expect(screen.queryByText('Run the setup again')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Start setup' })).not.toBeInTheDocument()
   })
 })

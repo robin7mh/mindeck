@@ -2030,6 +2030,145 @@ agents: {
     desktopApp: 'Desktop-App',
     server: 'Server',
     desktopWindow: 'Desktop-Fenster',
-    pairedBrowser: 'Browser (gekoppelt)'
+    pairedBrowser: 'Browser (gekoppelt)',
+
+    search: 'Einstellungen durchsuchen',
+    searchPlaceholder: 'Suchen, z. B. „Minimap“',
+    noHits: 'Keine Einstellung gefunden.',
+    saved: 'Änderungen werden sofort gespeichert.',
+    navLabel: 'Bereiche der Einstellungen',
+    navGroups: { app: 'App', work: 'Arbeiten', data: 'Daten & Geräte', help: 'Hilfe' },
+    badgeSignIn: 'Anmelden',
+    badgeOn: 'An',
+    sections: {
+      general: {
+        title: 'Allgemein & Aussehen',
+        intro: 'Sprache und wie Mindeck auf diesem Gerät aussieht.',
+        keywords: 'allgemein aussehen sprache deutsch english englisch darstellung theme modus dunkel hell system akzent farbe akzentfarbe hintergrund graphit schwarz cyber fenster schließen beenden hintergrund einrichtung assistent'
+      },
+      ai: {
+        title: 'KI & Agents',
+        intro: 'Der eingebaute Assistent und deine eigenen Coding-Agents.',
+        keywords: 'ki ai assistent modell claude opus sonnet haiku gründlichkeit aufwand effort guthaben api schlüssel key anthropic vorschläge tippen coding agents claude code codex gemini berechtigungen freigaben chat enter senden benachrichtigungen push handy anmelden konto'
+      },
+      editor: {
+        title: 'Editor',
+        intro: 'Wie der Editor aussieht und was beim Speichern passiert.',
+        keywords: 'editor schrift schriftgröße einrückung tab tabulator leerzeichen umbrechen zeilen formatieren speichern prettier eslint minimap sticky scroll vim'
+      },
+      languages: {
+        title: 'Sprachen & Debugger',
+        intro: 'Autovervollständigung, Fehleranzeige und Debugging pro Programmiersprache. Läuft auf diesem Computer, wie in VS Code.',
+        keywords: 'sprachen sprachserver language server lsp debugger debuggen python go rust c++ java php ruby swift kotlin lua yaml shell bash docker dockerfile c# typescript installieren'
+      },
+      terminal: {
+        title: 'Terminal',
+        intro: 'Aussehen, Verhalten und welche Shell standardmäßig startet.',
+        keywords: 'terminal shell zsh bash fish powershell profil profile ssh repl schrift cursor blinkt kopieren markieren wiederherstellen shell-integration zeilenhöhe verlauf scrollback puffer gpu webgl'
+      },
+      browser: {
+        title: 'Browser',
+        intro: 'Der eingebaute Browser für Doku, Live Server und Agents.',
+        keywords: 'browser suchmaschine google duckduckgo suchvorschläge links tabs vertikal seitlich lesezeichen neuer tab werbung tracker adblock schadsoftware malware logins cookies agents downloads speicherort import verlauf löschen tastenkürzel'
+      },
+      remote: {
+        title: 'Handy & Fernzugriff',
+        intro: 'Nutze Mindeck vom Handy oder einem anderen Computer aus.',
+        keywords: 'handy mobil fernzugriff geräte koppeln kopplung qr code heimnetz netzwerk lan wlan überall unterwegs cloud relay wach schlafen terminals shells ordner freigegeben admin mitglied rolle port https tls zertifikat fingerabdruck api server'
+      },
+      memory: {
+        title: 'Gedächtnis',
+        intro: 'Wo deine Notizen und das Wissen der Agents gespeichert werden.',
+        keywords: 'gedächtnis vault notizen obsidian ordner speicherort finder'
+      },
+      migrate: {
+        title: 'Von VS Code umziehen',
+        intro: 'Mindeck übernimmt Einstellungen, Tastenkürzel und Snippets. VS Code selbst bleibt unverändert, das Mindeck-Design auch.',
+        keywords: 'vs code vscode cursor vscodium windsurf umziehen umzug import übernehmen einstellungen tastenkürzel snippets erweiterungen'
+      },
+      about: {
+        title: 'Über & Diagnose',
+        intro: 'Version und Hilfe, wenn etwas nicht klappt.',
+        keywords: 'über version core host client logs diagnose support absturz schlüsselbund keyring'
+      }
+    },
+    groups: {
+      language: 'Sprache',
+      appearance: 'Aussehen',
+      app: 'App-Verhalten',
+      assistant: 'Mindeck-Assistent',
+      agents: 'Coding-Agents',
+      permissions: 'Berechtigungen',
+      chat: 'Chat & Benachrichtigungen',
+      text: 'Text',
+      onSave: 'Beim Speichern',
+      display: 'Anzeige & Bedienung',
+      ready: (n) => `Bereit · ${n}`,
+      installable: (n) => `Mit einem Klick installierbar · ${n}`,
+      needsFirst: (n) => `Braucht zuerst die Sprache selbst · ${n}`,
+      shell: 'Shell',
+      look: 'Aussehen',
+      behaviour: 'Verhalten',
+      searchTabs: 'Suche & Tabs',
+      privacy: 'Datenschutz & Sicherheit',
+      downloads: 'Downloads & Daten',
+      reach: 'Erreichbar',
+      devicePowers: 'Was gekoppelte Geräte dürfen',
+      location: 'Speicherort',
+      reset: 'Zurücksetzen'
+    },
+    advanced: 'Erweitert',
+    always: 'Immer',
+    interfaceLanguage: 'Sprache der Oberfläche',
+    defaultLook: 'Standard-Aussehen',
+    startSetup: 'Assistent starten',
+    notSignedIn: 'Noch nicht angemeldet.',
+    signIn: 'Anmelden',
+    connection: 'Verbindung',
+    efforts: { low: 'Schnell', medium: 'Mittel', high: 'Hoch', xhigh: 'Sehr hoch', max: 'Maximal' },
+    ownKeyFold: 'Für Vielnutzer: eigener API-Schlüssel',
+    apiKey: 'Anthropic-API-Schlüssel',
+    needsKey: 'braucht API-Schlüssel',
+    agentReady: 'Bereit',
+    agentMissing: 'Nicht installiert',
+    agentNotReady: 'Nicht eingerichtet',
+    standingGrants: 'Dauerhafte Freigaben',
+    none: 'Keine',
+    indent: 'Einrückung',
+    indentSpaces: (n) => `${n} Leerzeichen`,
+    indentTab: 'Tabulator',
+    toolReady: 'Bereit',
+    partly: (tool, need) => `Teilweise – ${tool} ${need}`,
+    installFirst: (what) => `Installiere zuerst ${what}`,
+    guide: 'Anleitung',
+    tabBar: 'Tab-Leiste',
+    tabsTop: 'Oben',
+    tabsSide: 'Seitlich',
+    recommended: 'empfohlen',
+    caution: 'Vorsicht',
+    importTitle: 'Aus einem anderen Browser importieren',
+    importHint: 'Lesezeichen, Verlauf und Suchmaschine aus Chrome, Safari oder Firefox.',
+    importButton: 'Importieren …',
+    history: 'Browserverlauf',
+    reachTitle: { off: 'Fernzugriff ist aus', lan: 'Erreichbar im Heimnetz', any: 'Erreichbar von überall' },
+    reachDesc: {
+      off: 'Nur dieser Computer (127.0.0.1) – gekoppelte Geräte können nicht verbinden.',
+      lan: 'Handys im selben WLAN können verbinden. Die Kopplung schützt weiterhin.',
+      any: 'Gekoppelte Geräte verbinden auch über Mobilfunk – über Mindeck Cloud, ohne offenen Port. Die Cloud sieht keine Inhalte.'
+    },
+    reachQuestion: 'Von wo dürfen Geräte verbinden?',
+    reachOptions: { off: 'Aus', lan: 'Heimnetz', any: 'Überall' },
+    devicesPaired: (n) => (n === 1 ? '1 Gerät gekoppelt' : `${n} Geräte gekoppelt`),
+    technical: 'Technische Details',
+    addresses: 'Adressen',
+    copy: 'Kopieren',
+    copied: 'Kopiert',
+    vault: 'Vault',
+    revealFinder: 'Im Finder zeigen',
+    revealFolder: 'Ordner öffnen',
+    logs: 'Logs',
+    logsHint: 'Logs und Absturzberichte bleiben auf diesem Computer – es wird nichts verschickt.',
+    diagnostics: 'Diagnose für den Support',
+    diagnosticsHint: 'Version, System und letzte Fehler – keine Schlüssel, Tokens oder Dateiinhalte.'
   }
 }

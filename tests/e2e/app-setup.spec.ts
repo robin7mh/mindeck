@@ -1,6 +1,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { expect, test } from './fixtures'
+import { openSettings } from './helpers'
 
 test('first start: the whole setup, step by step — then Settings: diagnostics copied, the logs folder opened', async ({ app, home }) => {
   const project = join(home, 'first-project')
@@ -56,8 +57,8 @@ test('first start: the whole setup, step by step — then Settings: diagnostics 
   await page.getByTitle('Projects', { exact: true }).click()
   await expect(page.getByText('first-project').first()).toBeVisible()
 
-  // Settings → Desktop app: the diagnostics land on the clipboard
-  await page.getByTitle('Settings', { exact: true }).click()
+  // Settings → About & diagnostics: the diagnostics land on the clipboard
+  await openSettings(page, 'About & diagnostics')
   await page.getByRole('button', { name: 'Copy diagnostics' }).click()
   await expect(page.getByRole('button', { name: 'Copied' })).toBeVisible()
   const copied = await app.evaluate(({ clipboard }) => clipboard.readText())
