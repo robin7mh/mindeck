@@ -108,6 +108,8 @@ const h = vi.hoisted(() => ({
   dark: true,
   fileIconFails: false,
   migrate: vi.fn((_legacy?: string): boolean => false),
+  /** adoptLoginEnv (platform/loginEnv.ts): nothing to wait for unless a test hands it a promise. */
+  loginEnv: vi.fn((): Promise<string[]> | undefined => undefined),
   coreOpts: undefined as undefined | Record<string, unknown>,
   hubListener: undefined as undefined | ((channel: string, payload: unknown) => void),
   bound: vi.fn(),
@@ -280,6 +282,7 @@ vi.mock('../../../electron/main/platform/electron', () => ({
   electronCipher: () => ({ kind: 'cipher' }),
   secretsProtected: () => true
 }))
+vi.mock('../../../electron/main/platform/loginEnv', () => ({ adoptLoginEnv: () => h.loginEnv() }))
 vi.mock('../../../electron/ipc/registry', () => ({ bindIpc: h.bound }))
 vi.mock('../../../electron/main/platform/sessionGuard', () => ({ guardSession: h.guard }))
 vi.mock('../../../electron/main/platform/browser/host', () => ({ createBrowserHost: (...a: unknown[]) => (h.createHost(...a), h.host) }))
@@ -335,6 +338,7 @@ beforeEach(() => {
   h.hubListener = undefined
   h.bound.mockReset()
   h.migrate.mockReset().mockReturnValue(false)
+  h.loginEnv.mockReset().mockReturnValue(undefined)
   h.core.system.setPaused.mockReset()
   h.core.terminal.killAll.mockReset()
   h.core.server.start.mockReset().mockResolvedValue(undefined)
@@ -778,10 +782,25 @@ describe('stability', () => {
     expect(h.crashStart).toHaveBeenCalledWith({ uploadToServer: false })
   })
 
+  it('starts the core with the user\'s shell environment: asked at once, waited for before the core', async () => {
+    let answer!: (changed: string[]) => void
+    h.loginEnv.mockReturnValue(new Promise<string[]>((resolve) => (answer = resolve)))
+    await boot()
+    expect(h.loginEnv).toHaveBeenCalledTimes(1)
+    // Electron is ready, the shell hasn't answered: no core, no window yet.
+    expect(h.coreOpts).toBeUndefined()
+    expect(FakeWindow.all).toHaveLength(0)
+    answer(['PATH'])
+    await flush()
+    expect(h.coreOpts).toBeDefined()
+    expect(FakeWindow.all).toHaveLength(1)
+  })
+
   it('runs once: a second start quits and brings the running one up', async () => {
     h.singleInstance = false
     await boot()
     expect(h.quit).toHaveBeenCalled()
+    expect(h.loginEnv).not.toHaveBeenCalled() // a second start asks no shell
     expect(FakeWindow.all).toHaveLength(0)
     h.singleInstance = true
     h.quit.mockReset()

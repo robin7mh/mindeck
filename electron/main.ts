@@ -8,6 +8,7 @@ import { onSystemAppearance, runtimeIcon, switchesDock, systemDark, type IconKin
 import { captureConsole, catchCrashes, Logger } from './main/lib/log'
 import { electronCipher, electronPlatform, secretsProtected } from './main/platform/electron'
 import { DesktopLifecycle, usingMindeck, type LifecycleLabels } from './main/platform/lifecycle'
+import { adoptLoginEnv } from './main/platform/loginEnv'
 import { registerDesktopIpc } from './ipc/desktop.ipc'
 import { createCore, type Core } from './main/core/createCore'
 import { bindIpc } from './ipc/registry'
@@ -53,6 +54,11 @@ crashReporter.start({ uploadToServer: false })
 // background) brings the running one up instead of opening the same data twice.
 const primary = app.requestSingleInstanceLock()
 if (!primary) app.quit()
+
+// Started from the Finder, the Dock or Spotlight, Mindeck has launchd's bare environment: the user's
+// shell is asked for theirs while Electron gets ready, and the core starts with it — agents, git and
+// the language servers find what the user's terminal finds (platform/loginEnv.ts).
+const loginEnv = primary ? adoptLoginEnv() : undefined
 
 // main/preload are bundled as CommonJS (Electron's well-supported default), so
 // __dirname is natively available — no import.meta shim needed.
@@ -314,6 +320,7 @@ async function startCore(): Promise<void> {
     console.error('[data] migration from the old data folder failed — starting fresh\n', err)
   }
 
+  await loginEnv
   const cipher = electronCipher()
   core = await createCore({
     mode: 'desktop',
