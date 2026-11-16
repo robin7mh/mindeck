@@ -29,7 +29,8 @@ test('a first start opens the setup over the window; skipping it leaves the Comm
 test('navigates every module', async ({ page }) => {
   const nav = (name: string) => page.getByRole('button', { name, exact: true }).or(page.getByTitle(name, { exact: true }))
   await nav('Editor').click()
-  await expect(page.getByText('No projects yet')).toBeVisible()
+  // Core stays mounted (hidden) too, and its projects tile says "No projects yet — Add a project" — only the visible text counts
+  await expect(page.getByText('No projects yet').filter({ visible: true })).toBeVisible()
   await nav('Projects').click()
   // the editor stays mounted (hidden) once opened — only the visible text counts
   await expect(page.getByText('No projects yet').filter({ visible: true })).toBeVisible()
