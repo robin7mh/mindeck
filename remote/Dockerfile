@@ -8,7 +8,7 @@
 #   npm run remote:bundle        → out/remote/mindeck-server-<version>-linux-<arch>.tar.gz
 
 # Pinned by digest, like the main Dockerfile: its node and modules run on the customers' hosts (Dependabot proposes the next one).
-FROM node:22-bullseye@sha256:959fa6e5c12f4b08f58808f953c7a6a05f1f72629b57ef3a648b8809362fdad9 AS build
+FROM node:26-bullseye@sha256:784b1bb050f6bf8ccfdc28d9d07ad07d15ab9d72eee5867f875ba219abec2611 AS build
 WORKDIR /app
 ENV ELECTRON_SKIP_BINARY_DOWNLOAD=1
 COPY package.json package-lock.json ./
