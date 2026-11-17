@@ -4,7 +4,7 @@ import { create } from 'zustand'
 export type Theme = 'dark' | 'light'
 /** What the user picked: a fixed theme, or follow the OS. */
 export type Mode = Theme | 'system'
-export type Accent = 'cyan' | 'blue' | 'violet' | 'pink' | 'green' | 'amber' | 'mono'
+export type Accent = 'cyan' | 'blue' | 'violet' | 'pink' | 'red' | 'green' | 'amber' | 'mono'
 /** Background of the dark theme: tinted in the accent's hue, or neutral. */
 export type Surface = 'cyber' | 'black' | 'graphite'
 
@@ -33,6 +33,7 @@ export const ACCENTS: Record<Accent, Record<Theme, [Rgb, Rgb, Rgb]> & { hue: num
   blue: { hue: 224, dark: ['96 156 255', '120 104 255', '56 214 232'], light: ['37 99 235', '79 70 229', '0 132 158'] },
   violet: { hue: 262, dark: ['172 132 255', '236 112 200', '74 132 255'], light: ['109 64 230', '190 40 140', '37 99 235'] },
   pink: { hue: 318, dark: ['255 102 196', '172 132 255', '255 146 82'], light: ['200 30 140', '109 64 230', '200 80 20'] },
+  red: { hue: 0, dark: ['255 82 82', '255 146 82', '236 112 200'], light: ['200 30 40', '200 80 20', '190 40 140'] },
   green: { hue: 152, dark: ['84 230 140', '56 214 232', '190 228 92'], light: ['16 140 70', '0 132 158', '101 140 13'] },
   amber: { hue: 32, dark: ['255 184 76', '255 120 72', '236 112 200'], light: ['176 104 0', '200 70 20', '190 40 140'] },
   mono: { hue: null, dark: ['222 230 240', '140 152 170', '110 120 136'], light: ['30 41 59', '71 85 105', '100 116 139'] }

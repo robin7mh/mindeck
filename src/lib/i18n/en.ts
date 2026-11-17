@@ -1915,7 +1915,7 @@ agents: {
     themeMode: 'Mode',
     themeModes: { dark: 'Dark', light: 'Light', system: 'System' },
     accent: 'Accent color',
-    accents: { cyan: 'Cyan', blue: 'Blue', violet: 'Violet', pink: 'Neon pink', green: 'Matrix green', amber: 'Amber', mono: 'Mono' },
+    accents: { cyan: 'Cyan', blue: 'Blue', violet: 'Violet', pink: 'Neon pink', red: 'Red', green: 'Matrix green', amber: 'Amber', mono: 'Mono' },
     surface: 'Background',
     surfaces: { cyber: 'Cyber', black: 'Black', graphite: 'Graphite' },
     surfaceHints: {

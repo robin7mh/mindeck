@@ -1889,7 +1889,7 @@ agents: {
     themeMode: 'Modus',
     themeModes: { dark: 'Dunkel', light: 'Hell', system: 'System' },
     accent: 'Akzentfarbe',
-    accents: { cyan: 'Cyan', blue: 'Blau', violet: 'Violett', pink: 'Neon-Pink', green: 'Matrix-Grün', amber: 'Bernstein', mono: 'Mono' },
+    accents: { cyan: 'Cyan', blue: 'Blau', violet: 'Violett', pink: 'Neon-Pink', red: 'Rot', green: 'Matrix-Grün', amber: 'Bernstein', mono: 'Mono' },
     surface: 'Hintergrund',
     surfaces: { cyber: 'Cyber', black: 'Schwarz', graphite: 'Graphit' },
     surfaceHints: {

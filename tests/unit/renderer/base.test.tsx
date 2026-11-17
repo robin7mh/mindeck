@@ -88,6 +88,7 @@ describe('lib', () => {
   it('the cyber background in cyan is index.css; mono turns it grey; black and graphite stay neutral', () => {
     expect(surfaceTokens('cyber', 'cyan')).toMatchObject({ '--bg-void': '4 7 11', '--bg-panel': '12 18 26', '--border-hud': '42 60 84' })
     expect(surfaceTokens('cyber', 'mono')['--bg-void']).toBe('7 7 7')
+    expect(surfaceTokens('cyber', 'red')['--bg-void']).toBe('11 4 4') // hue 0 is red, not neutral
     expect(surfaceTokens('graphite', 'pink')).toEqual(surfaceTokens('graphite', 'green'))
   })
 
