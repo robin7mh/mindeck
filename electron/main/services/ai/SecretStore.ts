@@ -3,8 +3,8 @@ import { writeAtomic } from '../../lib/writeAtomic'
 
 /** Encrypts values at rest (desktop: Electron safeStorage / OS keychain). */
 export interface Cipher {
-  encrypt(plain: string): string
-  decrypt(stored: string): string
+  encrypt(plain: string): Promise<string>
+  decrypt(stored: string): Promise<string>
 }
 
 /**
@@ -36,7 +36,7 @@ export class SecretStore {
     // Encrypted by a keychain that isn't there now: locked, never handed out as if it were the value.
     if (!this.cipher) return undefined
     try {
-      return this.cipher.decrypt(stored)
+      return await this.cipher.decrypt(stored)
     } catch {
       return undefined // keychain changed — the user re-enters the key
     }
@@ -54,9 +54,10 @@ export class SecretStore {
         throw Object.assign(new Error('The stored secrets are encrypted by the OS keychain, which is not available'), { code: 'secrets-locked' })
       }
       // Written in plain text before (no keychain then): encrypted from now on.
-      const all = Object.fromEntries(Object.entries(state.secrets).map(([k, v]) => [k, this.cipher && !state.encrypted ? this.cipher.encrypt(v) : v]))
+      const cipher = this.cipher
+      const all = Object.fromEntries(await Promise.all(Object.entries(state.secrets).map(async ([k, v]) => [k, cipher && !state.encrypted ? await cipher.encrypt(v) : v] as const)))
       if (value === null) delete all[name]
-      else all[name] = this.cipher ? this.cipher.encrypt(value) : value
+      else all[name] = cipher ? await cipher.encrypt(value) : value
       await writeAtomic(this.file, JSON.stringify({ version: 1, encrypted: !!this.cipher, secrets: all }, null, 2), 0o600)
       this.cache = { encrypted: !!this.cipher, secrets: all }
     })

@@ -321,7 +321,7 @@ async function startCore(): Promise<void> {
   }
 
   await loginEnv
-  const cipher = electronCipher()
+  const cipher = await electronCipher()
   core = await createCore({
     mode: 'desktop',
     version: app.getVersion(),

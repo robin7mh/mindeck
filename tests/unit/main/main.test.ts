@@ -279,7 +279,7 @@ vi.mock('../../../electron/main/lib/paths', async () => {
 })
 vi.mock('../../../electron/main/platform/electron', () => ({
   electronPlatform: { kind: 'desktop' },
-  electronCipher: () => ({ kind: 'cipher' }),
+  electronCipher: async () => ({ kind: 'cipher' }),
   secretsProtected: () => true
 }))
 vi.mock('../../../electron/main/platform/loginEnv', () => ({ adoptLoginEnv: () => h.loginEnv() }))
