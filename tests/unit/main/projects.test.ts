@@ -52,10 +52,10 @@ vi.mock('electron', () => ({
   utilityProcess: { fork: electron.fork },
   shell: { openPath: electron.openPath, openExternal: electron.openExternal, showItemInFolder: electron.reveal, trashItem: electron.trashItem },
   safeStorage: {
-    isEncryptionAvailable: () => electron.encryption,
+    isAsyncEncryptionAvailable: async () => electron.encryption,
     getSelectedStorageBackend: () => electron.backend,
-    encryptString: (s: string) => Buffer.from(`enc:${s}`),
-    decryptString: (b: Buffer) => b.toString().replace(/^enc:/, '')
+    encryptStringAsync: async (s: string) => Buffer.from(`enc:${s}`),
+    decryptStringAsync: async (b: Buffer) => ({ result: b.toString().replace(/^enc:/, ''), shouldReEncrypt: false })
   }
 }))
 
@@ -236,13 +236,13 @@ describe('ProjectService', () => {
     return service
   }
 
-  it('encrypts secrets with the OS keychain when available', () => {
-    const cipher = electronCipher()!
-    const stored = cipher.encrypt('key')
+  it('encrypts secrets with the OS keychain when available', async () => {
+    const cipher = (await electronCipher())!
+    const stored = await cipher.encrypt('key')
     expect(stored).toBe(Buffer.from('enc:key').toString('base64'))
-    expect(cipher.decrypt(stored)).toBe('key')
+    expect(await cipher.decrypt(stored)).toBe('key')
     electron.encryption = false
-    expect(electronCipher()).toBeUndefined()
+    expect(await electronCipher()).toBeUndefined()
     electron.encryption = true
   })
 
@@ -253,11 +253,8 @@ describe('ProjectService', () => {
       electron.backend = backend
       expect(secretsProtected('linux')).toBe(false)
     }
-    expect(secretsProtected('win32')).toBe(true)
+    expect(secretsProtected('win32')).toBe(true) // the backend only matters on Linux
     electron.backend = 'gnome_libsecret'
-    electron.encryption = false
-    expect(secretsProtected('win32')).toBe(false)
-    electron.encryption = true
     expect(typeof secretsProtected()).toBe('boolean')
   })
 

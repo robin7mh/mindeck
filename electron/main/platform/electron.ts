@@ -104,19 +104,23 @@ export const electronPlatform: Platform = {
  * without a keyring (no Secret Service, no KWallet) Electron falls back to a
  * fixed built-in key (`basic_text`) — as good as plain text — or offers no
  * encryption at all. Settings warns about that instead of keeping quiet.
+ * Asked once there is a cipher (see electronCipher): it says how good it is.
  */
 export function secretsProtected(platform: NodeJS.Platform = process.platform): boolean {
-  if (!safeStorage.isEncryptionAvailable()) return false
   if (platform !== 'linux') return true
   const backend = safeStorage.getSelectedStorageBackend()
   return backend !== 'basic_text' && backend !== 'unknown'
 }
 
-/** OS-keychain encryption for stored secrets, when the OS offers it. */
-export function electronCipher(): Cipher | undefined {
-  if (!safeStorage.isEncryptionAvailable()) return undefined
+/**
+ * OS-keychain encryption for stored secrets, when the OS offers it — through
+ * safeStorage's asynchronous methods (the synchronous ones go in Electron 46).
+ * They use the same key: what was stored before still opens.
+ */
+export async function electronCipher(): Promise<Cipher | undefined> {
+  if (!(await safeStorage.isAsyncEncryptionAvailable())) return undefined
   return {
-    encrypt: (plain) => safeStorage.encryptString(plain).toString('base64'),
-    decrypt: (stored) => safeStorage.decryptString(Buffer.from(stored, 'base64'))
+    encrypt: async (plain) => (await safeStorage.encryptStringAsync(plain)).toString('base64'),
+    decrypt: async (stored) => (await safeStorage.decryptStringAsync(Buffer.from(stored, 'base64'))).result
   }
 }

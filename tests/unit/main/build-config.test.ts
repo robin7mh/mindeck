@@ -80,11 +80,11 @@ describe('Docker', () => {
   it('builds from base images pinned by digest', () => {
     const bases = [...dockerfile.matchAll(/^FROM (\S+)/gm)].map((m) => m[1])
     expect(bases).toHaveLength(2)
-    for (const base of bases) expect(base).toMatch(/^node:22-bookworm(-slim)?@sha256:[0-9a-f]{64}$/)
+    for (const base of bases) expect(base).toMatch(/^node:26-bookworm(-slim)?@sha256:[0-9a-f]{64}$/)
     // The server package too: its node and modules run on the customers' own hosts.
     const remote = [...readFileSync(join(root, 'remote', 'Dockerfile'), 'utf8').matchAll(/^FROM (\S+)/gm)].map((m) => m[1]).filter((base) => base !== 'scratch')
     expect(remote).toHaveLength(1)
-    expect(remote[0]).toMatch(/^node:22-bullseye@sha256:[0-9a-f]{64}$/)
+    expect(remote[0]).toMatch(/^node:26-bullseye@sha256:[0-9a-f]{64}$/)
   })
 })
 
