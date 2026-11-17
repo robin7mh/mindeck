@@ -3,12 +3,14 @@
 # The Mindeck server package for Remote-SSH and Dev Containers: the headless
 # core (API + web UI), its production node_modules (node-pty built for
 # Linux) and Node itself — unpacked on the remote machine and started there by
-# the desktop app. bullseye: glibc 2.31, runs on most Linux servers.
+# the desktop app. bullseye: glibc 2.31, runs on most Linux servers. Its images
+# are no longer updated (Debian ended bullseye in August 2026): this one stays
+# at Node 26.8 until the bundle builds against an old glibc some other way.
 #
 #   npm run remote:bundle        → out/remote/mindeck-server-<version>-linux-<arch>.tar.gz
 
 # Pinned by digest, like the main Dockerfile: its node and modules run on the customers' hosts (Dependabot proposes the next one).
-FROM node:22-bullseye@sha256:959fa6e5c12f4b08f58808f953c7a6a05f1f72629b57ef3a648b8809362fdad9 AS build
+FROM node:26-bullseye@sha256:784b1bb050f6bf8ccfdc28d9d07ad07d15ab9d72eee5867f875ba219abec2611 AS build
 WORKDIR /app
 ENV ELECTRON_SKIP_BINARY_DOWNLOAD=1
 COPY package.json package-lock.json ./

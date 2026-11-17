@@ -24,7 +24,7 @@ Protocol · Anthropic SDK · Zod · `ws` · Vitest + Testing Library · Playwrig
 
 ## Loslegen
 
-Voraussetzungen: Node 22. Docker nur für das optionale Server-Image (`npm run docker:up`).
+Voraussetzungen: Node 26. Docker nur für das optionale Server-Image (`npm run docker:up`).
 
 ```bash
 git clone https://github.com/robin7mh/mindeck.git
@@ -307,7 +307,7 @@ JetBrains Mono) are bundled locally.
 
 ## Getting started
 
-Requirements: Node 22. Docker only for the optional server image (`npm run docker:up`).
+Requirements: Node 26. Docker only for the optional server image (`npm run docker:up`).
 
 ```bash
 git clone https://github.com/robin7mh/mindeck.git

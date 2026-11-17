@@ -26,7 +26,7 @@ export default defineConfig({
   build: {
     outDir: 'out/server',
     emptyOutDir: true,
-    target: 'node22',
+    target: 'node26',
     ssr: true,
     minify: false,
     sourcemap: true,

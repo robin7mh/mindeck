@@ -25,6 +25,9 @@ export default defineConfig({
     // The heavier UI tests take ~1 s alone, but several times that with coverage on every core of a
     // busy machine — no test waits on the clock (fake timers do that), so the limit only catches hangs.
     testTimeout: 20_000,
+    // Node 25+ has a localStorage of its own (empty without --localstorage-file) that
+    // jsdom's would sit behind: the tests get the browser's storage, as the app does.
+    execArgv: ['--no-experimental-webstorage'],
     projects: [
       {
         extends: true,
