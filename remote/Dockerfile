@@ -12,6 +12,8 @@
 # Pinned by digest, like the main Dockerfile: its node and modules run on the customers' hosts (Dependabot proposes the next one).
 FROM node:26-bullseye@sha256:784b1bb050f6bf8ccfdc28d9d07ad07d15ab9d72eee5867f875ba219abec2611 AS build
 WORKDIR /app
+# patchelf: the node that comes along finds its libatomic next to it (see below).
+RUN apt-get update && apt-get install -y --no-install-recommends patchelf && rm -rf /var/lib/apt/lists/*
 ENV ELECTRON_SKIP_BINARY_DOWNLOAD=1
 COPY package.json package-lock.json ./
 COPY scripts ./scripts
@@ -30,6 +32,10 @@ RUN npm run web:build && npm run server:build && npm prune --omit=dev \
   && mkdir -p /pkg/out \
   && cp -r out/server out/web /pkg/out/ && cp -r node_modules package.json /pkg/ \
   && cp "$(command -v node)" /pkg/node \
+  # Node 26 links libatomic, which minimal hosts and dev containers lack: it comes along in lib/, and
+  # node looks there ($ORIGIN) — not LD_LIBRARY_PATH, which every shell it starts would inherit.
+  && mkdir -p /pkg/lib && cp -L "$(ldd /pkg/node | awk '/libatomic/ {print $3}')" /pkg/lib/libatomic.so.1 \
+  && patchelf --set-rpath '$ORIGIN/lib' /pkg/node \
   && node -p "require('./package.json').version" > /pkg/VERSION
 
 FROM scratch
