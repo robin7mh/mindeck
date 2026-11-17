@@ -127,6 +127,12 @@ describe('Settings → Terminal', () => {
     expect(screen.getByText('node --inspect -i')).toBeInTheDocument()
     expect(screen.queryByLabelText('Name')).toBeNull() // saved: the form is gone
 
+    const saves = configure.mock.calls.length
+    fireEvent.click(screen.getByLabelText('Edit Server'))
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' })) // changed its mind: the row is back, nothing saved
+    expect(screen.queryByLabelText('Name')).toBeNull()
+    expect(screen.getByText('ssh host')).toBeInTheDocument()
+    expect(configure).toHaveBeenCalledTimes(saves)
     fireEvent.click(screen.getByLabelText('Edit Server'))
     // The form takes the profile's place: before the other one, its row gone meanwhile.
     expect(screen.queryByText('ssh host')).toBeNull()

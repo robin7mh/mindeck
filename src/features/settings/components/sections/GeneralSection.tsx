@@ -133,7 +133,7 @@ export function GeneralSection() {
     <>
       <SectionHeader title={s.sections.general.title} intro={s.sections.general.intro} />
       {desktop && !desktop.secretsEncrypted && (
-        <Callout tone="warn" icon={ShieldAlert}>
+        <Callout icon={ShieldAlert}>
           <strong className="font-semibold">{t.stability.keyringTitle}</strong> {t.stability.keyringBody}
         </Callout>
       )}

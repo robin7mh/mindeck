@@ -236,7 +236,6 @@ export function AiSection({ onSignIn }: { onSignIn?: () => void }) {
       <SectionHeader title={s.sections.ai.title} intro={s.sections.ai.intro} />
       {status && !status.configured && (
         <Callout
-          tone="warn"
           icon={AlertCircle}
           action={
             onSignIn && (
@@ -250,7 +249,7 @@ export function AiSection({ onSignIn }: { onSignIn?: () => void }) {
         </Callout>
       )}
       {status?.cloud?.blocked && (
-        <Callout tone="warn" icon={AlertCircle}>
+        <Callout icon={AlertCircle}>
           {s.cloudBlocked}
         </Callout>
       )}

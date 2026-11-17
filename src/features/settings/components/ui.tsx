@@ -225,11 +225,11 @@ export function Advanced({ summary, open, children }: { summary: string; open?: 
   )
 }
 
-/** A notice above the groups: something to do (warn) or to know (info), with an optional action. */
-export function Callout({ tone, icon: Icon, action, children }: { tone: 'warn' | 'info'; icon: LucideIcon; action?: ReactNode; children: ReactNode }) {
+/** A warning above the groups — something to do — with an optional action. */
+export function Callout({ icon: Icon, action, children }: { icon: LucideIcon; action?: ReactNode; children: ReactNode }) {
   return (
-    <div role={tone === 'warn' ? 'alert' : undefined} className={cn('flex flex-wrap items-start gap-3 rounded-lg px-4 py-3.5 font-sans text-[13px] leading-[1.45] text-text-primary', tone === 'warn' ? 'bg-amber/12' : 'bg-elevated')}>
-      <Icon size={18} strokeWidth={2} className={cn('mt-px shrink-0', tone === 'warn' ? 'text-amber' : 'text-text-secondary')} />
+    <div role="alert" className="flex flex-wrap items-start gap-3 rounded-lg bg-amber/12 px-4 py-3.5 font-sans text-[13px] leading-[1.45] text-text-primary">
+      <Icon size={18} strokeWidth={2} className="mt-px shrink-0 text-amber" />
       <div className="min-w-[200px] flex-1">{children}</div>
       {action}
     </div>

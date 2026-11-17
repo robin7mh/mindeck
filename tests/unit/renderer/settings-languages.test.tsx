@@ -165,6 +165,14 @@ describe('Settings → Languages', () => {
     expect(row('Go')).toHaveTextContent('Partly — Delve needs go')
     expect(within(row('Go')).queryByRole('button')).toBeNull()
   })
+
+  it('a debugger that comes with the toolchain says so', async () => {
+    installBridge({ 'tools:status': () => status({ swift: { id: 'swift', name: 'Swift', server: { name: 'SourceKit-LSP', state: 'ready' }, debugger: { name: 'lldb-dap', state: 'manual' } } }) })
+    render(<LanguagesSection />)
+    await act(settle)
+    expect(within(group('Ready · 1')).getByText('Swift')).toBeInTheDocument()
+    expect(row('Swift')).toHaveTextContent('Partly — lldb-dap comes with its toolchain')
+  })
 })
 
 describe('Settings → moving over from VS Code / Cursor', () => {
