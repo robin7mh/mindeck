@@ -176,6 +176,14 @@ describe('TerminalService.create', () => {
     expect(await svc.create({ projectId: 'p1', cwd: folder })).toMatchObject({ cwd: folder, title: 'demo', projectId: 'p1' })
   })
 
+  it('announces a shell a device opened (terminal:opened) — none the desktop opened itself', async () => {
+    const own = await svc.create({})
+    expect(emit).not.toHaveBeenCalledWith('terminal:opened', expect.anything())
+    const phone = await svc.create({ projectId: 'p1' }, { announce: true })
+    expect(emit.mock.calls.filter(([c]) => c === 'terminal:opened')).toEqual([['terminal:opened', phone]])
+    expect(phone.id).not.toBe(own.id)
+  })
+
   it('rejects unknown projects, missing folders and too many sessions', async () => {
     await expect(svc.create({ projectId: 'nope' })).rejects.toMatchObject({ code: 'not-found' })
     const gone = service({ resolveProject: () => ({ name: 'x', path: join(projectDir, 'missing') }) })

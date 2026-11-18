@@ -50,6 +50,7 @@ type Emit = {
   (channel: 'terminal:exit', payload: TerminalExit): void
   (channel: 'terminal:info', payload: TerminalInfo): void
   (channel: 'terminal:reveal', payload: TerminalReveal): void
+  (channel: 'terminal:opened', payload: TerminalInfo): void
 }
 
 function coded(code: string, message: string): Error {
@@ -178,7 +179,8 @@ export class TerminalService {
     return detectShells()
   }
 
-  async create(req: { projectId?: string; cwd?: string; cols?: number; rows?: number; profileId?: string }): Promise<TerminalInfo> {
+  /** A new shell. `announce`: a device opened it — the desktop window learns of it (`terminal:opened`) and shows its tab. */
+  async create(req: { projectId?: string; cwd?: string; cols?: number; rows?: number; profileId?: string }, { announce = false } = {}): Promise<TerminalInfo> {
     const project = req?.projectId ? this.opts.resolveProject(req.projectId) : undefined
     if (req?.projectId && !project) throw coded('not-found', 'Project not found')
     if (req?.cwd && !isAbsolute(req.cwd)) throw coded('bad-path', 'cwd must be an absolute folder')
@@ -188,7 +190,7 @@ export class TerminalService {
     const cwd = req?.cwd ? resolve(req.cwd) : (project?.path ?? profile.cwd ?? homedir())
     const launch = prefs.shellIntegration ? await this.integrated(profile.command, profile.env) : undefined
     const command = launch ?? profile.command
-    return this.start({
+    const info = await this.start({
       title: project?.name ?? folderTitle(cwd),
       cwd,
       // A profile's own program starts through the login shell (the user's PATH), like an
@@ -202,6 +204,8 @@ export class TerminalService {
       cols: req?.cols,
       rows: req?.rows
     })
+    if (announce) this.opts.emit('terminal:opened', info)
+    return info
   }
 
   /**

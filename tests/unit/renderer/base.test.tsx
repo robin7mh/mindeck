@@ -223,6 +223,7 @@ describe('data & shared constants', () => {
       'terminal:exit',
       'terminal:info',
       'terminal:reveal',
+      'terminal:opened',
       'ai:delta',
       'ai:inlineDelta',
       'ai:message',

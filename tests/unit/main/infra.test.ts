@@ -335,15 +335,15 @@ describe('ipc handler modules bind every channel to its service', () => {
       'terminal',
       registerTerminalIpc,
       [
-        ['terminal:create', { projectId: 'p' }, 'create', [{ projectId: 'p' }]],
-        ['terminal:create', undefined, 'create', [{}]],
-        ['terminal:create', { cols: 80, rows: 24 }, 'create', [{ cols: 80, rows: 24 }]],
+        ['terminal:create', { projectId: 'p' }, 'create', [{ projectId: 'p' }, { announce: false }]],
+        ['terminal:create', undefined, 'create', [{}, { announce: false }]],
+        ['terminal:create', { cols: 80, rows: 24 }, 'create', [{ cols: 80, rows: 24 }, { announce: false }]],
         ['terminal:list', undefined, 'list', []],
         ['terminal:attach', { id: 'i' }, 'attach', ['i']],
         ['terminal:write', { id: 'i', data: 'ls' }, 'write', ['i', 'ls']],
         ['terminal:resize', { id: 'i', cols: 80, rows: 24 }, 'resize', ['i', 80, 24]],
         ['terminal:kill', { id: 'i' }, 'kill', ['i']],
-        ['terminal:create', { profileId: 'zsh' }, 'create', [{ profileId: 'zsh' }]],
+        ['terminal:create', { profileId: 'zsh' }, 'create', [{ profileId: 'zsh' }, { announce: false }]],
         ['terminal:shells', undefined, 'shells', []],
         ['terminal:settings', undefined, 'settings', []],
         ['terminal:configure', { fontSize: 14, profiles: [] }, 'configure', [{ fontSize: 14, profiles: [] }]],
@@ -605,6 +605,12 @@ describe('ipc handler modules bind every channel to its service', () => {
     for (const [channel, req, method, args] of cases) {
       expect(await router.dispatch(channel, req, { transport: 'ipc' })).toEqual({ ok: true, data: { method, args } })
     }
+  })
+  it('a shell a device opens is announced to the desktop window — its own it shows already', async () => {
+    const router = new Router({ remoteTerminal: () => true })
+    registerTerminalIpc(router, spyService() as never)
+    const remote = { transport: 'remote' as const, deviceId: 'd1' }
+    expect(await router.dispatch('terminal:create', { projectId: 'p' }, remote)).toEqual({ ok: true, data: { method: 'create', args: [{ projectId: 'p' }, { announce: true }] } })
   })
 })
 

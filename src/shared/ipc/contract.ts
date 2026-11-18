@@ -1004,6 +1004,8 @@ export interface IpcEvents {
   'terminal:info': TerminalInfo
   /** An agent started a command in a terminal: show that terminal (and the Terminal module). */
   'terminal:reveal': TerminalReveal
+  /** A device (the phone, the web UI) opened a shell: the desktop shows its tab too. */
+  'terminal:opened': TerminalInfo
   'ai:delta': AiDelta
   'ai:inlineDelta': InlineDelta
   'ai:message': AiMessageUpdate
@@ -1054,6 +1056,7 @@ export const IPC_EVENTS: readonly IpcEvent[] = [
   'terminal:exit',
   'terminal:info',
   'terminal:reveal',
+  'terminal:opened',
   'ai:delta',
   'ai:inlineDelta',
   'ai:message',
@@ -1086,7 +1089,7 @@ export const IPC_EVENTS: readonly IpcEvent[] = [
 ]
 
 /** Push events remote clients only receive when remote shells are enabled. */
-export const TERMINAL_EVENTS: readonly IpcEvent[] = ['terminal:data', 'terminal:exit', 'terminal:info', 'terminal:reveal', 'debug:session', 'debug:output', 'notebook:event', 'finder:progress', 'devServers:changed']
+export const TERMINAL_EVENTS: readonly IpcEvent[] = ['terminal:data', 'terminal:exit', 'terminal:info', 'terminal:reveal', 'terminal:opened', 'debug:session', 'debug:output', 'notebook:event', 'finder:progress', 'devServers:changed']
 
 /** Push events that never leave the desktop window (the browser's tabs are private pages; Remote-SSH windows are the desktop's own). */
 export const DESKTOP_EVENTS: readonly IpcEvent[] = ['browser:state', 'browser:find', 'browser:command', 'browser:reveal', 'browser:bookmarks', 'browser:import', 'remote:changed']
