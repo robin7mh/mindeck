@@ -54,7 +54,7 @@ vi.mock('electron', async () => {
         return h.dark
       }
     },
-    safeStorage: { isEncryptionAvailable: () => false },
+    safeStorage: { isAsyncEncryptionAvailable: async () => false },
     session: {
       fromPartition: (name: string) => {
         if (!h.sessions.has(name)) {

@@ -299,7 +299,14 @@ describe('AppShell', () => {
         </div>
       )
     }))
-    vi.doMock('@/features/settings/components/SettingsView', () => ({ SettingsView: () => <div>SETTINGS</div> }))
+    vi.doMock('@/features/settings/components/SettingsView', () => ({
+      SettingsView: ({ onOpenAccount }: { onOpenAccount: () => void }) => (
+        <div>
+          SETTINGS
+          <button onClick={onOpenAccount}>SIGN IN</button>
+        </div>
+      )
+    }))
     vi.doMock('@/features/system/components/SystemView', () => ({ SystemView: () => <div>SYSTEM</div> }))
     vi.doMock('@/features/account/components/AccountView', () => ({ AccountView: () => <div>ACCOUNT</div> }))
     vi.doMock('@/features/logs/components/LogsView', () => ({ LogsView: () => <div>LOGS</div> }))
@@ -308,6 +315,7 @@ describe('AppShell', () => {
     const { useAssistant } = await import('@/features/agents/store')
     const { useAgents } = await import('@/features/agents/sessions')
     const { useMemory } = await import('@/features/memory/store')
+    const { useSettings } = await import('@/features/settings/store')
     const connect = vi.fn(() => () => {})
     const open = vi.fn(async () => {})
     const agentsConnect = vi.fn(() => () => {})
@@ -355,8 +363,11 @@ describe('AppShell', () => {
     expect(screen.getByText('MEMORY')).toBeInTheDocument()
     expect(openNote).toHaveBeenCalledWith('Agents/x.md')
     fireEvent.click(screen.getByTitle('Agents'))
-    fireEvent.click(screen.getByText('OPEN SETTINGS'))
+    fireEvent.click(screen.getByText('OPEN SETTINGS')) // the agents' settings: AI & agents
     expect(screen.getByText('SETTINGS')).toBeInTheDocument()
+    expect(useSettings.getState().section).toBe('ai')
+    fireEvent.click(screen.getByText('SIGN IN')) // signing in from the settings: the account
+    expect(screen.getByText('ACCOUNT')).toBeInTheDocument()
     fireEvent.click(screen.getByTitle('System'))
     expect(screen.getByText('SYSTEM')).toBeInTheDocument()
     fireEvent.click(screen.getByTitle('Logs'))
@@ -451,6 +462,7 @@ describe('AppShell with the Browser and Files', () => {
     const { useAssistant } = await import('@/features/agents/store')
     const { useAgents } = await import('@/features/agents/sessions')
     const { useBrowser } = await import('@/features/browser/store')
+    const { useSettings } = await import('@/features/settings/store')
     const { tab } = await import('./browserFixtures')
     let handlers!: Parameters<ReturnType<typeof useBrowser.getState>['connect']>[0]
     const disconnect = vi.fn()
@@ -497,6 +509,7 @@ describe('AppShell with the Browser and Files', () => {
     expect(openDialog).toHaveBeenLastCalledWith(en.browser.agentPrompt('Docs', 'https://b.dev/'))
     act(() => handlers.settings())
     expect(screen.getByText('SETTINGS')).toBeInTheDocument()
+    expect(useSettings.getState().section).toBe('browser') // the browser's own settings
     // An agent started a command in a terminal: that terminal's tab, and the Terminal on screen.
     const { useTerminals } = await import('@/features/terminal/store')
     const reveal = vi.fn(async () => {})

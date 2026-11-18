@@ -10,7 +10,7 @@ import { TabStrip } from '@/features/browser/components/TabStrip'
 import { Viewport } from '@/features/browser/components/Viewport'
 import { ExtensionButtons, ExtensionsPanel } from '@/features/browser/components/Extensions'
 import { AuthDialog, DangerPage, DrmBar, PrivateTabPage, ShieldButton } from '@/features/browser/components/Protection'
-import { BrowserCard } from '@/features/settings/components/BrowserCard'
+import { BrowserSection } from '@/features/settings/components/sections/BrowserSection'
 import type { BrowserExtension, ChromiumProfile } from '@shared/types/browserExtensions'
 import { DEFAULT_BROWSER_SETTINGS, type BrowserSettings, type BrowserState } from '@shared/types/browser'
 
@@ -359,7 +359,7 @@ describe('browser settings · protection, agents, downloads', () => {
       'browser:configure': configure,
       'browser:pickDownloadDir': () => (pick ? (current = { ...current, downloadDir: pick }) : null)
     })
-    render(<BrowserCard />)
+    render(<BrowserSection />)
     await act(settle)
     for (const [name, key] of [
       ['Block ads and trackers', 'adblock'],
@@ -389,7 +389,7 @@ describe('browser settings · protection, agents, downloads', () => {
 
   it('keeps the folder when the picker fails', async () => {
     installBridge({ 'browser:settings': () => ({ ...DEFAULT_BROWSER_SETTINGS }), 'browser:pickDownloadDir': () => fail('headless') })
-    render(<BrowserCard />)
+    render(<BrowserSection />)
     await act(settle)
     fireEvent.click(screen.getByRole('button', { name: /Choose/ }))
     await act(settle)

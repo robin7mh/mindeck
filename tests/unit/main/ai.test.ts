@@ -279,14 +279,14 @@ describe('SecretStore', () => {
     await plain.set('k', null)
     expect(await plain.get('k')).toBeUndefined()
 
-    const cipher = { encrypt: (p: string) => Buffer.from(p).toString('base64'), decrypt: vi.fn((s: string) => Buffer.from(s, 'base64').toString()) }
+    const cipher = { encrypt: async (p: string) => Buffer.from(p).toString('base64'), decrypt: vi.fn(async (s: string) => Buffer.from(s, 'base64').toString()) }
     const enc = new SecretStore(join(dir, 'enc.json'), cipher)
     await enc.set('k', 'topsecret-value')
     const raw = await readFile(join(dir, 'enc.json'), 'utf8')
     expect(raw).not.toContain('topsecret-value')
     expect(JSON.parse(raw).encrypted).toBe(true)
     expect(await enc.get('k')).toBe('topsecret-value')
-    cipher.decrypt.mockImplementation(() => {
+    cipher.decrypt.mockImplementation(async () => {
       throw new Error('keychain')
     })
     expect(await enc.get('k')).toBeUndefined()
@@ -320,7 +320,7 @@ describe('SecretStore', () => {
   it('values encrypted by a keychain that is gone stay locked: never handed out, never mixed with plain ones', async () => {
     const dir = await tempDir()
     const file = join(dir, 'secrets.json')
-    const cipher = { encrypt: (p: string) => `enc:${p}`, decrypt: (s: string) => s.replace(/^enc:/, '') }
+    const cipher = { encrypt: async (p: string) => `enc:${p}`, decrypt: async (s: string) => s.replace(/^enc:/, '') }
     await new SecretStore(file, cipher).set('ai', 'sk-1')
     const before = await readFile(file, 'utf8')
     // e.g. Linux with the keyring locked: no cipher this time
@@ -335,7 +335,7 @@ describe('SecretStore', () => {
   it('plain values from a start without keychain are read, and encrypted with the next save', async () => {
     const dir = await tempDir()
     const file = join(dir, 'secrets.json')
-    const cipher = { encrypt: (p: string) => `enc:${p}`, decrypt: (s: string) => s.replace(/^enc:/, '') }
+    const cipher = { encrypt: async (p: string) => `enc:${p}`, decrypt: async (s: string) => s.replace(/^enc:/, '') }
     await new SecretStore(file).set('ai', 'sk-1')
     const store = new SecretStore(file, cipher)
     expect(await store.get('ai')).toBe('sk-1')

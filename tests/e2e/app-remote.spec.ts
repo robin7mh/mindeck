@@ -5,6 +5,7 @@ import type { IpcResult } from '@shared/ipc/contract'
 import type { FinderChunk, FinderListing } from '@shared/types/finder'
 import type { PairingCode, PairResult } from '@shared/types/server'
 import { expect, test } from './fixtures'
+import { openSettings } from './helpers'
 
 const PORT = 7497
 
@@ -20,11 +21,12 @@ async function phone(page: Page) {
 
 test('a paired admin phone: the files with remote shells only, never the desktop\'s browser', async ({ page, home }) => {
   // The desktop runs the API; the phone is paired as an admin.
-  await page.getByTitle('Settings', { exact: true }).click()
+  await openSettings(page, 'Phone & remote access')
+  await page.getByText('Technical details').click()
   await page.getByLabel('Port').fill(String(PORT))
   await page.getByLabel('Port').blur()
   await page.getByLabel('Run the API server').check()
-  await expect(page.getByText('API server running')).toBeVisible()
+  await expect(page.getByText('API server running', { exact: true })).toBeVisible()
   const call = await phone(page)
   expect(await call('finder:list')).toMatchObject({ ok: false, error: { code: 'remote-terminal-disabled' } })
   await page.getByLabel('Allow remote shells').check()

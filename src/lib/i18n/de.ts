@@ -373,7 +373,7 @@ export const de: Dict = {
     assistant: 'Mindeck-Assistent',
     daily: 'Heutige Tagesnotiz',
     graph: 'Graph des Vaults',
-    newTerminal: 'Neues Terminal',
+    newTerminal: 'Neues Terminal im Benutzerordner',
     newTerminalWith: (name) => `Neues Terminal mit ${name}`,
     terminalLayout: (name) => `Terminal-Layout: ${name}`,
     theme: (mode) => `Design: ${mode}`,
@@ -511,12 +511,11 @@ export const de: Dict = {
     addProject: 'Projekt hinzufügen',
     changed: 'mit Änderungen',
     allClean: 'alles committet',
-    brain: 'Gehirn',
+    memory: 'Gedächtnis',
     notes: 'Notizen',
     links: 'Verbindungen',
     noVault: 'Noch nicht eingerichtet',
     setUp: 'Einrichten',
-    openGraph: 'Graph öffnen',
     system: 'System',
     allGood: 'Alles im grünen Bereich',
     battery: 'Akku',
@@ -1452,7 +1451,7 @@ agents: {
     gpu: 'GPU-Rendering',
     gpuHint: 'Zeichnet mit WebGL — fällt von selbst zurück, wenn die Grafikkarte es nicht kann.',
     restore: 'Terminals wiederherstellen',
-    restoreHint: 'Tabs, Layout, Ordner und letzte Ausgabe sind nach einem Neustart wieder da; die Shells starten neu. Aus: jeder Start mit einem frischen Terminal in deinem Home-Ordner.',
+    restoreHint: 'Tabs, Layout, Ordner und letzte Ausgabe sind nach einem Neustart wieder da; die Shells starten neu. Aus: das Terminal startet leer — eine Shell startet erst, wenn du wählst, wo.',
     shellIntegration: 'Shell-Integration',
     shellIntegrationHint: 'bash, zsh, fish und PowerShell melden Ordner und jeden Befehl — zwischen Befehlen springen, fehlgeschlagene am Rand sehen. Deine Dotfiles bleiben unberührt.',
     defaultProfile: 'Standardprofil',
@@ -1890,7 +1889,7 @@ agents: {
     themeMode: 'Modus',
     themeModes: { dark: 'Dunkel', light: 'Hell', system: 'System' },
     accent: 'Akzentfarbe',
-    accents: { cyan: 'Cyan', blue: 'Blau', violet: 'Violett', pink: 'Neon-Pink', green: 'Matrix-Grün', amber: 'Bernstein', mono: 'Mono' },
+    accents: { cyan: 'Cyan', blue: 'Blau', violet: 'Violett', pink: 'Neon-Pink', red: 'Rot', green: 'Matrix-Grün', amber: 'Bernstein', mono: 'Mono' },
     surface: 'Hintergrund',
     surfaces: { cyber: 'Cyber', black: 'Schwarz', graphite: 'Graphit' },
     surfaceHints: {
@@ -2031,6 +2030,132 @@ agents: {
     desktopApp: 'Desktop-App',
     server: 'Server',
     desktopWindow: 'Desktop-Fenster',
-    pairedBrowser: 'Browser (gekoppelt)'
+    pairedBrowser: 'Browser (gekoppelt)',
+
+    saved: 'Änderungen werden sofort gespeichert.',
+    navLabel: 'Bereiche der Einstellungen',
+    navGroups: { app: 'App', work: 'Arbeiten', data: 'Daten & Geräte', help: 'Hilfe' },
+    badgeSignIn: 'Anmelden',
+    badgeOn: 'An',
+    sections: {
+      general: {
+        title: 'Allgemein & Aussehen',
+        intro: 'Sprache und wie Mindeck auf diesem Gerät aussieht.'
+      },
+      ai: {
+        title: 'KI & Agents',
+        intro: 'Der eingebaute Assistent und deine eigenen Coding-Agents.'
+      },
+      editor: {
+        title: 'Editor',
+        intro: 'Wie der Editor aussieht und was beim Speichern passiert.'
+      },
+      languages: {
+        title: 'Sprachen & Debugger',
+        intro: 'Autovervollständigung, Fehleranzeige und Debugging pro Programmiersprache. Läuft auf diesem Computer, wie in VS Code.'
+      },
+      terminal: {
+        title: 'Terminal',
+        intro: 'Aussehen, Verhalten und welche Shell standardmäßig startet.'
+      },
+      browser: {
+        title: 'Browser',
+        intro: 'Der eingebaute Browser für Doku, Live Server und Agents.'
+      },
+      remote: {
+        title: 'Handy & Fernzugriff',
+        intro: 'Nutze Mindeck vom Handy oder einem anderen Computer aus.'
+      },
+      memory: {
+        title: 'Gedächtnis',
+        intro: 'Wo deine Notizen und das Wissen der Agents gespeichert werden.'
+      },
+      migrate: {
+        title: 'Von VS Code umziehen',
+        intro: 'Mindeck übernimmt Einstellungen, Tastenkürzel und Snippets. VS Code selbst bleibt unverändert, das Mindeck-Design auch.'
+      },
+      about: {
+        title: 'Über & Diagnose',
+        intro: 'Version und Hilfe, wenn etwas nicht klappt.'
+      }
+    },
+    groups: {
+      language: 'Sprache',
+      appearance: 'Aussehen',
+      app: 'App-Verhalten',
+      assistant: 'Mindeck-Assistent',
+      agents: 'Coding-Agents',
+      permissions: 'Berechtigungen',
+      chat: 'Chat & Benachrichtigungen',
+      text: 'Text',
+      onSave: 'Beim Speichern',
+      display: 'Anzeige & Bedienung',
+      ready: (n) => `Bereit · ${n}`,
+      installable: (n) => `Mit einem Klick installierbar · ${n}`,
+      needsFirst: (n) => `Braucht zuerst die Sprache selbst · ${n}`,
+      shell: 'Shell',
+      look: 'Aussehen',
+      behaviour: 'Verhalten',
+      searchTabs: 'Suche & Tabs',
+      privacy: 'Datenschutz & Sicherheit',
+      downloads: 'Downloads & Daten',
+      reach: 'Erreichbar',
+      devicePowers: 'Was gekoppelte Geräte dürfen',
+      location: 'Speicherort',
+      reset: 'Zurücksetzen'
+    },
+    advanced: 'Erweitert',
+    always: 'Immer',
+    interfaceLanguage: 'Sprache der Oberfläche',
+    defaultLook: 'Standard-Aussehen',
+    startSetup: 'Assistent starten',
+    notSignedIn: 'Noch nicht angemeldet.',
+    signIn: 'Anmelden',
+    connection: 'Verbindung',
+    efforts: { low: 'Schnell', medium: 'Mittel', high: 'Hoch', xhigh: 'Sehr hoch', max: 'Maximal' },
+    ownKeyFold: 'Für Vielnutzer: eigener API-Schlüssel',
+    apiKey: 'Anthropic-API-Schlüssel',
+    needsKey: 'braucht API-Schlüssel',
+    agentReady: 'Bereit',
+    agentMissing: 'Nicht installiert',
+    agentNotReady: 'Nicht eingerichtet',
+    standingGrants: 'Dauerhafte Freigaben',
+    none: 'Keine',
+    indent: 'Einrückung',
+    indentSpaces: (n) => `${n} Leerzeichen`,
+    indentTab: 'Tabulator',
+    toolReady: 'Bereit',
+    partly: (tool, need) => `Teilweise – ${tool} ${need}`,
+    installFirst: (what) => `Installiere zuerst ${what}`,
+    guide: 'Anleitung',
+    tabBar: 'Tab-Leiste',
+    tabsTop: 'Oben',
+    tabsSide: 'Seitlich',
+    recommended: 'empfohlen',
+    caution: 'Vorsicht',
+    importTitle: 'Aus einem anderen Browser importieren',
+    importHint: 'Lesezeichen, Verlauf und Suchmaschine aus Chrome, Safari oder Firefox.',
+    importButton: 'Importieren …',
+    history: 'Browserverlauf',
+    reachTitle: { off: 'Fernzugriff ist aus', lan: 'Erreichbar im Heimnetz', any: 'Erreichbar von überall' },
+    reachDesc: {
+      off: 'Nur dieser Computer (127.0.0.1) – gekoppelte Geräte können nicht verbinden.',
+      lan: 'Handys im selben WLAN können verbinden. Die Kopplung schützt weiterhin.',
+      any: 'Gekoppelte Geräte verbinden auch über Mobilfunk – über Mindeck Cloud, ohne offenen Port. Die Cloud sieht keine Inhalte.'
+    },
+    reachQuestion: 'Von wo dürfen Geräte verbinden?',
+    reachOptions: { off: 'Aus', lan: 'Heimnetz', any: 'Überall' },
+    devicesPaired: (n) => (n === 1 ? '1 Gerät gekoppelt' : `${n} Geräte gekoppelt`),
+    technical: 'Technische Details',
+    addresses: 'Adressen',
+    copy: 'Kopieren',
+    copied: 'Kopiert',
+    vault: 'Vault',
+    revealFinder: 'Im Finder zeigen',
+    revealFolder: 'Ordner öffnen',
+    logs: 'Logs',
+    logsHint: 'Logs und Absturzberichte bleiben auf diesem Computer – es wird nichts verschickt.',
+    diagnostics: 'Diagnose für den Support',
+    diagnosticsHint: 'Version, System und letzte Fehler – keine Schlüssel, Tokens oder Dateiinhalte.'
   }
 }

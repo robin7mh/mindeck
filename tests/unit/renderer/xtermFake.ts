@@ -64,7 +64,10 @@ export class FakeTerminal {
   selection = ''
   /** The rows of the buffer, the screen's height and where the cursor is. */
   lines: Row[] = []
+  cols = 80
   rows = 24
+  /** The element the view was opened in. */
+  host?: HTMLElement
   cursor = { x: 0, y: 0 }
   markers: FakeMarker[] = []
   decorations: FakeDecoration[] = []
@@ -115,7 +118,9 @@ export class FakeTerminal {
     this.addons.push(addon)
     addon.activate?.(this)
   }
-  open() {}
+  open(el?: HTMLElement) {
+    this.host = el
+  }
   write(d: string) {
     this.written.push(d)
   }

@@ -21,7 +21,7 @@ Guiding doctrine (unchanged from the masterplan, restated because everything bel
 
 | Layer | Choice |
 |---|---|
-| Shell | Electron 44 (Chromium 152, Node 24 — updated from 37 on 2026-10-15: a browser that loads foreign pages needs a supported Chromium), frameless window, `contextIsolation: true`, `nodeIntegration: false` |
+| Shell | Electron 45 (Chromium 156, Node 24 — updated from 37 on 2026-10-15, to 45 on 2026-11-17: a browser that loads foreign pages needs a supported Chromium; Node 26 comes with Electron 46), frameless window, `contextIsolation: true`, `nodeIntegration: false` |
 | Build | electron-vite 2 (CJS main/preload, Vite renderer), dual tsconfig (`typecheck:node` + `typecheck:web`) |
 | Renderer | React 18, TypeScript 5.5, Zustand (one store per feature), Framer Motion |
 | Design system | Tailwind driven by CSS custom properties (`src/index.css` + `tailwind.config.ts`); primitives `Panel`, `TechLabel`, `StatusDot`; Inter Variable + JetBrains Mono, bundled locally |

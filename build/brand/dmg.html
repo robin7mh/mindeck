@@ -1,19 +1,15 @@
 <!doctype html>
-<!-- Source of build/background.png (540×380) and background@2x.png. The window places the app at (140,190) and Applications at (400,190). -->
+<!-- Source of build/background.png (540×380) and background@2x.png. The window places the app at (140,190) and Applications at (400,190).
+     Light and plain on purpose: Finder writes the icons' names in dark text, whatever the background. Only the top ~300 px show
+     (the title bar and the status bar take the rest), so nothing sits below that. -->
 <html><head><meta charset="utf-8"><style>
-@font-face { font-family: 'Inter'; src: url('../../node_modules/@fontsource-variable/inter/files/inter-latin-wght-normal.woff2') format('woff2'); font-weight: 100 900; }
-@font-face { font-family: 'JBM'; font-weight: 500; src: url('../../node_modules/@fontsource/jetbrains-mono/files/jetbrains-mono-latin-500-normal.woff2') format('woff2'); }
 html, body { margin: 0; width: 540px; height: 380px; overflow: hidden; }
-body { position: relative; background: radial-gradient(80% 70% at 15% 0%, rgba(56,214,232,0.20), transparent 60%), radial-gradient(70% 60% at 100% 100%, rgba(74,132,255,0.18), transparent 60%), #05080e; font-family: 'Inter', sans-serif; }
-.grid { position: absolute; inset: 0; background-image: linear-gradient(to right, rgba(42,60,84,0.35) 1px, transparent 1px), linear-gradient(to bottom, rgba(42,60,84,0.35) 1px, transparent 1px); background-size: 30px 30px; -webkit-mask-image: radial-gradient(ellipse 75% 70% at 50% 45%, #000 25%, transparent 80%); }
-.title { position: absolute; top: 34px; width: 100%; text-align: center; color: #e2ecf7; font-size: 17px; font-weight: 600; letter-spacing: -0.01em; }
-.sub { position: absolute; top: 60px; width: 100%; text-align: center; font-family: 'JBM'; font-size: 9.5px; letter-spacing: 0.28em; text-transform: uppercase; color: #38d6e8; }
-.arrow { position: absolute; left: 212px; top: 176px; width: 116px; height: 28px; }
-.foot { position: absolute; bottom: 22px; width: 100%; text-align: center; font-size: 11px; color: #607085; }
+body { position: relative; background: #f5f5f7; font-family: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif; -webkit-font-smoothing: antialiased; }
+.title { position: absolute; top: 38px; width: 100%; text-align: center; color: #1d1d1f; font-size: 18px; font-weight: 600; }
+.sub { position: absolute; top: 66px; width: 100%; text-align: center; color: #6e6e73; font-size: 13px; }
+.arrow { position: absolute; left: 228px; top: 178px; width: 84px; height: 24px; }
 </style></head><body>
-<div class="grid"></div>
 <div class="title">Mindeck installieren</div>
-<div class="sub">In Programme ziehen · Drag to Applications</div>
-<svg class="arrow" viewBox="0 0 116 28" fill="none"><defs><linearGradient id="g" x1="0" x2="1"><stop offset="0" stop-color="#38d6e8" stop-opacity="0.15"/><stop offset="1" stop-color="#38d6e8"/></linearGradient></defs><path d="M4 14h98" stroke="url(#g)" stroke-width="3" stroke-linecap="round"/><path d="M96 5l11 9-11 9" stroke="#38d6e8" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>
-<div class="foot">Danach Mindeck öffnen und mit deinem Konto anmelden.</div>
+<div class="sub">Mindeck auf „Applications“ ziehen · Drag Mindeck to Applications</div>
+<svg class="arrow" viewBox="0 0 84 24" fill="none" stroke="#a1a1a6" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h74"/><path d="M68 4l9 8-9 8"/></svg>
 </body></html>

@@ -5,6 +5,27 @@ import { pairingLink } from '@shared/ipc/transport'
 import type { Device, DeviceRole, PairingCode, ServerConfig, ServerStatus } from '@shared/types/server'
 import type { PermissionGrant } from '@shared/types/ai'
 import type { Project } from '@shared/types/project'
+import type { SectionId } from './sections'
+
+/** Where paired devices may connect from: nowhere, the local network, or anywhere (through Mindeck Cloud). */
+export type Reach = 'off' | 'lan' | 'any'
+
+/** The choice as set up — what the switches say, whether or not the cloud link stands yet. */
+export function reachOf(cfg: ServerConfig | undefined): Reach {
+  if (!cfg?.enabled) return 'off'
+  return cfg.relay ? 'any' : cfg.lan ? 'lan' : 'off'
+}
+
+/**
+ * Where devices reach this computer right now: anywhere only while the cloud
+ * link is online (away access is on by default, but needs the account, HTTPS
+ * and the server), the local network while the server listens there.
+ */
+export function liveReach(server: ServerStatus | undefined): Reach {
+  if (!server?.running) return 'off'
+  if (server.config.relay && server.relay?.state === 'online') return 'any'
+  return server.config.lan ? 'lan' : 'off'
+}
 
 /** An address only this computer can open — never a phone. */
 export const isLoopback = (url: string): boolean => /\/\/(127\.0\.0\.1|localhost|\[::1\])(?=[:/]|$)/.test(url)
@@ -64,6 +85,9 @@ export function canManage(devices: Device[], desktop = isDesktop(), me = myDevic
 }
 
 interface SettingsState {
+  /** The section open in the settings — kept while Mindeck runs, so it is there again when they come back. */
+  section: SectionId
+  setSection: (section: SectionId) => void
   server?: ServerStatus
   devices: Device[]
   grants: PermissionGrant[]
@@ -87,6 +111,8 @@ interface SettingsState {
 export const useSettings = create<SettingsState>((set, get) => {
   const fail = (err: unknown) => set({ error: errorMessage(err), busy: false })
   return {
+    section: 'general',
+    setSection: (section) => set({ section }),
     devices: [],
     grants: [],
     projects: [],

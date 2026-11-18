@@ -339,7 +339,7 @@ describe('terminal store: restore, split, follow, save', () => {
     expect(persist).not.toHaveBeenCalled()
   })
 
-  it('brings back the last run: folders, profiles, layout and output; a gone folder opens Home', async () => {
+  it('brings back the last run: folders, profiles, layout and output; a gone folder stays closed — no Home shell instead', async () => {
     const created: unknown[] = []
     installBridge({
       'terminal:list': () => [],
@@ -361,17 +361,12 @@ describe('terminal store: restore, split, follow, save', () => {
     expect(created).toEqual([
       { cwd: '/code/api', projectId: 'p1', profileId: 'zsh' },
       { cwd: '/gone', projectId: undefined, profileId: undefined },
-      {}, // Home instead
-      { cwd: '/x', projectId: undefined, profileId: undefined },
-      {}
+      { cwd: '/x', projectId: undefined, profileId: undefined }
     ])
-    expect(s.tabs.map((t) => [t.cwd, t.restored])).toEqual([
-      ['/code/api', { scrollback: 'old output', savedAt: '2026-10-15T08:00:00.000Z' }],
-      ['/h', undefined],
-      ['/h', undefined]
-    ])
+    expect(s.tabs.map((t) => [t.cwd, t.restored])).toEqual([['/code/api', { scrollback: 'old output', savedAt: '2026-10-15T08:00:00.000Z' }]])
     expect(s.layout).toBe('grid')
-    expect(s.activeId).toBe(s.tabs[1].id)
+    // The saved active tab did not come back: the first one is.
+    expect(s.activeId).toBe(s.tabs[0].id)
   })
 
   it('nothing to restore (or nothing could start): no shell until the user opens one', async () => {
@@ -425,6 +420,28 @@ describe('terminal store: restore, split, follow, save', () => {
     queue.push(info())
     await s().restart(a.id)
     expect(bridge.invoke).toHaveBeenLastCalledWith('terminal:create', { projectId: 'p1', cwd: '/tmp', profileId: 'fish' })
+  })
+
+  it('a shell a device opened comes up as a tab without taking the focus — once, also when this window is the device', async () => {
+    const bridge = installBridge({ 'terminal:list': () => [] })
+    const s = () => useTerminals.getState()
+    await s().init()
+    const phone = info({ title: 'shop' })
+    act(() => bridge.emit('terminal:opened', phone)) // none open: it is the one shown
+    expect([s().tabs.map((t) => t.id), s().activeId]).toEqual([[phone.id], phone.id])
+    const second = info()
+    act(() => bridge.emit('terminal:opened', second))
+    act(() => bridge.emit('terminal:opened', second))
+    expect([s().tabs.map((t) => t.id), s().activeId]).toEqual([[phone.id, second.id], phone.id])
+
+    // The web UI is a device too: its own shell's event may come before the answer.
+    const mine = info()
+    bridge.routes['terminal:create'] = () => {
+      bridge.emit('terminal:opened', mine)
+      return mine
+    }
+    await s().open()
+    expect([s().tabs.map((t) => t.id), s().activeId]).toEqual([[phone.id, second.id, mine.id], mine.id])
   })
 
   it('saves tabs, layout and output a little after a change, and when the window closes', async () => {

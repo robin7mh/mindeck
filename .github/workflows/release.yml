@@ -45,7 +45,7 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
-          node-version: 22
+          node-version: 26
           cache: npm
       - run: npm ci
       - run: npm run typecheck
@@ -62,7 +62,7 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
-          node-version: 22
+          node-version: 26
           cache: npm
       - name: Build the web bundle
         run: |
@@ -94,7 +94,7 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
-          node-version: 22
+          node-version: 26
       - name: Build (Mindeck Cloud baked in, as in the app)
         run: npm run remote:bundle -- ${{ matrix.arch }}
         env:
@@ -156,7 +156,7 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
-          node-version: 22
+          node-version: 26
           cache: npm
 
       - name: The tag matches package.json
@@ -220,7 +220,9 @@ jobs:
             echo "::warning::CSC_LINK is not set — the macOS build is NOT signed or notarized; Gatekeeper blocks it on other Macs."
             unset CSC_LINK CSC_KEY_PASSWORD
             export CSC_IDENTITY_AUTO_DISCOVERY=false
-            args+=(-c.mac.identity=null)
+            # Ad hoc, not unsigned: the flipped fuses break Electron's signature, and macOS kills an unsigned
+            # build at launch. Ad hoc has no Team ID for the hardened runtime's library validation (docs/RELEASE.md).
+            args+=(-c.mac.identity=- -c.mac.hardenedRuntime=false)
             unset APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID
           elif [ -z "$APPLE_ID" ] || [ -z "$APPLE_APP_SPECIFIC_PASSWORD" ] || [ -z "$APPLE_TEAM_ID" ]; then
             if [ -n "$release" ]; then echo "::error::APPLE_ID / APPLE_APP_SPECIFIC_PASSWORD / APPLE_TEAM_ID are incomplete — a release must be notarized."; exit 1; fi

@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path'
 import { existsSync } from 'node:fs'
 import { test as base, expect, type Page } from '@playwright/test'
 import { dismissTips } from './fixtures'
+import { openSettings } from './helpers'
 // @ts-expect-error — plain ESM helper without type declarations
 import { startFakeAnthropic } from './fake-anthropic.mjs'
 
@@ -166,7 +167,7 @@ test.describe('with remote shells', () => {
     await expect(paired.getByText(/Run completed · 2 steps/).first()).toBeVisible()
 
     // settings shows the key from the environment and the standing permissions
-    await paired.getByTitle('Settings', { exact: true }).click()
+    await openSettings(paired, 'AI & agents')
     await expect(paired.getByText(/Anthropic key from the environment/)).toBeVisible()
   })
 

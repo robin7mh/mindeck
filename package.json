@@ -36,6 +36,7 @@
     "test:all": "npm run typecheck && npm run test:coverage && npm run test:e2e",
     "dist:mac": "npm run build && electron-builder --mac --publish never",
     "dist:mac:dir": "npm run build && electron-builder --mac --dir --publish never",
+    "dist:mac:local": "bash scripts/dist-mac-local.sh",
     "dist:win": "npm run build && electron-builder --win --publish never",
     "dist:linux": "npm run build && electron-builder --linux --publish never",
     "release:mac": "npm run build && electron-builder --mac --publish always"
@@ -105,7 +106,7 @@
     "@types/yazl": "^3.3.1",
     "@vitejs/plugin-react": "^5.2.0",
     "@vitest/coverage-v8": "^4.1.12",
-    "electron": "^44.10.0",
+    "electron": "^45.3.3",
     "electron-builder": "^26.15.3",
     "electron-vite": "^5.0.0",
     "eslint": "^9.39.5",
@@ -120,5 +121,14 @@
   "overrides": {
     "dompurify": "$dompurify"
   },
-  "homepage": "https://github.com/robin7mh/mindeck"
+  "homepage": "https://github.com/robin7mh/mindeck",
+  "allowScripts": {
+    "node-pty": true,
+    "esbuild": true,
+    "ssh2": true,
+    "cpu-features": true,
+    "@parcel/watcher": true,
+    "electron-winstaller": true,
+    "fsevents": false
+  }
 }

@@ -24,7 +24,7 @@ Protocol · Anthropic SDK · Zod · `ws` · Vitest + Testing Library · Playwrig
 
 ## Loslegen
 
-Voraussetzungen: Node 22. Docker nur für das optionale Server-Image (`npm run docker:up`).
+Voraussetzungen: Node 26. Docker nur für das optionale Server-Image (`npm run docker:up`).
 
 ```bash
 git clone https://github.com/robin7mh/mindeck.git
@@ -78,6 +78,12 @@ API-Key:
 - **Codex** läuft mit deinem Codex-Login über seinen ACP-Adapter. Beim ersten Start wird der
   Adapter einmalig per `npx` geladen, dafür braucht es Node.js.
 - **Gemini CLI** läuft als `gemini --experimental-acp` mit deiner eigenen Gemini-Anmeldung.
+
+Mindeck findet die CLIs dort, wo dein Terminal sie findet. Aus dem Finder, dem Dock oder Spotlight
+gestartet, liest die App beim Start einmal die Umgebung deiner Shell (`$SHELL -ilc`, also auch
+`~/.zshrc`), etwa `~/.local/bin` im `PATH`. Spracheinstellungen übernimmt sie dabei nicht. Deine
+rc-Datei sieht währenddessen `MINDECK_RESOLVING_ENVIRONMENT=1` und kann damit überspringen, was nur
+ins Terminal gehört (tmux, eine Begrüßung).
 
 Zum Starten öffnest du *New chat* und wählst Agent und Projekt. Optional gibst du gleich die
 erste Nachricht mit und setzt das Häkchen bei *Own working folder*. Jede Sitzung ist ein Chat:
@@ -301,7 +307,7 @@ JetBrains Mono) are bundled locally.
 
 ## Getting started
 
-Requirements: Node 22. Docker only for the optional server image (`npm run docker:up`).
+Requirements: Node 26. Docker only for the optional server image (`npm run docker:up`).
 
 ```bash
 git clone https://github.com/robin7mh/mindeck.git
@@ -353,6 +359,12 @@ The **Agents** module works with the AI you already pay for. Mindeck needs no AP
 - **Codex** runs with your Codex sign-in through its ACP adapter. On first start the adapter is
   fetched once with `npx`, so Node.js is needed.
 - **Gemini CLI** runs as `gemini --experimental-acp` with your own Gemini sign-in.
+
+Mindeck finds the CLIs where your terminal finds them. Started from the Finder, the Dock or
+Spotlight, the app reads your shell's environment once at start (`$SHELL -ilc`, so `~/.zshrc` too),
+for instance `~/.local/bin` on the `PATH`. It leaves the language settings out. Meanwhile your rc
+file sees `MINDECK_RESOLVING_ENVIRONMENT=1` and can skip what only belongs in a terminal (tmux, a
+greeting).
 
 To start one, open *New chat* and pick the agent and the project. Optionally give the first
 message, and optionally tick *Own working folder*. Every session is a chat:

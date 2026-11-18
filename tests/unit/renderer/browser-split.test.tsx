@@ -1,5 +1,5 @@
 import { createRef } from 'react'
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 import { installBridge, settle } from './bridge'
 import { state, tab } from './browserFixtures'
@@ -8,7 +8,7 @@ import { useOverlays } from '@/lib/overlay'
 import { DropZones, MIN_PANE, SplitDivider, SplitTools, splitRatio } from '@/features/browser/components/SplitView'
 import { Viewport } from '@/features/browser/components/Viewport'
 import { BrowserView } from '@/features/browser/components/BrowserView'
-import { BrowserCard } from '@/features/settings/components/BrowserCard'
+import { BrowserSection } from '@/features/settings/components/sections/BrowserSection'
 import { DEFAULT_BROWSER_SETTINGS, type BrowserSettings, type BrowserSplit } from '@shared/types/browser'
 
 const initial = useBrowser.getState()
@@ -246,18 +246,21 @@ describe('BrowserView · vertical tabs and the split tools', () => {
   it('Settings turns vertical tabs on', async () => {
     const settings: BrowserSettings = { ...DEFAULT_BROWSER_SETTINGS }
     const { sent } = bridge({ 'browser:settings': () => settings, 'browser:configure': (p: Partial<BrowserSettings>) => ({ ...settings, ...p }) })
-    render(<BrowserCard />)
+    render(<BrowserSection />)
     await settle()
-    fireEvent.click(screen.getByRole('switch', { name: /Vertical tabs/ }))
+    const tabBar = within(screen.getByRole('radiogroup', { name: 'Tab bar' }))
+    expect(tabBar.getByRole('radio', { name: 'Top' })).toHaveAttribute('aria-checked', 'true')
+    fireEvent.click(tabBar.getByRole('radio', { name: 'Side' }))
     await settle()
     expect(sent('browser:configure')).toEqual([{ verticalTabs: true }])
     expect(useBrowser.getState().settings.verticalTabs).toBe(true)
+    expect(tabBar.getByRole('radio', { name: 'Side' })).toHaveAttribute('aria-checked', 'true')
   })
 
   it('Settings turns a new tab’s suggestions off, and says what agents see and which keys there are', async () => {
     const settings: BrowserSettings = { ...DEFAULT_BROWSER_SETTINGS }
     const { sent } = bridge({ 'browser:settings': () => settings, 'browser:configure': (p: Partial<BrowserSettings>) => ({ ...settings, ...p }) })
-    render(<BrowserCard />)
+    render(<BrowserSection />)
     await settle()
     const suggestions = screen.getByRole('switch', { name: /Suggestions on new tabs/ })
     expect(suggestions).toBeChecked() // on unless the user turns it off

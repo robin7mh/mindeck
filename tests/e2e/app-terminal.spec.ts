@@ -10,6 +10,8 @@ test('terminal: none until opened, find in the output (Ctrl+Shift+F), and after 
   // no shell runs until the user opens one
   await expect(page.locator('.xterm-rows')).toHaveCount(0)
   await page.getByRole('button', { name: 'Open terminal', exact: true }).click()
+  // No shell before the user says where.
+  await page.getByRole('button', { name: 'Home', exact: true }).click()
   const screen = page.locator('.xterm-rows').first()
   await expect(screen).toBeVisible()
   await page.locator('.xterm-helper-textarea').first().focus()
@@ -35,6 +37,8 @@ test('terminal: none until opened, find in the output (Ctrl+Shift+F), and after 
   await again.getByTitle('Terminal', { exact: true }).click()
   await expect(again.locator('.xterm-rows')).toHaveCount(0)
   await again.getByRole('button', { name: 'Open terminal', exact: true }).click()
+  // No shell before the user says where.
+  await again.getByRole('button', { name: 'Home', exact: true }).click()
   const fresh = again.locator('.xterm-rows').first()
   await expect(again.locator('.xterm-rows')).toHaveCount(1)
   await again.locator('.xterm-helper-textarea').first().focus()
