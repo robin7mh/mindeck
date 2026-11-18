@@ -84,15 +84,26 @@ describe('TerminalView', () => {
     useBrowser.setState(initialBrowser, true)
   })
 
-  it('opens no shell on its own: "Open terminal" starts one, with its header and the layout picker', async () => {
+  it('opens no shell on its own: "Open terminal" asks where, then starts one, with its header and the layout picker', async () => {
     const created = info({ title: 'demo', cwdLabel: '~/demo' })
-    const bridge = installBridge({ 'terminal:list': () => [], 'terminal:create': () => created, 'terminal:attach': pending })
+    const bridge = installBridge({
+      'terminal:list': () => [],
+      'terminal:create': () => created,
+      'terminal:attach': pending,
+      'projects:list': () => [{ id: 'p1', name: 'demo', path: '/code/demo' }]
+    })
     render(<TerminalView />)
     await act(settle)
     expect(bridge.invoke).not.toHaveBeenCalledWith('terminal:create', expect.anything())
     fireEvent.click(screen.getByText('Open terminal'))
     await act(settle)
-    expect(bridge.invoke).toHaveBeenCalledWith('terminal:create', { projectId: undefined })
+    // Only the choice of where starts a shell.
+    expect(bridge.invoke).not.toHaveBeenCalledWith('terminal:create', expect.anything())
+    expect(screen.getByText('Open terminal')).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByText('Home')).toBeInTheDocument()
+    fireEvent.click(screen.getByText('demo'))
+    await act(settle)
+    expect(bridge.invoke).toHaveBeenCalledWith('terminal:create', { projectId: 'p1' })
     expect(screen.getByText('zsh · ~/demo')).toBeInTheDocument()
     expect(screen.getByLabelText('Layout: Single')).toHaveAttribute('aria-pressed', 'true')
     fireEvent.click(screen.getByLabelText('Layout: 2 × 2'))
@@ -104,12 +115,21 @@ describe('TerminalView', () => {
   it('empty single layout offers "Open terminal"; errors show; tabs switch and close', async () => {
     const a = info()
     const b = info()
-    const bridge = installBridge({ 'terminal:list': () => fail('no pty'), 'terminal:create': () => a, 'terminal:attach': pending, 'terminal:kill': () => undefined })
+    const bridge = installBridge({
+      'terminal:list': () => fail('no pty'),
+      'terminal:create': () => a,
+      'terminal:attach': pending,
+      'terminal:kill': () => undefined,
+      'projects:list': () => []
+    })
     render(<TerminalView />)
     await act(settle)
     expect(screen.getByText('no pty')).toBeInTheDocument()
     fireEvent.click(screen.getByText('Open terminal'))
     await act(settle)
+    fireEvent.click(screen.getByText('Home'))
+    await act(settle)
+    expect(bridge.invoke).toHaveBeenCalledWith('terminal:create', { projectId: undefined })
     expect(screen.queryByText('Open terminal')).toBeNull()
 
     // Two shells in single layout: both on the page (framed), one per screen.
@@ -216,6 +236,36 @@ describe('TerminalView: profiles', () => {
 })
 
 describe('XtermPane', () => {
+  it('the view the user turns to puts its size back — the phone may have resized the shell to its screen', async () => {
+    const tab = info()
+    let restore = sized(0, 0) // hidden: no size of its own to put back
+    const bridge = installBridge({ 'terminal:attach': pending, 'terminal:resize': () => undefined })
+    const hidden = render(<XtermPane tab={info()} label="~" active={false} framed={false} />)
+    fireEvent.focusIn(x.terms[0].host!)
+    expect(bridge.invoke).not.toHaveBeenCalledWith('terminal:resize', expect.anything())
+    hidden.unmount()
+    restore()
+
+    restore = sized(800, 400)
+    const { unmount } = render(<XtermPane tab={tab} label="~" active={false} framed={false} />)
+    const term = x.terms[1]
+    fireEvent.focusIn(term.host!) // focused (also: back in a focused window)
+    bridge.routes['terminal:resize'] = () => fail('closed') // a shell ending meanwhile is no error
+    fireEvent.mouseDown(term.host!) // clicked
+    await act(settle)
+    expect(bridge.invoke.mock.calls.filter(([c]) => c === 'terminal:resize')).toEqual([
+      ['terminal:resize', { id: tab.id, cols: 80, rows: 24 }],
+      ['terminal:resize', { id: tab.id, cols: 80, rows: 24 }]
+    ])
+    bridge.invoke.mockClear()
+    act(() => bridge.emit('terminal:exit', { id: tab.id, exitCode: 0 }))
+    fireEvent.focusIn(term.host!) // an ended shell has no size to take
+    unmount()
+    fireEvent.mouseDown(term.host!) // gone: no longer listening
+    expect(bridge.invoke).not.toHaveBeenCalledWith('terminal:resize', expect.anything())
+    restore()
+  })
+
   it('attaches to the scrollback, de-duplicates queued and live output', async () => {
     const tab = info()
     let resolveAttach: (v: unknown) => void = () => {}

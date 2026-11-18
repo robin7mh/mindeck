@@ -26,7 +26,7 @@ const LAYOUTS: { id: TerminalLayout; icon: typeof Square }[] = [
  * grid. The layout sets how many fill a screen — one, side by side, stacked or
  * 2×2 — and further shells continue below, so the area scrolls. Tabs jump to a
  * shell. "+" opens one in Home or a registered project, or with a profile.
- * None runs until the user opens one: the empty view offers "Open terminal".
+ * None runs until the user says where: the empty view's "Open terminal" asks.
  * Sessions keep running while you're in other modules — the shell mounts this
  * view once and hides it. `onNavigate` lets a clicked file reference open in
  * the Editor.
@@ -165,13 +165,7 @@ export function TerminalView({ onNavigate }: { onNavigate?: (module: ModuleId) =
         ) : (
           <div className="flex h-full flex-col items-center justify-center gap-3">
             <TerminalSquare size={26} className="text-text-muted" />
-            <button
-              type="button"
-              onClick={() => void open()}
-              className="rounded-md border border-cyan bg-cyan px-3 py-1.5 font-sans text-[12px] font-semibold text-void transition-colors hover:opacity-90"
-            >
-              {tr.terminal.open}
-            </button>
+            <NewTerminalMenu variant="button" onOpen={(projectId, profileId) => void open(projectId, profileId)} />
           </div>
         )}
       </div>
@@ -182,14 +176,15 @@ export function TerminalView({ onNavigate }: { onNavigate?: (module: ModuleId) =
 /**
  * "New terminal" chooser: Home or a registered project (default profile), or
  * Home with a profile — a detected shell or one of the user's. `icon` is the
- * "+" in the tab strip; `pane` fills an empty split pane with a dashed button.
+ * "+" in the tab strip; `pane` fills an empty split pane with a dashed button;
+ * `button` is the empty view's "Open terminal".
  */
 function NewTerminalMenu({
   onOpen,
   variant = 'icon'
 }: {
   onOpen: (projectId?: string, profileId?: string) => void
-  variant?: 'icon' | 'pane'
+  variant?: 'icon' | 'pane' | 'button'
 }) {
   const t = useT()
   const [open, setOpen] = useState(false)
@@ -234,6 +229,15 @@ function NewTerminalMenu({
         >
           <Plus size={14} /> {t.terminal.new}
         </button>
+      ) : variant === 'button' ? (
+        <button
+          type="button"
+          aria-expanded={open}
+          onClick={() => setOpen((o) => !o)}
+          className="rounded-md border border-cyan bg-cyan px-3 py-1.5 font-sans text-[12px] font-semibold text-void transition-colors hover:opacity-90"
+        >
+          {t.terminal.open}
+        </button>
       ) : (
         <button
           type="button"
@@ -250,7 +254,7 @@ function NewTerminalMenu({
         <div
           className={cn(
             'absolute z-30 max-h-[60vh] w-60 overflow-y-auto rounded-md border border-hud/60 bg-panel py-1 shadow-lg',
-            variant === 'pane' ? 'left-1/2 top-1/2 mt-6 -translate-x-1/2' : 'left-0 top-full mt-1'
+            variant === 'pane' ? 'left-1/2 top-1/2 mt-6 -translate-x-1/2' : variant === 'button' ? 'left-1/2 top-full mt-1 -translate-x-1/2' : 'left-0 top-full mt-1'
           )}
         >
           <button type="button" onClick={() => pick()} className={item}>

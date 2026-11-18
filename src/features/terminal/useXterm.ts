@@ -296,6 +296,14 @@ export function useXterm(hostRef: RefObject<HTMLDivElement>, id: string, exited:
     ro.observe(el)
     doFit()
 
+    // The phone (or another window) may have resized this shell to its own screen: the view the
+    // user turns to — focused, back in a focused window, clicked — puts its size back.
+    const claim = () => {
+      if (sized && !exitedRef.current) void ipc('terminal:resize', { id, cols: term.cols, rows: term.rows }).catch(() => {})
+    }
+    el.addEventListener('focusin', claim)
+    el.addEventListener('mousedown', claim)
+
     // Settings → Terminal applies to open views at once (a new font size refits).
     const offSettings = useTerminalSettings.subscribe((s, prev) => {
       if (s.settings === prev.settings) return
@@ -321,6 +329,8 @@ export function useXterm(hostRef: RefObject<HTMLDivElement>, id: string, exited:
       unregister()
       commands.dispose()
       ro.disconnect()
+      el.removeEventListener('focusin', claim)
+      el.removeEventListener('mousedown', claim)
       window.clearTimeout(settling)
       mo.disconnect()
       // A task later: open() left xterm a timer that measures the view (Viewport.syncScrollArea);

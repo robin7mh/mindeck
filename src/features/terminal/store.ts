@@ -139,16 +139,23 @@ function followInfo(): void {
   )
 }
 
+/** Shells a device opened (`terminal:opened` — the phone, the web UI): their tab comes up here too, without taking the focus. */
+let offOpened: (() => void) | undefined
+function followOpened(): void {
+  offOpened?.()
+  offOpened = onEvent('terminal:opened', (info) =>
+    useTerminals.setState((s) => (s.tabs.some((t) => t.id === info.id) ? s : { tabs: [...s.tabs, info], activeId: s.activeId ?? info.id }))
+  )
+}
+
 /** Brings back the last run's tabs: same folders, profiles and layout, their output greyed above. */
 async function restore(): Promise<boolean> {
   const saved = isDesktop() ? await ipc('terminal:restore').catch(() => null) : null
   if (!saved?.tabs.length) return false
   const tabs: TerminalTab[] = []
   for (const t of saved.tabs) {
-    // The folder, project or profile may be gone by now: then a shell in Home.
-    const info = await ipc('terminal:create', { cwd: t.cwd, projectId: t.projectId, profileId: t.profileId })
-      .catch(() => ipc('terminal:create', {}))
-      .catch(() => undefined)
+    // The folder, project or profile may be gone by now: that tab stays closed — no shell where nobody chose one.
+    const info = await ipc('terminal:create', { cwd: t.cwd, projectId: t.projectId, profileId: t.profileId }).catch(() => undefined)
     if (info) tabs.push({ ...info, ...(t.scrollback.trim() ? { restored: { scrollback: t.scrollback, savedAt: saved.savedAt } } : {}) })
   }
   if (!tabs.length) return false
@@ -209,6 +216,8 @@ export function layoutFor(layout: TerminalLayout, n: number): TerminalLayout {
 /** Puts a new shell's tab in place (after `after`, else at the end) and focuses it. */
 function add(info: TerminalInfo, after?: string) {
   useTerminals.setState((s) => {
+    // Opened as a device (the web UI): its own `terminal:opened` may have come first.
+    if (s.tabs.some((t) => t.id === info.id)) return { activeId: info.id, error: undefined }
     const at = after ? s.tabs.findIndex((t) => t.id === after) + 1 : 0
     const tabs = at > 0 ? [...s.tabs.slice(0, at), info, ...s.tabs.slice(at)] : [...s.tabs, info]
     return { tabs, activeId: info.id, error: undefined }
@@ -234,6 +243,7 @@ export const useTerminals = create<TerminalState>((set, get) => ({
     set({ initialized: true })
     initializing = (async () => {
       followInfo()
+      followOpened()
       await useTerminalSettings.getState().load()
       try {
         const existing = await ipc('terminal:list')

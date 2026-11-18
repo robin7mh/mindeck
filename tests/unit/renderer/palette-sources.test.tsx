@@ -222,11 +222,16 @@ describe('the palette’s own commands', () => {
       'terminal:settings': () => ({ ...DEFAULT_TERMINAL_SETTINGS, profiles: [{ id: 'custom-1', name: 'Python', command: 'python3', args: [], env: {} }] }),
       'terminal:shells': () => [{ id: 'zsh', name: 'zsh', file: '/bin/zsh', args: [] }],
       'terminal:list': () => [],
-      'terminal:create': () => ({ id: 't1', title: 'zsh', cwd: '/', cwdLabel: '~', shell: 'zsh', createdAt: '' })
+      'terminal:create': vi
+        .fn()
+        .mockReturnValueOnce({ id: 't1', title: 'zsh', cwd: '/', cwdLabel: '~', shell: 'zsh', createdAt: '' })
+        .mockReturnValueOnce({ id: 't2', title: '~', cwd: '/', cwdLabel: '~', shell: 'zsh', createdAt: '' })
     })
     prepareCommands()
     await act(settle)
     expect(allCommands(en).filter((c) => c.id.startsWith('terminal.profile.')).map((c) => c.label)).toEqual(['New terminal with zsh', 'New terminal with Python'])
+    // Where it starts is part of the command: no shell without a folder chosen.
+    expect(find('terminal.new')!.label).toBe('New terminal in Home')
     await run('terminal.profile.custom-1')
     expect(shown()).toEqual(['terminal'])
     expect(bridge.invoke).toHaveBeenCalledWith('terminal:create', { projectId: undefined, profileId: 'custom-1' })
